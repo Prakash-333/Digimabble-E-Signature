@@ -1,0 +1,29 @@
+
+> crm-mock@0.1.0 build
+> next build
+
+▲ Next.js 16.1.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 26.4s
+  Running TypeScript ...
+  Collecting page data using 5 workers ...
+UploadThing API route handler initialized
+UPLOADTHING_SECRET exists: true
+UPLOADTHING_APP_ID exists: true
+  Generating static pages using 5 workers (0/20) ...
+⨯ useSearchParams() should be wrapped in a suspense boundary at page "/dashboard/create-envelope". Read more: https://nextjs.org/docs/messages/missing-suspense-with-csr-bailout
+    at Q (/home/raj/crm-mock/.next/server/chunks/ssr/node_modules_next_920e7746._.js:2:2111)
+    at o (/home/raj/crm-mock/.next/server/chunks/ssr/node_modules_next_920e7746._.js:4:5284)
+    at n (/home/raj/crm-mock/.next/server/chunks/ssr/app_dashboard_create-envelope_page_tsx_e46d6c6a._.js:1:728)
+    at an (/home/raj/crm-mock/node_modules/next/dist/compiled/next-server/app-page-turbo.runtime.prod.js:2:84360)
+    at ai (/home/raj/crm-mock/node_modules/next/dist/compiled/next-server/app-page-turbo.runtime.prod.js:2:86179)
+    at al (/home/raj/crm-mock/node_modules/next/dist/compiled/next-server/app-page-turbo.runtime.prod.js:2:107953)
+    at as (/home/raj/crm-mock/node_modules/next/dist/compiled/next-server/app-page-turbo.runtime.prod.js:2:105368)
+    at aa (/home/raj/crm-mock/node_modules/next/dist/compiled/next-server/app-page-turbo.runtime.prod.js:2:84712)
+    at ai (/home/raj/crm-mock/node_modules/next/dist/compiled/next-server/app-page-turbo.runtime.prod.js:2:86228)
+    at ai (/home/raj/crm-mock/node_modules/next/dist/compiled/next-server/app-page-turbo.runtime.prod.js:2:104708)
+Error occurred prerendering page "/dashboard/create-envelope". Read more: https://nextjs.org/docs/messages/prerender-error
+Export encountered an error on /dashboard/create-envelope/page: /dashboard/create-envelope, exiting the build.
+⨯ Next.js build worker exited with code: 1 and signal: null

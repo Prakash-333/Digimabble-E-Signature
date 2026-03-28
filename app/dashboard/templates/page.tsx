@@ -1,0 +1,1655 @@
+"use client";
+
+import { Suspense, useEffect, useMemo, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { Search, Eye, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage } from "lucide-react";
+import { templates, OFFER_LETTER_TEMPLATE, type Template } from "./data";
+import { useUploadThing } from "../../lib/uploadthing-client";
+import { supabase } from "../../lib/supabase/browser";
+import { analyzeDocumentFile, extractPlaceholdersFromText } from "../../lib/document-analysis";
+
+type AppTemplate = Template & {
+  fileDataUrl?: string;
+  mimeType?: string;
+  detectedText?: string;
+  detectedPlaceholders?: string[];
+  sourceFileName?: string;
+};
+
+const getTemplatePlaceholders = (template: AppTemplate) => {
+  if (template.detectedPlaceholders?.length) {
+    return template.detectedPlaceholders;
+  }
+
+  if (template.detectedText) {
+    return extractPlaceholdersFromText(template.detectedText);
+  }
+
+  if (template.name.includes("Employment Offer") || template.name.includes("Offer Letter")) {
+    return Array.from(new Set((OFFER_LETTER_TEMPLATE.match(/\[([^\]]+)\]/g) || []).map((item) => item.replace(/[\[\]]/g, ""))));
+  }
+
+  return [];
+};
+
+const escapeRegExp = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const persistSharedDocument = async (record: {
+  id: string;
+  name: string;
+  subject: string;
+  recipients: { name: string; email: string; role?: string }[];
+  sender: { fullName: string; workEmail: string };
+  sentAt: string;
+  status: string;
+  fileUrl?: string;
+  fileKey?: string;
+  category?: string;
+  content?: string;
+}) => {
+  try {
+    const { data } = await supabase.auth.getUser();
+    const currentUser = data.user;
+    if (!currentUser) return;
+
+    const { error } = await supabase.from("documents").insert({
+      owner_id: currentUser.id,
+      name: record.name,
+      subject: record.subject,
+      recipients: record.recipients,
+      sender: record.sender,
+      sent_at: record.sentAt,
+      status: record.status,
+      file_url: record.fileUrl ?? null,
+      file_key: record.fileKey ?? null,
+      category: record.category ?? null,
+      content: record.content ?? null,
+    });
+
+    if (error) {
+      console.warn("Shared document save skipped:", error.message || error);
+    }
+  } catch (error) {
+    console.warn("Shared document persistence skipped:", error);
+  }
+};
+
+function TemplatesContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlSearch = searchParams.get("search") || "";
+
+  const [previewId, setPreviewId] = useState<number | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<number | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState("All");
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [searchQuery, setSearchQuery] = useState(urlSearch);
+  const [favorites, setFavorites] = useState<Set<number>>(new Set());
+  const [showCreateDropdown, setShowCreateDropdown] = useState(false);
+  const [useStep, setUseStep] = useState<"review" | "recipients" | "send" | null>(null);
+  const [selectedForUse, setSelectedForUse] = useState<number | null>(null);
+  const [appTemplates, setAppTemplates] = useState<AppTemplate[]>(templates);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingTemplateAnalysisRef = useRef<Array<{
+    fileName: string;
+    mimeType: string;
+    dataUrl: string;
+    textContent: string;
+    placeholders: string[];
+  }>>([]);
+
+  // Load saved templates from localStorage on mount
+  useEffect(() => {
+    const savedTemplates = localStorage.getItem("smartdocs.templates.v1");
+    if (savedTemplates) {
+      try {
+        const parsed = JSON.parse(savedTemplates);
+        setAppTemplates([...templates, ...(parsed as AppTemplate[])]);
+        } catch {
+          // ignore parse errors
+        }
+      }
+  }, []);
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => setOpenMenuId(null);
+    if (openMenuId !== null) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [openMenuId]);
+
+  // Save templates to localStorage whenever appTemplates changes
+  useEffect(() => {
+    const customTemplates = appTemplates.filter(t => t.id >= 1000000000);
+    if (customTemplates.length > 0) {
+      localStorage.setItem("smartdocs.templates.v1", JSON.stringify(customTemplates));
+    } else {
+      localStorage.removeItem("smartdocs.templates.v1");
+    }
+  }, [appTemplates]);
+
+  const { startUpload, isUploading } = useUploadThing("templateUploader", {
+    onClientUploadComplete: (res) => {
+      const analyses = pendingTemplateAnalysisRef.current;
+      if (res && res.length > 0) {
+        const newTemplates: AppTemplate[] = res.map((file, index) => {
+          const analysis = analyses[index];
+          const baseName = file.name.replace(/\.[^/.]+$/, "");
+          const placeholderCount = analysis?.placeholders?.length ?? 0;
+
+          return {
+            id: Date.now() + index,
+            initial: file.name.charAt(0).toUpperCase(),
+            name: baseName,
+            category: "Legal",
+            updated: `Updated ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`,
+            uses: "0 uses",
+            color: "bg-violet-50 text-violet-600",
+            fileDataUrl: analysis?.dataUrl,
+            mimeType: analysis?.mimeType ?? file.type,
+            detectedText: analysis?.textContent,
+            detectedPlaceholders: analysis?.placeholders,
+            sourceFileName: file.name,
+            preview: {
+              headline: baseName,
+              sections: [
+                {
+                  title: "Imported Content",
+                  lines: [
+                    analysis?.textContent?.trim()
+                      ? `${analysis.textContent.slice(0, 220)}${analysis.textContent.length > 220 ? "..." : ""}`
+                      : "This document was uploaded into the system via UploadThing.",
+                    placeholderCount > 0
+                      ? `${placeholderCount} placeholder${placeholderCount === 1 ? "" : "s"} detected automatically.`
+                      : "No placeholders were detected yet.",
+                  ],
+                },
+              ],
+            },
+          };
+        });
+
+        setAppTemplates((prev) => [...newTemplates, ...prev]);
+        setShowCreateDropdown(false);
+      }
+
+      pendingTemplateAnalysisRef.current = [];
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    },
+    onUploadError: (error) => {
+      alert(`Upload failed: ${error.message}`);
+    },
+  });
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const files = Array.from(e.target.files).filter(
+        (file) => file.type === "application/pdf" || file.type.startsWith("image/")
+      );
+      if (!files.length) {
+        alert("Please add a PDF or image file.");
+        e.target.value = "";
+        return;
+      }
+
+      try {
+        const analyses = await Promise.all(
+          files.map(async (file) => {
+            const result = await analyzeDocumentFile(file);
+            return {
+              fileName: file.name,
+              mimeType: file.type,
+              dataUrl: result.dataUrl,
+              textContent: result.textContent,
+              placeholders: result.placeholders,
+            };
+          })
+        );
+        pendingTemplateAnalysisRef.current = analyses;
+      } catch (error) {
+        console.error("Document analysis failed:", error);
+        pendingTemplateAnalysisRef.current = [];
+      }
+
+      await startUpload(files);
+      e.target.value = "";
+    }
+  };
+
+  // Update search query when URL changes
+  useEffect(() => {
+    const urlSearchParam = searchParams.get("search");
+    if (urlSearchParam) {
+      setSearchQuery(urlSearchParam);
+    }
+  }, [searchParams]);
+
+  // Check for step=recipients parameter to open template flow at step 2
+  useEffect(() => {
+    const stepParam = searchParams.get("step");
+    if (stepParam === "recipients") {
+      const reviewedDocData = localStorage.getItem("smartdocs.send_reviewed_doc");
+      if (reviewedDocData) {
+        try {
+          const docData = JSON.parse(reviewedDocData);
+          // Find or create a template for this document
+          const existingTemplate = appTemplates.find(t => t.name === docData.name);
+          if (existingTemplate) {
+            setSelectedForUse(existingTemplate.id);
+          } else {
+            // Create a temporary template for this document
+          const tempTemplate = {
+            id: Date.now(),
+            initial: docData.name.charAt(0).toUpperCase(),
+              name: docData.name,
+              category: docData.category || "Legal",
+              updated: `Updated ${new Date().toLocaleDateString("en-US", { month: 'short', day: 'numeric', year: 'numeric' })}`,
+              uses: "0 uses",
+              color: "bg-violet-50 text-violet-600",
+              preview: {
+                headline: docData.name,
+                sections: [{ title: "Document", lines: ["Reviewed document ready to send"] }]
+              }
+            };
+            setAppTemplates(prev => [tempTemplate, ...prev]);
+            setSelectedForUse(tempTemplate.id);
+          }
+          setUseStep("recipients");
+          // Clear the stored document data
+          localStorage.removeItem("smartdocs.send_reviewed_doc");
+        } catch (e) {
+          console.error("Failed to parse reviewed document data:", e);
+        }
+      }
+    }
+  }, [searchParams, appTemplates]);
+
+  const filteredTemplates = useMemo(() => {
+    let filtered = appTemplates;
+
+    // Filter by category
+    if (selectedCategory === "Favourites") {
+      filtered = filtered.filter(tpl => favorites.has(tpl.id));
+    } else if (selectedCategory !== "All") {
+      filtered = filtered.filter(tpl => tpl.category === selectedCategory);
+    }
+
+    // Filter by search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(tpl =>
+        tpl.name.toLowerCase().includes(query) ||
+        tpl.category.toLowerCase().includes(query)
+      );
+    }
+
+    return filtered;
+  }, [searchQuery, selectedCategory, appTemplates, favorites]);
+
+  const selectedForPreview = useMemo(
+    () => appTemplates.find((tpl) => tpl.id === previewId) ?? null,
+    [previewId, appTemplates]
+  );
+
+  const getTemplateKind = (tpl: AppTemplate) => {
+    if (tpl.mimeType?.startsWith("image/")) return "image";
+    if (tpl.mimeType === "application/pdf" || tpl.sourceFileName?.toLowerCase().endsWith(".pdf")) return "pdf";
+    return "template";
+  };
+
+  const getTemplatePreview = (tpl: AppTemplate) => {
+    if (tpl.fileDataUrl && tpl.mimeType?.startsWith("image/")) {
+      return <img src={tpl.fileDataUrl} alt={tpl.name} className="h-full w-full object-cover" />;
+    }
+
+    return (
+      <div className="flex h-full w-full flex-col justify-between bg-gradient-to-br from-slate-50 via-white to-slate-100 p-4">
+        <div className="flex items-center gap-2">
+          <span className={`inline-flex rounded-md px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${getTemplateKind(tpl) === "pdf" ? "bg-red-100 text-red-600" : getTemplateKind(tpl) === "image" ? "bg-emerald-100 text-emerald-600" : "bg-violet-100 text-violet-600"}`}>
+            {getTemplateKind(tpl)}
+          </span>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
+          <p className="line-clamp-3 text-xs font-semibold leading-5 text-slate-700">
+            {tpl.preview.sections[0]?.lines[0] || tpl.name}
+          </p>
+        </div>
+      </div>
+    );
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPreviewId(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  return (
+    <div className="px-4 pb-8 pt-6 md:px-8 md:pb-10 md:pt-8">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900">
+            Templates
+          </h1>
+        </div>
+        <div className="relative">
+          <button
+            onClick={() => setShowCreateDropdown(!showCreateDropdown)}
+            disabled={isUploading}
+            className="inline-flex items-center rounded-full border border-violet-600 bg-white px-4 py-2 text-xs font-semibold text-violet-600 shadow-sm hover:bg-violet-600 hover:text-white transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isUploading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Uploading...
+              </>
+            ) : (
+              "+ Create Template"
+            )}
+          </button>
+
+          {showCreateDropdown && (
+            <div className="absolute right-0 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-lg z-10">
+              <input
+                type="file"
+                ref={fileInputRef}
+                className="hidden"
+                accept="application/pdf,image/*"
+                onChange={handleFileUpload}
+              />
+              <button
+                className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-violet-50 hover:text-violet-700 rounded-lg transition-colors"
+                onClick={() => {
+                  fileInputRef.current?.click();
+                }}
+              >
+                Add files
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {/* Search Bar */}
+        <div className="relative w-full">
+          <input
+            type="text"
+            placeholder="Search templates by name or category..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+          />
+          <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+        </div>
+
+        {/* Category Filter Buttons */}
+        <div className="flex flex-wrap gap-2">
+          {["All", "Favourites", "Legal", "Sales", "HR"].map((label) => (
+            <button
+              key={label}
+              className={`rounded-full px-4 py-1.5 text-xs font-medium transition-all ${selectedCategory === label
+                ? "bg-violet-600 text-white shadow-md active:scale-95"
+                : "bg-white border border-slate-200 text-slate-600 hover:border-violet-300 hover:text-violet-600 shadow-sm"
+                }`}
+              onClick={() => setSelectedCategory(label)}
+            >
+              {label}
+            </button>
+          ))}
+          <div className="ml-auto inline-flex items-center rounded-full border border-slate-200 bg-white p-1 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "list" ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}
+              aria-label="List view"
+            >
+              <List className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("grid")}
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "grid" ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}
+              aria-label="Grid view"
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className={`mt-6 ${viewMode === "grid" ? "grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4" : "space-y-3"}`}>
+        {filteredTemplates.length === 0 ? (
+          <div className="col-span-full rounded-[2.5rem] border-2 border-dashed border-slate-100 bg-white px-6 py-20 text-center shadow-sm">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[1.5rem] bg-violet-50 mb-6 transition-transform duration-300">
+              <svg className="h-8 w-8 text-violet-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <h3 className="text-xl font-bold text-slate-900 mb-2">No documents yet</h3>
+          </div>
+        ) : (
+          filteredTemplates.map((tpl) => (
+            <article
+              key={tpl.id}
+              className={viewMode === "grid"
+                ? "group relative flex flex-col justify-between overflow-visible rounded-[1.6rem] border border-slate-200 bg-[#eef2f7] shadow-sm transition-all hover:border-slate-300 hover:shadow-md"
+                : "flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+              }
+            >
+              <div className={viewMode === "grid" ? "contents" : "flex h-16 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-slate-50"}>
+                {viewMode === "grid" ? null : getTemplatePreview(tpl)}
+              </div>
+              <div className={viewMode === "grid" ? "px-4 pb-3 pt-4" : "min-w-0 flex-1"}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-semibold ${getTemplateKind(tpl) === "pdf" ? "bg-red-100 text-red-600" : getTemplateKind(tpl) === "image" ? "bg-emerald-100 text-emerald-600" : tpl.color}`}
+                    >
+                      {getTemplateKind(tpl) === "image" ? <ImageIcon className="h-4 w-4" /> : getTemplateKind(tpl) === "pdf" ? "PDF" : <FileImage className="h-4 w-4" />}
+                    </div>
+                    <div className="min-w-0 space-y-1">
+                      <p className="truncate text-sm font-semibold text-slate-900">
+                        {tpl.name}
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        Last updated {tpl.updated}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                {viewMode === "grid" && (
+                  <div className="mt-4 h-40 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                    {getTemplatePreview(tpl)}
+                  </div>
+                )}
+                {viewMode === "grid" && (
+                  <div className="mt-4 flex items-center gap-2">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-500 text-xs font-semibold text-white">
+                      {tpl.initial}
+                    </div>
+                    <p className="truncate text-xs text-slate-600">
+                      Template preview
+                    </p>
+                  </div>
+                )}
+              </div>
+              <div className={viewMode === "grid" ? "border-t border-slate-200 bg-white/50 px-4 py-3" : "shrink-0"}>
+                <div className={`flex items-center ${viewMode === "grid" ? "justify-between text-[11px] text-slate-500" : "gap-2"}`}>
+                  <button
+                    type="button"
+                    className={`inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-base leading-none transition-all active:scale-95 ${favorites.has(tpl.id) ? "text-violet-600" : "text-slate-300 hover:text-slate-400"}`}
+                    onClick={() => {
+                      setFavorites(prev => {
+                        const newFavorites = new Set(prev);
+                        if (newFavorites.has(tpl.id)) {
+                          newFavorites.delete(tpl.id);
+                        } else {
+                          newFavorites.add(tpl.id);
+                        }
+                        return newFavorites;
+                      });
+                    }}
+                    aria-label="Favorite"
+                    title="Favorite"
+                  >
+                    {favorites.has(tpl.id) ? "★" : "☆"}
+                  </button>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-100 transition-all active:scale-95"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenMenuId(openMenuId === tpl.id ? null : tpl.id);
+                      }}
+                      aria-label={`Menu for ${tpl.name}`}
+                    >
+                      <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                        <circle cx="12" cy="6" r="1.5" />
+                        <circle cx="12" cy="12" r="1.5" />
+                        <circle cx="12" cy="18" r="1.5" />
+                      </svg>
+                    </button>
+                    {openMenuId === tpl.id && (
+                      <div className="absolute right-0 top-9 w-36 rounded-lg border border-slate-200 bg-white py-1 shadow-lg z-30 overflow-hidden">
+                        <button
+                          type="button"
+                          className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors flex items-center gap-2"
+                          onClick={() => {
+                            const nextName = window.prompt("Rename template", tpl.name);
+                            if (!nextName || !nextName.trim()) {
+                              setOpenMenuId(null);
+                              return;
+                            }
+                            setAppTemplates(prev => prev.map((item) => (
+                              item.id === tpl.id
+                                ? {
+                                    ...item,
+                                    name: nextName.trim(),
+                                    updated: `Updated ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`,
+                                  }
+                                : item
+                            )));
+                            setOpenMenuId(null);
+                          }}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          type="button"
+                          className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors flex items-center gap-2"
+                          onClick={() => {
+                            setPreviewId(tpl.id);
+                            setOpenMenuId(null);
+                          }}
+                        >
+                          View
+                        </button>
+                        <button
+                          type="button"
+                          className="w-full px-3 py-2 text-left text-xs font-medium text-red-500 hover:bg-red-50 transition-colors flex items-center gap-2"
+                          onClick={() => {
+                            if (confirm(`Delete template "${tpl.name}"?`)) {
+                              setAppTemplates(prev => prev.filter(t => t.id !== tpl.id));
+                            }
+                            setOpenMenuId(null);
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-100 transition-all active:scale-95"
+                    onClick={() => setPreviewId(tpl.id)}
+                    aria-label={`Preview ${tpl.name}`}
+                  >
+                    <Eye className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSelectedForUse(tpl.id);
+                      setUseStep("review");
+                    }}
+                    className="inline-flex min-w-[52px] shrink-0 items-center justify-center rounded-full border border-violet-600 bg-white px-3 py-1.5 text-[11px] font-semibold text-violet-600 shadow-sm hover:bg-violet-600 hover:text-white transition-all active:scale-95 group"
+                  >
+                    Use
+                  </button>
+                </div>
+              </div>
+            </article>
+
+          ))
+        )}
+      </div>
+
+      {/* Use Template Modal Flow */}
+      {useStep && selectedForUse && (
+        <TemplateFlowModal
+          template={appTemplates.find(t => t.id === selectedForUse)!}
+          step={useStep}
+          setStep={setUseStep}
+          router={router}
+          onClose={() => {
+            setUseStep(null);
+            setSelectedForUse(null);
+          }}
+        />
+      )}
+
+      {/* Legacy Preview Modal */}
+      {selectedForPreview && !useStep && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPreviewId(null);
+          }}
+        >
+          <div className="relative flex max-h-[60vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            {/* Close button - top right */}
+            <button
+              type="button"
+              className="absolute -right-1 -top-1 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-transparent text-slate-500 shadow-sm hover:bg-red-50 hover:text-red-500"
+              onClick={() => setPreviewId(null)}
+              aria-label="Close preview"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
+            </button>
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+              <div className="flex items-start gap-3">
+                <div
+                  className={`flex h-10 w-10 items-center justify-center rounded-2xl text-sm font-semibold ${selectedForPreview.color}`}
+                >
+                  {selectedForPreview.initial}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">
+                    {selectedForPreview.name}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Last updated {selectedForPreview.updated} · {selectedForPreview.uses} uses
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setSelectedForUse(selectedForPreview.id);
+                    setUseStep("review");
+                    setPreviewId(null);
+                  }}
+                  className="inline-flex min-w-[108px] shrink-0 items-center justify-center rounded-full border border-violet-600 bg-white px-4 py-2 text-xs font-semibold text-violet-600 shadow-sm hover:bg-violet-600 hover:text-white transition-all active:scale-95 group"
+                >
+                  <span className="transition-colors group-hover:text-white">Use template</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-6">
+              <div className="rounded-2xl border border-slate-200 bg-white p-8">
+                {selectedForPreview.fileDataUrl ? (
+                  <div className="flex min-h-[50vh] items-center justify-center rounded-[1.5rem] border border-slate-100 bg-slate-50 p-4">
+                    {selectedForPreview.mimeType?.startsWith("image/") ? (
+                      <img
+                        src={selectedForPreview.fileDataUrl}
+                        alt={selectedForPreview.name}
+                        className="max-h-[70vh] w-auto max-w-full object-contain"
+                      />
+                    ) : (
+                      <object
+                        data={selectedForPreview.fileDataUrl}
+                        type={selectedForPreview.mimeType || "application/pdf"}
+                        className="h-[70vh] w-full rounded-[1rem] border border-slate-200 bg-white"
+                        aria-label={selectedForPreview.name}
+                      >
+                        <iframe
+                          src={selectedForPreview.fileDataUrl}
+                          title={selectedForPreview.name}
+                          className="h-[70vh] w-full rounded-[1rem] border border-slate-200 bg-white"
+                        />
+                      </object>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-[13px] text-slate-500 leading-relaxed">
+                    {(() => {
+                      const templateName = selectedForPreview.name;
+                      let templateContent = "";
+
+                      if (templateName.includes("Employment Offer") || templateName.includes("Offer Letter")) {
+                        templateContent = OFFER_LETTER_TEMPLATE;
+                      }
+
+                      if (!templateContent) {
+                        return (
+                          <div className="space-y-4">
+                            {selectedForPreview.preview.sections.map((section) => (
+                              <div key={section.title}>
+                                <p className="font-semibold text-slate-700">{section.title}</p>
+                                <p className="text-slate-500 mt-1">{section.lines.join(", ")}</p>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      }
+
+                      let filledContent = templateContent;
+                      filledContent = filledContent.replace(/<strong>/g, '<span class="font-bold">').replace(/<\/strong>/g, '</span>');
+                      return <div dangerouslySetInnerHTML={{ __html: filledContent.replace(/\n/g, "<br/>") }} />;
+                    })()}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function TemplatesPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-sm text-slate-500">Loading templates...</div>}>
+      <TemplatesContent />
+    </Suspense>
+  );
+}
+
+const RECIPIENT_DATA: Record<string, { name: string, email: string }[]> = {
+  Companies: [
+    { name: "Google", email: "contact@google.com" },
+    { name: "Microsoft", email: "info@microsoft.com" },
+    { name: "Apple", email: "support@apple.com" },
+    { name: "Amazon", email: "hr@amazon.com" },
+    { name: "Meta", email: "legal@meta.com" }
+  ],
+  Employees: [
+    { name: "John Doe", email: "john.doe@example.com" },
+    { name: "Jane Smith", email: "jane.smith@example.com" },
+    { name: "Bob Johnson", email: "bob.j@example.com" },
+    { name: "Alice Brown", email: "alice.b@example.com" }
+  ],
+  Investors: [
+    { name: "Sequoia Capital", email: "invest@sequoia.com" },
+    { name: "Andreessen Horowitz", email: "deals@a16z.com" },
+    { name: "Y Combinator", email: "apply@ycombinator.com" }
+  ],
+  Clients: [
+    { name: "Acme Corp", email: "billing@acme.com" },
+    { name: "Global Industries", email: "hello@global.com" },
+    { name: "Stark Enterprises", email: "tony@stark.com" }
+  ],
+  Reviewer: [
+    { name: "Sarah Johnson", email: "sarah.johnson@review.com" },
+    { name: "Michael Chen", email: "michael.chen@review.com" },
+    { name: "Emily Rodriguez", email: "emily.r@review.com" }
+  ]
+};
+
+// Generate template fields based on the template content
+const generateTemplateFields = (templateContent: string) => {
+  const regex = /\[([^\]]+)\]/g;
+  const matches = Array.from(templateContent.matchAll(regex));
+  const placeholders = Array.from(new Set(matches.map(m => m[1])));
+
+  // Define the order of fields
+  const fieldOrder = [
+    "CANDIDATE_NAME",
+    "DESIGNATION",
+    "ANNUAL_COST",
+    "COST_IN_WORDS",
+    "JOINING_DATE",
+    "WORK_LOCATION",
+    "SENDER_NAME",
+    "SENDER_DESIGNATION",
+    "SENDER_COMPANY",
+    "CURRENT_DATE"
+  ];
+
+  // Helper to check if a key is truly a date key
+  const isDateKey = (key: string) =>
+    key.endsWith("_DATE") ||
+    key === "START_DATE" ||
+    key === "CURRENT_DATE";
+
+  // Sort placeholders based on the defined order
+  const sortedPlaceholders = placeholders.sort((a, b) => {
+    const indexA = fieldOrder.indexOf(a);
+    const indexB = fieldOrder.indexOf(b);
+    return (indexA === -1 ? 999 : indexA) - (indexB === -1 ? 999 : indexB);
+  });
+
+  return sortedPlaceholders
+    .filter(ph => ph !== "SIGNATURE") // Signature is handled separately
+    .map(key => ({
+      key,
+      label: key.split("_").map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(" "),
+      type: isDateKey(key) ? "date" : "text"
+    }));
+};
+
+function TemplateFlowModal({ template, step, setStep, onClose, router }: {
+  template: AppTemplate,
+  step: "review" | "recipients" | "send",
+  setStep: (s: "review" | "recipients" | "send" | null) => void,
+  onClose: () => void,
+  router: ReturnType<typeof useRouter>
+}) {
+  const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  const todayISO = new Date().toISOString().split("T")[0];
+
+  const hasUploadedDocument = Boolean(template.fileDataUrl);
+  const templateContent = template.name.includes("Employment Offer") || template.name.includes("Offer Letter")
+    ? OFFER_LETTER_TEMPLATE
+    : "";
+  const templateFields = templateContent ? generateTemplateFields(templateContent) : [];
+  const detectedPlaceholders = useMemo(() => getTemplatePlaceholders(template), [template]);
+
+  // Demo values for placeholders
+  const DEMO_VALUES: Record<string, string> = {
+    CURRENT_DATE: todayISO,
+    CANDIDATE_NAME: "John Smith",
+    DESIGNATION: "Senior Software Engineer",
+    ANNUAL_COST: "1,200,000",
+    COST_IN_WORDS: "Twelve Lakhs Only",
+    JOINING_DATE: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+    WORK_LOCATION: "Bangalore, India",
+    SENDER_NAME: "Emily Davis",
+    SENDER_DESIGNATION: "HR Director",
+    SENDER_COMPANY: "Digimabble",
+  };
+
+  // Initialize form values with demo placeholders
+  const getInitialFormValues = () => {
+    const initial: Record<string, string> = {};
+    const isDateKey = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
+
+    templateFields.forEach(field => {
+      if (isDateKey(field.key)) {
+        initial[field.key] = DEMO_VALUES[field.key] || todayISO;
+      } else {
+        initial[field.key] = DEMO_VALUES[field.key] || "";
+      }
+    });
+    return initial;
+  };
+
+  // Form values for template fields
+  const [formValues, setFormValues] = useState<Record<string, string>>(getInitialFormValues);
+  const [placeholderValues, setPlaceholderValues] = useState<Record<string, string>>({});
+  const liveUploadedPreviewText = useMemo(() => {
+    if (!template.detectedText) return "";
+
+    let output = template.detectedText;
+    detectedPlaceholders.forEach((placeholder) => {
+      const value = placeholderValues[placeholder]?.trim();
+      if (!value) return;
+
+      const escaped = escapeRegExp(placeholder);
+      const patterns = [
+        new RegExp(`\\[\\s*${escaped}\\s*\\]`, "gi"),
+        new RegExp(`\\(\\s*${escaped}\\s*\\)`, "gi"),
+      ];
+
+      patterns.forEach((pattern) => {
+        output = output.replace(pattern, value);
+      });
+    });
+
+    return output;
+  }, [detectedPlaceholders, placeholderValues, template.detectedText]);
+  const uploadedPreviewHtml = useMemo(() => {
+    if (template.detectedText?.trim()) {
+      return `<div>${escapeHtml(liveUploadedPreviewText || template.detectedText).replace(/\n/g, "<br/>")}</div>`;
+    }
+
+    if (detectedPlaceholders.length > 0) {
+      return detectedPlaceholders
+        .map((placeholder) => {
+          const value = placeholderValues[placeholder]?.trim() || placeholder;
+          return `
+            <div style="margin-bottom:16px;padding:14px 16px;border:1px solid #e2e8f0;border-radius:16px;background:#f8fafc;">
+              <div style="font-size:11px;font-weight:800;letter-spacing:0.18em;text-transform:uppercase;color:#94a3b8;">${escapeHtml(placeholder)}</div>
+              <div style="margin-top:6px;font-size:15px;font-weight:600;color:#0f172a;">${escapeHtml(value)}</div>
+            </div>
+          `;
+        })
+        .join("");
+    }
+
+    return `<div>${escapeHtml(template.name)}</div>`;
+  }, [detectedPlaceholders, liveUploadedPreviewText, placeholderValues, template.detectedText, template.name]);
+
+  useEffect(() => {
+    if (!detectedPlaceholders.length) return;
+    setPlaceholderValues((prev) => {
+      const next = { ...prev };
+      detectedPlaceholders.forEach((placeholder) => {
+        if (!(placeholder in next)) {
+          next[placeholder] = "";
+        }
+      });
+      return next;
+    });
+  }, [detectedPlaceholders]);
+
+  // Step 2: recipients
+  const [selectedRecipients, setSelectedRecipients] = useState<{ name: string, email: string }[]>([]);
+  const [isSent, setIsSent] = useState(false);
+  const [manualEmail, setManualEmail] = useState("");
+  const [activeCategory, setActiveCategory] = useState<string>("Companies");
+  const [recipientSearch, setRecipientSearch] = useState("");
+
+  // Categories for the sidebar
+  const categories = Object.keys(RECIPIENT_DATA);
+
+  // Auto-fill name from settings on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("smartdocs.profile.v1");
+      if (raw) {
+        const profile = JSON.parse(raw);
+        setFormValues(prev => ({
+          ...prev,
+          name: profile.fullName || prev.name,
+          email: profile.workEmail || prev.email,
+          company: profile.company || prev.company,
+        }));
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const savedSignature = typeof window !== "undefined"
+    ? localStorage.getItem("smartdocs.my_signature.v1")
+    : null;
+
+  const { startUpload: uploadDoc, isUploading: isUploadingDoc } = useUploadThing("signedDocUploader", {
+    onClientUploadComplete: (res) => {
+      if (res && res[0]) {
+        const file = res[0];
+        const SENT_DOCUMENTS_KEY = "smartdocs.sent_documents.v1";
+        // Generate filled HTML content for viewing
+        const isDateKeyLocal = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
+        let filledHtmlContent = hasUploadedDocument ? uploadedPreviewHtml : template.id === 1 ? OFFER_LETTER_TEMPLATE : "Template Document Content";
+        if (!hasUploadedDocument) {
+          Object.entries(formValues).forEach(([key, val]) => {
+            const displayVal = isDateKeyLocal(key) ? formatDate(val) : val;
+            filledHtmlContent = filledHtmlContent.replace(new RegExp(`\\[${key}\\]`, 'g'), displayVal);
+          });
+          // Add signature if available
+          if (savedSignature) {
+            filledHtmlContent = filledHtmlContent.replace(
+              /\[SIGNATURE\]/g,
+              `<div style="margin-top: 15px;">
+                <img src="${savedSignature}" alt="Signature" style="height: 80px; display: block; margin-bottom: -15px;" />
+                <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 8px;">Signature</div>
+              </div>`
+            );
+          } else {
+            filledHtmlContent = filledHtmlContent.replace(
+              /\[SIGNATURE\]/g,
+              `<div style="margin-top: 15px;">
+                <div style="height: 80px; margin-bottom: -15px;"></div>
+                <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 8px;">Signature</div>
+              </div>`
+            );
+          }
+        }
+
+        const newDoc = {
+          id: `tmp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          name: template.name,
+          subject: `Please sign: ${template.name}`,
+          recipients: selectedRecipients.length > 0
+            ? selectedRecipients
+            : [{ name: "Manual", email: manualEmail, role: "signer" }],
+          sender: { fullName: formValues.SENDER_NAME || "User", workEmail: formValues.SENDER_EMAIL || "user@example.com" },
+          sentAt: new Date().toISOString(),
+          status: activeCategory === "Reviewer" ? "reviewing" : "waiting",
+          fileUrl: file.url, // Store the cloud URL
+          fileKey: file.key, // Store the unique key for deletion
+          category: activeCategory, // Store the category for reviewer tracking
+          content: filledHtmlContent, // Store the filled HTML content for viewing
+        };
+        const savedDocs = JSON.parse(localStorage.getItem(SENT_DOCUMENTS_KEY) || "[]");
+        localStorage.setItem(SENT_DOCUMENTS_KEY, JSON.stringify([newDoc, ...savedDocs]));
+        void persistSharedDocument(newDoc);
+        setIsSent(true);
+      }
+    },
+    onUploadError: (error) => {
+      alert(`Cloud storage failed: ${error.message}`);
+    }
+  });
+
+  const formatDate = (iso: string) => {
+    if (!iso) return today;
+    try {
+      return new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+    } catch { return iso; }
+  };
+
+  const handleSend = async () => {
+    const isDateKey = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
+
+    // Check if this is a reviewed document being sent
+    const reviewedDocData = localStorage.getItem("smartdocs.send_reviewed_doc");
+    if (reviewedDocData) {
+      try {
+        const docData = JSON.parse(reviewedDocData);
+        // Use the existing file URL from the reviewed document
+        const SENT_DOCUMENTS_KEY = "smartdocs.sent_documents.v1";
+        const newDoc = {
+          id: `tmp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          name: template.name,
+          subject: `Please review: ${template.name}`,
+          recipients: selectedRecipients.length > 0
+            ? selectedRecipients
+            : [{ name: "Manual", email: manualEmail, role: "reviewer" }],
+          sender: { fullName: formValues.SENDER_NAME || "User", workEmail: formValues.SENDER_EMAIL || "user@example.com" },
+          sentAt: new Date().toISOString(),
+          status: "reviewing",
+          fileUrl: docData.fileUrl,
+          category: "Reviewer"
+        };
+        const savedDocs = JSON.parse(localStorage.getItem(SENT_DOCUMENTS_KEY) || "[]");
+        localStorage.setItem(SENT_DOCUMENTS_KEY, JSON.stringify([newDoc, ...savedDocs]));
+        void persistSharedDocument(newDoc);
+        localStorage.removeItem("smartdocs.send_reviewed_doc");
+        setIsSent(true);
+        return;
+      } catch (e) {
+        console.error("Failed to parse reviewed document data:", e);
+      }
+    }
+
+    if (hasUploadedDocument && template.fileDataUrl) {
+      try {
+        const response = await fetch(template.fileDataUrl);
+        const blob = await response.blob();
+        const baseName = template.sourceFileName || template.name;
+        const mimeType = template.mimeType || blob.type || "application/octet-stream";
+        const extension = mimeType === "application/pdf"
+          ? "pdf"
+          : mimeType.startsWith("image/")
+            ? mimeType.split("/")[1] || "png"
+            : (baseName.split(".").pop() || "bin");
+        const file = new File([blob], `${baseName.replace(/\.[^/.]+$/, "")}.${extension}`, { type: mimeType });
+        await uploadDoc([file]);
+        return;
+      } catch (error) {
+        console.error("Failed to reuse uploaded document:", error);
+      }
+    }
+
+    // Generate a simple snapshot of the document content
+    let htmlContent = template.id === 1 ? OFFER_LETTER_TEMPLATE : "Template Document Content";
+
+    Object.entries(formValues).forEach(([key, val]) => {
+      const displayVal = isDateKey(key) ? formatDate(val) : val;
+      htmlContent = htmlContent.replace(new RegExp(`\\[${key}\\]`, 'g'), displayVal);
+    });
+
+    try {
+      // Small delay to ensure state is settled
+      const canvas = document.createElement("canvas");
+      canvas.width = 800;
+      canvas.height = 1000;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Canvas context failed");
+
+      // Draw background
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Simple rendering logic (since we can't easily draw HTML to canvas without external libs)
+      ctx.fillStyle = "#0f172a";
+      ctx.font = "bold 24px sans-serif";
+      ctx.fillText(template.name, 40, 60);
+
+      ctx.fillStyle = "#334155";
+      ctx.font = "16px sans-serif";
+
+      const textOnly = htmlContent.replace(/<[^>]*>?/gm, " ").trim();
+      const words = textOnly.split(/\s+/);
+      let line = "";
+      let y = 120;
+      for (const word of words) {
+        if (ctx.measureText(line + " " + word).width < 700) {
+          line += " " + word;
+        } else {
+          ctx.fillText(line, 40, y);
+          y += 28;
+          line = word;
+        }
+        if (y > 900) break;
+      }
+      ctx.fillText(line, 40, y);
+
+      const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), "image/png"));
+      const file = new File([blob], `${template.name.replace(/\s+/g, "_")}_filled.png`, { type: "image/png" });
+
+      await uploadDoc([file]);
+    } catch (e) {
+      console.error("Template snapshot failed", e);
+      // Fallback: send without file url if snapshot fails
+      const SENT_DOCUMENTS_KEY = "smartdocs.sent_documents.v1";
+      const newDoc = {
+        id: `tmp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        name: template.name,
+        subject: `Please sign: ${template.name}`,
+        recipients: selectedRecipients.length > 0
+          ? selectedRecipients
+          : [{ name: "Manual", email: manualEmail, role: "signer" }],
+        sender: { fullName: formValues.name || "User", workEmail: formValues.email || "user@example.com" },
+        sentAt: new Date().toISOString(),
+        status: activeCategory === "Reviewer" ? "reviewing" : "pending",
+        category: activeCategory
+      };
+      const savedDocs = JSON.parse(localStorage.getItem(SENT_DOCUMENTS_KEY) || "[]");
+      localStorage.setItem(SENT_DOCUMENTS_KEY, JSON.stringify([newDoc, ...savedDocs]));
+      void persistSharedDocument(newDoc);
+      setIsSent(true);
+    }
+  };
+
+  const stepIndex = step === "review" ? 1 : step === "recipients" ? 2 : 3;
+  const stepLabel = step === "review" ? "Review Document" : step === "recipients" ? "Select Recipients" : "Confirm & Send";
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-white flex flex-col h-screen w-screen overflow-hidden text-slate-900">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-slate-100 px-8 py-4 bg-white shrink-0">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => step === "review" ? onClose() : step === "recipients" ? setStep("review") : setStep("recipients")}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-500 hover:text-slate-900 transition-all group"
+          >
+            <ChevronLeft className="w-4 h-4 transition-transform group-hover:-translate-x-0.5" />
+            <span className="text-sm font-semibold">Back</span>
+          </button>
+          <div className={`flex h-10 w-10 items-center justify-center rounded-2xl text-sm font-semibold ${template.color}`}>
+            {template.initial}
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-slate-900 leading-tight">{template.name}</h2>
+            <p className="text-xs text-slate-500 font-medium tracking-tight">Step {stepIndex}/3: {stepLabel}</p>
+          </div>
+        </div>
+        {/* Step progress dots */}
+        <div className="flex items-center gap-2 mx-auto">
+          {["review", "recipients", "send"].map((s, i) => (
+            <div key={s} className={`rounded-full transition-all ${stepIndex > i + 1 ? "w-6 h-2 bg-violet-600" : stepIndex === i + 1 ? "w-8 h-2 bg-violet-600" : "w-2 h-2 bg-slate-200"}`} />
+          ))}
+        </div>
+        <div className="flex items-center gap-3">
+          {step !== "send" && (
+            <button
+              onClick={() => {
+                if (step === "recipients" && selectedRecipients.length === 0 && !manualEmail) {
+                  alert("Please select at least one recipient");
+                  return;
+                }
+                if (step === "review") {
+                  setStep("recipients");
+                } else {
+                  setStep("send");
+                }
+              }}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 transition-all shadow-md"
+            >
+              Continue →
+            </button>
+          )}
+          <button onClick={onClose} className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-50 border border-slate-100 text-slate-400 hover:text-slate-900 transition-all shrink-0">
+            <span className="text-2xl font-light">×</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Content Area */}
+      <div className="flex-1 overflow-y-auto bg-slate-50">
+
+        {/* ── STEP 1: Review ── */}
+        {step === "review" && (
+          <div className="flex h-[calc(100vh-73px)] overflow-hidden bg-slate-50">
+            {/* Left Sidebar: Edit Fields */}
+            <div className="w-80 bg-white border-r border-slate-200 flex flex-col shrink-0">
+              <div className="p-6 border-b border-slate-100 shrink-0 bg-white/50 backdrop-blur-sm sticky top-0 z-10">
+                <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Edit Details</h3>
+                <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-wider">Update placeholders</p>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar pb-24">
+                {hasUploadedDocument ? (
+                  <>
+                    {detectedPlaceholders.length > 0 ? (
+                      detectedPlaceholders.map((placeholder, index) => (
+                        <div key={`${placeholder}-${index}`} className="space-y-1.5 group">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider group-focus-within:text-violet-500 transition-colors">
+                            {placeholder}
+                          </label>
+                          <input
+                            value={placeholderValues[placeholder] || ""}
+                            onChange={(e) => setPlaceholderValues((prev) => ({ ...prev, [placeholder]: e.target.value }))}
+                            className="w-full px-4 py-3 rounded-xl border border-slate-200 text-xs font-semibold outline-none focus:border-violet-400 focus:ring-4 focus:ring-violet-50 transition-all bg-slate-50/50 focus:bg-white placeholder:text-slate-300"
+                            placeholder={`Edit ${placeholder.toLowerCase()}...`}
+                          />
+                        </div>
+                      ))
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
+                        We could not detect placeholders from this file yet.
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  templateFields
+                    .filter((f) => f.key !== "SIGNATURE" && f.key !== "CURRENT_DATE" && f.key !== "MANAGER_NAME_DESIGNATION" && f.key !== "OFFER_EXPIRY_DATE" && f.key !== "TEAM_NAME")
+                    .map((field) => (
+                      <div key={field.key} className="space-y-1.5 group">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider group-focus-within:text-violet-500 transition-colors">{field.label}</label>
+                        <input
+                          type={field.type}
+                          value={formValues[field.key] || ""}
+                          onChange={e => setFormValues(prev => ({ ...prev, [field.key]: e.target.value }))}
+                          className="w-full px-4 py-3 rounded-xl border border-slate-200 text-xs font-semibold outline-none focus:border-violet-400 focus:ring-4 focus:ring-violet-50 transition-all bg-slate-50/50 focus:bg-white placeholder:text-slate-300"
+                          placeholder={`Enter ${field.label.toLowerCase()}...`}
+                        />
+                      </div>
+                    ))
+                )}
+              </div>
+              <div className="p-6 border-t border-slate-100 bg-white/80 backdrop-blur-sm shrink-0 relative z-20 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
+              </div>
+            </div>
+
+            {/* Main Area: Document Preview */}
+            <div className="flex-1 overflow-y-auto p-6 md:p-12 lg:p-20 flex justify-center bg-slate-100/30 custom-scrollbar">
+              <div className="w-full max-w-4xl h-fit bg-white rounded-[2.5rem] shadow-2xl shadow-slate-200 border border-slate-200 p-8 md:p-16 lg:p-20 relative overflow-hidden mb-20 origin-top animate-in fade-in zoom-in duration-500">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-slate-50 -mr-32 -mt-32 rounded-full opacity-30" />
+                <div className="absolute bottom-0 left-0 w-48 h-48 bg-slate-50 -ml-24 -mb-24 rounded-full opacity-30" />
+
+                {hasUploadedDocument && template.fileDataUrl ? (
+                  <div className="relative z-10 flex min-h-[70vh] items-center justify-center rounded-[2rem] border border-slate-100 bg-slate-50/60 p-6">
+                    {template.detectedText || detectedPlaceholders.length > 0 ? (
+                      <div className="flex h-full w-full items-center justify-center rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-2xl shadow-slate-200">
+                        <div className="h-full w-full max-w-3xl overflow-auto rounded-[1.5rem] border border-slate-100 bg-white p-8">
+                          <div className="mb-6 flex items-center justify-between border-b border-slate-100 pb-4">
+                            <div>
+                              <p className="text-[10px] font-black uppercase tracking-[0.28em] text-violet-600">
+                                Live Preview
+                              </p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                Updates as you edit placeholders on the left.
+                              </p>
+                            </div>
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+                              {template.sourceFileName || template.name}
+                            </p>
+                          </div>
+                          {template.detectedText ? (
+                            <div className="whitespace-pre-wrap break-words text-[15px] leading-8 text-slate-900">
+                              {liveUploadedPreviewText || template.detectedText}
+                            </div>
+                          ) : (
+                            <div className="space-y-4">
+                              {detectedPlaceholders.map((placeholder, index) => (
+                                <div key={`${placeholder}-${index}`} className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                                    {placeholder}
+                                  </div>
+                                  <div className="mt-1 text-[15px] font-semibold text-slate-900">
+                                    {placeholderValues[placeholder]?.trim() || placeholder}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : template.mimeType?.startsWith("image/") ? (
+                      <img
+                        src={template.fileDataUrl}
+                        alt={template.name}
+                        className="max-h-[78vh] w-auto max-w-full object-contain shadow-2xl shadow-slate-200"
+                      />
+                    ) : (
+                      <object
+                        data={template.fileDataUrl}
+                        type={template.mimeType || "application/pdf"}
+                        className="h-[78vh] w-full rounded-[1.5rem] border border-slate-200 bg-white shadow-2xl shadow-slate-200"
+                        aria-label={template.name}
+                      >
+                        <iframe
+                          src={template.fileDataUrl}
+                          title={template.name}
+                          className="h-[78vh] w-full rounded-[1.5rem] border border-slate-200 bg-white shadow-2xl shadow-slate-200"
+                        />
+                      </object>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex justify-between items-start mb-20 relative z-10 border-b border-slate-100 pb-12">
+                      <div className="flex items-center gap-6">
+                        <div className="w-20 h-20 rounded-[2rem] bg-violet-600 flex items-center justify-center text-white text-3xl font-black shadow-2xl shadow-violet-200 overflow-hidden relative">
+                          <div className="absolute inset-0 bg-white/10 opacity-50" />
+                          <span className="relative z-10">{template.initial}</span>
+                        </div>
+                        <div>
+                          <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-none mb-2">{template.name}</h1>
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">{template.category}</span>
+                            <span className="w-1 h-1 rounded-full bg-slate-200" />
+                            <span className="text-xs text-slate-400 font-bold tracking-tight">V2.1.0</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[10px] font-black text-slate-300 uppercase tracking-[0.3em] mb-2">Generated On</div>
+                        <div className="text-lg font-black text-slate-900 tracking-tighter leading-none">{formatDate(formValues.CURRENT_DATE || todayISO)}</div>
+                      </div>
+                    </div>
+
+                    {/* Full letter content with replaced placeholders */}
+                    <div className="space-y-6 text-slate-500 leading-[1.8] text-[15px] font-sans antialiased tracking-tight relative z-10 px-4" style={{ fontFamily: 'inherit' }}>
+                      {(() => {
+                        let filledContent = templateContent;
+
+                        // First handle standard bold tags for safety
+                        filledContent = filledContent.replace(/<strong>/g, '<span class="font-bold text-slate-500">').replace(/<\/strong>/g, '</span>');
+
+                        Object.keys(formValues).forEach(key => {
+                          const val = formValues[key] || `<span style="font-family: inherit;">[${key}]</span>`;
+                          const isDateKey = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
+                          const displayVal = isDateKey(key) ? formatDate(val) : val;
+                          filledContent = filledContent.replace(new RegExp(`\\[${key}\\]`, 'g'), `<span style="font-family: inherit;">${displayVal}</span>`);
+                        });
+
+                        // Add signature logic
+                        if (savedSignature) {
+                          filledContent = filledContent.replace(
+                            /\[SIGNATURE\]/g,
+                            `<div style="margin-top: 15px;">
+                              <img src="${savedSignature}" alt="Signature" class="h-20 w-auto object-contain" style="display: block; margin-bottom: -15px;" />
+                              <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 8px;">Signature</div>
+                            </div>`
+                          );
+                        } else {
+                          filledContent = filledContent.replace(
+                            /\[SIGNATURE\]/g,
+                            `<div style="margin-top: 15px;">
+                              <div style="height: 80px; margin-bottom: -15px;"></div>
+                              <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 8px;">Signature</div>
+                            </div>`
+                          );
+                        }
+                        return <div dangerouslySetInnerHTML={{ __html: filledContent.replace(/\n/g, "<br/>") }} />;
+                      })()}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── STEP 2: Select Recipients ── */}
+        {step === "recipients" && (
+          <div className="flex-1 p-8 lg:p-12 bg-slate-100/30 flex items-center justify-center min-h-[calc(100vh-73px)]">
+            <div className="w-full max-w-6xl flex flex-col gap-6">
+              <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-slate-200/50 border border-slate-200 overflow-hidden flex h-[620px]">
+                {/* Left Sidebar: Categories */}
+                <div className="w-72 bg-slate-50/50 border-r border-slate-100 p-8 flex flex-col gap-6">
+                  <div>
+                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-6 px-2">Categories</h3>
+                    <div className="space-y-1.5">
+                      {categories.map(cat => {
+                        const count = RECIPIENT_DATA[cat].length;
+                        const isActive = activeCategory === cat;
+                        return (
+                          <button
+                            key={cat}
+                            onClick={() => {
+                              setActiveCategory(cat);
+                              setRecipientSearch("");
+                            }}
+                            className={`w-full flex items-center justify-between px-4 py-3.5 rounded-2xl transition-all duration-200 group ${isActive ? "bg-violet-100 text-violet-700 shadow-sm" : "bg-transparent text-slate-500 hover:bg-white hover:text-violet-600 hover:shadow-sm"}`}
+                          >
+                            <span className={`text-sm font-bold ${isActive ? "text-violet-700" : "text-slate-600 group-hover:text-violet-600"}`}>{cat}</span>
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg ${isActive ? "bg-violet-200 text-violet-800" : "bg-slate-100 text-slate-400 group-hover:bg-violet-50 group-hover:text-violet-600"}`}>
+                              {count}
+                            </span>
+                          </button>
+                        );
+                      })}
+                      {/* Manual Entry Toggle */}
+                      <button
+                        onClick={() => setActiveCategory("Manual")}
+                        className={`w-full flex items-center justify-between px-4 py-3.5 rounded-2xl transition-all duration-200 group ${activeCategory === "Manual" ? "bg-violet-100 text-violet-700 shadow-sm" : "bg-transparent text-slate-500 hover:bg-white hover:text-violet-600 hover:shadow-sm"}`}
+                      >
+                        <span className={`text-sm font-bold ${activeCategory === "Manual" ? "text-violet-700" : "text-slate-600 group-hover:text-violet-600"}`}>Manual Entry</span>
+                        <div className={`w-2 h-2 rounded-full ${activeCategory === "Manual" ? "bg-violet-500" : "bg-slate-200"}`} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-auto pt-6 border-t border-slate-100">
+                    <div className="px-2 mb-4 flex items-center justify-between">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Selected</span>
+                      <span className="text-[10px] font-black text-violet-600 bg-violet-50 px-2 py-0.5 rounded-lg">{selectedRecipients.length}</span>
+                    </div>
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
+                      {selectedRecipients.map(r => (
+                        <div key={r.email} className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-white border border-slate-100 group">
+                          <div className="truncate">
+                            <p className="text-[10px] font-bold text-slate-900 truncate">{r.name}</p>
+                            <p className="text-[8px] text-slate-400 truncate">{r.email}</p>
+                          </div>
+                          <button
+                            onClick={() => setSelectedRecipients(selectedRecipients.filter(item => item.email !== r.email))}
+                            className="w-5 h-5 flex items-center justify-center rounded-lg hover:bg-red-50 text-slate-300 hover:text-red-500 transition-colors shrink-0"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                      {selectedRecipients.length === 0 && (
+                        <p className="text-[9px] text-slate-400 italic text-center py-4">No recipients selected</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Main Content Area */}
+                <div className="flex-1 bg-white flex flex-col">
+                  {activeCategory === "Manual" ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-12 text-center max-w-md mx-auto space-y-8">
+                      <div className="w-20 h-20 rounded-3xl bg-violet-50 flex items-center justify-center text-3xl shadow-inner">✉️</div>
+                      <div className="space-y-2">
+                        <h4 className="text-xl font-black text-slate-900 tracking-tight">Enter Email Manually</h4>
+                        <p className="text-sm text-slate-500 font-medium leading-relaxed">Send this document to an external recipient not listed in our system.</p>
+                      </div>
+                      <div className="w-full relative">
+                        <input
+                          type="email"
+                          placeholder="recipient@example.com"
+                          className="w-full px-6 py-4 rounded-2xl border-2 border-slate-100 focus:outline-none focus:border-violet-400 text-sm font-semibold transition-all shadow-sm"
+                          value={manualEmail}
+                          onChange={(e) => setManualEmail(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Search Header */}
+                      <div className="px-10 py-8 border-b border-slate-50 shrink-0">
+                        <div className="flex items-center justify-between mb-6">
+                          <div>
+                            <h4 className="text-2xl font-black text-slate-900 tracking-tight">{activeCategory}</h4>
+                            <p className="text-xs text-slate-400 font-medium mt-1">Select one or more recipients to continue</p>
+                          </div>
+                        </div>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder={`Search by name or email in ${activeCategory.toLowerCase()}...`}
+                            value={recipientSearch}
+                            onChange={(e) => setRecipientSearch(e.target.value)}
+                            className="w-full pl-12 pr-4 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-violet-400 focus:bg-white text-sm font-semibold outline-none transition-all placeholder:text-slate-400"
+                          />
+                          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
+                        </div>
+                      </div>
+
+                      {/* Recipient Grid */}
+                      <div className="flex-1 overflow-y-auto p-10 custom-scrollbar">
+                        <div className="grid grid-cols-2 gap-4">
+                          {RECIPIENT_DATA[activeCategory]
+                            .filter(r => recipientSearch === "" || r.name.toLowerCase().includes(recipientSearch.toLowerCase()) || r.email.toLowerCase().includes(recipientSearch.toLowerCase()))
+                            .map(r => {
+                              const isSelected = selectedRecipients.some(item => item.email === r.email);
+                              return (
+                                <button
+                                  key={r.email}
+                                  onClick={() => {
+                                    if (isSelected) {
+                                      setSelectedRecipients(selectedRecipients.filter(item => item.email !== r.email));
+                                    } else {
+                                      setSelectedRecipients([...selectedRecipients, r]);
+                                    }
+                                  }}
+                                  className={`flex items-center text-left gap-4 p-4 rounded-[1.5rem] border-2 transition-all duration-300 group ${isSelected ? "border-violet-400 bg-violet-50/50 shadow-md shadow-violet-100/30" : "border-slate-50 bg-white hover:border-violet-200"}`}
+                                >
+                                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-sm font-semibold transition-colors ${isSelected ? "bg-violet-500 text-white" : "bg-slate-100 text-slate-400 group-hover:bg-violet-100 group-hover:text-violet-600 shadow-inner"}`}>
+                                    {r.name.charAt(0)}
+                                  </div>
+                                  <div className="flex-1 truncate">
+                                    <p className="text-sm font-bold text-slate-900 truncate leading-tight mb-0.5">{r.name}</p>
+                                    <p className="text-[10px] text-slate-400 font-bold truncate tracking-tight">{r.email}</p>
+                                  </div>
+                                  <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${isSelected ? "bg-violet-500 scale-100" : "bg-slate-100 scale-75 opacity-0 group-hover:opacity-100"}`}>
+                                    <svg className={`w-3.5 h-3.5 ${isSelected ? "text-white" : "text-slate-400"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
+                                    </svg>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+            </div>
+          </div>
+        )}
+
+        {/* ── STEP 3: Confirm & Send ── */}
+        {step === "send" && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-300">
+            <div className="w-full max-w-3xl mx-4 bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-300">
+              {isSent ? (
+                <div className="px-10 py-8 text-center space-y-5">
+                  <div className="flex items-center justify-center gap-4">
+                    <div className="rounded-full bg-green-50 w-16 h-16 flex items-center justify-center shadow-inner shrink-0">
+                      <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                    <div className="text-left">
+                      <h3 className="text-xl font-black text-green-600 tracking-tighter">{activeCategory === "Reviewer" ? "Sent for Review!" : "Sent Successfully!"}</h3>
+                      <p className="text-slate-500 text-sm font-medium">{activeCategory === "Reviewer" ? "Track progress in shared document page." : "Your document has been sent. Check status in shared documents."}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => router.push("/dashboard/documents")} className="py-2.5 px-8 rounded-full bg-violet-600 text-white font-bold text-sm hover:bg-violet-800 transition-all">Go to Shared Documents</button>
+                </div>
+              ) : (
+                <>
+                  {/* Popup Header */}
+                  <div className="px-8 pt-8 pb-2">
+                    <h3 className="text-lg font-black text-slate-900 tracking-tight leading-tight">Confirm & Send</h3>
+                    <p className="text-slate-400 text-xs font-medium mt-1">
+                      Sending <span className="text-violet-600 font-bold">&ldquo;{template.name}&rdquo;</span> to {selectedRecipients.length || 1} recipient{(selectedRecipients.length > 1 || (!selectedRecipients.length && manualEmail)) ? "s" : ""}
+                    </p>
+                  </div>
+
+                  {/* Popup Body — horizontal layout */}
+                  <div className="px-8 py-5 flex gap-6">
+                    {/* Sender Details */}
+                    <div className="flex-1 space-y-2">
+                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Sender Details</h4>
+                      <div className="bg-slate-50 rounded-2xl p-4 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500 font-medium">Sender Name</span>
+                          <span className="text-sm font-semibold text-slate-900">{formValues.SENDER_NAME || "Digimabble Sender"}</span>
+                        </div>
+                        <div className="border-t border-slate-100" />
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500 font-medium">Company</span>
+                          <span className="text-sm font-semibold text-slate-900">{formValues.SENDER_COMPANY || "Digimabble"}</span>
+                        </div>
+                        <div className="border-t border-slate-100" />
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500 font-medium">Designation</span>
+                          <span className="text-sm font-semibold text-slate-900">{formValues.SENDER_DESIGNATION || "HR Director"}</span>
+                        </div>
+                        <div className="border-t border-slate-100" />
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500 font-medium">Date</span>
+                          <span className="text-sm font-semibold text-slate-900">{formatDate(formValues.CURRENT_DATE || todayISO)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Recipients */}
+                    <div className="flex-1 space-y-2">
+                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Recipients</h4>
+                      <div className="space-y-2 max-h-44 overflow-y-auto custom-scrollbar">
+                        {selectedRecipients.map(r => (
+                          <div key={r.email} className="flex items-center gap-3 p-2.5 bg-slate-50 rounded-xl">
+                            <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center text-violet-600 text-xs font-black shrink-0">
+                              {r.name.charAt(0)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-semibold text-slate-900 truncate">{r.name}</p>
+                              <p className="text-[10px] text-slate-500 font-medium truncate">{r.email}</p>
+                            </div>
+                          </div>
+                        ))}
+                        {selectedRecipients.length === 0 && manualEmail && (
+                          <div className="flex items-center gap-3 p-2.5 bg-slate-50 rounded-xl">
+                            <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center text-violet-600 text-xs font-black shrink-0">
+                              ✉
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-semibold text-slate-900 truncate">External Contact</p>
+                              <p className="text-[10px] text-slate-500 font-medium truncate">{manualEmail}</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Popup Footer */}
+                  <div className="px-8 pb-6 pt-1 flex gap-3">
+                    <button
+                      onClick={() => setStep("recipients")}
+                      className="flex-1 py-3 rounded-2xl text-slate-600 font-bold text-sm hover:text-slate-900 transition-all active:scale-95"
+                    >
+                      Back
+                    </button>
+                    <button
+                      onClick={handleSend}
+                      disabled={isUploadingDoc}
+                      className="flex-[2] py-3 rounded-2xl bg-violet-600 text-white font-bold text-sm shadow-lg shadow-violet-200 hover:bg-violet-700 hover:-translate-y-0.5 transition-all active:scale-95 disabled:bg-slate-300 disabled:shadow-none flex items-center justify-center gap-2"
+                    >
+                      {isUploadingDoc ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Sending...
+                        </>
+                      ) : (
+                        activeCategory === "Reviewer" ? "Review" : "Send Now"
+                      )}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )
+        }
+      </div >
+    </div >
+  );
+}
