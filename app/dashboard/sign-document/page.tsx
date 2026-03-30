@@ -206,7 +206,7 @@ export default function SignDocumentPage() {
               throw sourceUpdateError;
             }
 
-            setBanner("Document signed successfully. The sender can now view the signed file.");
+            setBanner("Your signed document has been sent and you can view in shared documents.");
             setTimeout(() => {
               setSignedPreview(null);
               setIsSigning(false);
@@ -998,7 +998,7 @@ export default function SignDocumentPage() {
 
       let newHtml = htmlContent;
       // We overlay the signature directly at the dragged absolute X/Y coordinates
-      const sigImg = `<div style="position: absolute; left: ${signatureX}px; top: ${signatureY}px; width: ${signatureWidthPx}px; height: ${signatureHeightPx}px; z-index: 50; pointer-events: none;"><img src="${savedSignature}" alt="Signature" style="width: 100%; height: 100%; object-fit: contain;" /><div style="position: absolute; bottom: -20px; left: 0; width: 100%; text-align: center; font-weight: 700; color: #64748b; font-size: 10px; text-transform: uppercase;">Signed via Dashboard</div></div>`;
+      const sigImg = `<div style="position: absolute; left: ${signatureX}px; top: ${signatureY}px; width: ${signatureWidthPx}px; height: ${signatureHeightPx}px; z-index: 50; pointer-events: none;"><img src="${savedSignature}" alt="Signature" style="width: 100%; height: 100%; object-fit: contain;" /></div>`;
 
       // Simple append; the viewer wrapper will be position: relative
       newHtml += sigImg;
@@ -1148,7 +1148,7 @@ export default function SignDocumentPage() {
                 className="rounded-full bg-violet-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-violet-900/20 hover:bg-violet-500 transition-all active:scale-95"
                 onClick={saveSignedImage}
               >
-                Sign
+                Next
               </button>
             </div>
           </header>
@@ -1497,7 +1497,7 @@ export default function SignDocumentPage() {
 
                               if (sourceUpdateError) throw sourceUpdateError;
 
-                              setBanner("Document signed successfully. The sender can now view the updated document.");
+                              setBanner("Your signed document has been sent and you can view in shared documents.");
                               setTimeout(() => {
                                 setSignedHtmlContent(null);
                                 setSignedPreview(null);
@@ -1533,7 +1533,7 @@ export default function SignDocumentPage() {
                             {sourceDocumentId ? "Updating..." : "Sending..."}
                           </>
                         ) : (
-                          sourceDocumentId ? "Signed" : "Send"
+                          sourceDocumentId ? "Confirm and Send" : "Send"
                         )}
                       </button>
                     </div>

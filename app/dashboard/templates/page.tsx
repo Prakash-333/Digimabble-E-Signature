@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
-import { Search, Eye, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2 } from "lucide-react";
+import { Search, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2 } from "lucide-react";
 import { OFFER_LETTER_TEMPLATE, type Template } from "./data";
 import { useUploadThing } from "../../lib/uploadthing-client";
 import { supabase } from "../../lib/supabase/browser";
@@ -185,7 +185,6 @@ function TemplatesContent() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState(urlSearch);
   const [favorites, setFavorites] = useState<Set<TemplateId>>(new Set());
-  const [showCreateDropdown, setShowCreateDropdown] = useState(false);
   const [useStep, setUseStep] = useState<"review" | "recipients" | "send" | null>(null);
   const [selectedForUse, setSelectedForUse] = useState<TemplateId | null>(null);
   const [appTemplates, setAppTemplates] = useState<AppTemplate[]>([]);
@@ -306,7 +305,6 @@ function TemplatesContent() {
           const newTemplates = (insertedRows ?? []).map((row: TemplateRow) => mapTemplateRowToAppTemplate(row));
           setAppTemplates((prev) => [...newTemplates, ...prev]);
         }
-        setShowCreateDropdown(false);
       }
 
       pendingTemplateAnalysisRef.current = [];
@@ -322,10 +320,14 @@ function TemplatesContent() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const files = Array.from(e.target.files).filter(
-        (file) => file.type === "application/pdf" || file.type.startsWith("image/")
+        (file) =>
+          file.type === "application/pdf" ||
+          file.type.startsWith("image/") ||
+          file.type === "application/msword" ||
+          file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
       );
       if (!files.length) {
-        alert("Please add a PDF or image file.");
+        alert("Please add a PDF, Image, or Word document.");
         e.target.value = "";
         return;
       }
@@ -438,6 +440,12 @@ function TemplatesContent() {
   const getTemplateKind = (tpl: AppTemplate) => {
     if (tpl.mimeType?.startsWith("image/")) return "image";
     if (tpl.mimeType === "application/pdf" || tpl.sourceFileName?.toLowerCase().endsWith(".pdf")) return "pdf";
+    if (
+      tpl.mimeType === "application/msword" ||
+      tpl.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      tpl.sourceFileName?.toLowerCase().endsWith(".doc") ||
+      tpl.sourceFileName?.toLowerCase().endsWith(".docx")
+    ) return "word";
     return "template";
   };
 
@@ -447,12 +455,7 @@ function TemplatesContent() {
     }
 
     return (
-      <div className="flex h-full w-full flex-col justify-between bg-gradient-to-br from-slate-50 via-white to-slate-100 p-4">
-        <div className="flex items-center gap-2">
-          <span className={`inline-flex rounded-md px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${getTemplateKind(tpl) === "pdf" ? "bg-red-100 text-red-600" : getTemplateKind(tpl) === "image" ? "bg-emerald-100 text-emerald-600" : "bg-violet-100 text-violet-600"}`}>
-            {getTemplateKind(tpl)}
-          </span>
-        </div>
+      <div className="flex h-full w-full flex-col justify-center bg-gradient-to-br from-slate-50 via-white to-slate-100 p-4">
         <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
           <p className="line-clamp-3 text-xs font-semibold leading-5 text-slate-700">
             {tpl.preview.sections[0]?.lines[0] || tpl.name}
@@ -479,8 +482,15 @@ function TemplatesContent() {
           </h1>
         </div>
         <div className="relative">
+          <input
+            type="file"
+            ref={fileInputRef}
+            className="hidden"
+            accept="application/pdf,image/*,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            onChange={handleFileUpload}
+          />
           <button
-            onClick={() => setShowCreateDropdown(!showCreateDropdown)}
+            onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
             className="inline-flex items-center rounded-full border border-violet-600 bg-white px-4 py-2 text-xs font-semibold text-violet-600 shadow-sm hover:bg-violet-600 hover:text-white transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -490,29 +500,9 @@ function TemplatesContent() {
                 Uploading...
               </>
             ) : (
-              "+ Create Template"
+              "+ Upload Template"
             )}
           </button>
-
-          {showCreateDropdown && (
-            <div className="absolute right-0 mt-2 w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-lg z-10">
-              <input
-                type="file"
-                ref={fileInputRef}
-                className="hidden"
-                accept="application/pdf,image/*"
-                onChange={handleFileUpload}
-              />
-              <button
-                className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-violet-50 hover:text-violet-700 rounded-lg transition-colors"
-                onClick={() => {
-                  fileInputRef.current?.click();
-                }}
-              >
-                Add files
-              </button>
-            </div>
-          )}
         </div>
       </div>
 
@@ -587,12 +577,12 @@ function TemplatesContent() {
                 {viewMode === "grid" ? null : getTemplatePreview(tpl)}
               </div>
               <div className={viewMode === "grid" ? "px-4 pb-3 pt-4" : "min-w-0 flex-1"}>
-                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-3 min-w-0">
                     <div
-                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-semibold ${getTemplateKind(tpl) === "pdf" ? "bg-red-100 text-red-600" : getTemplateKind(tpl) === "image" ? "bg-emerald-100 text-emerald-600" : tpl.color}`}
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-semibold ${getTemplateKind(tpl) === "pdf" ? "bg-red-100 text-red-600" : getTemplateKind(tpl) === "image" ? "bg-emerald-100 text-emerald-600" : getTemplateKind(tpl) === "word" ? "bg-blue-100 text-blue-600" : tpl.color}`}
                     >
-                      {getTemplateKind(tpl) === "image" ? <ImageIcon className="h-4 w-4" /> : getTemplateKind(tpl) === "pdf" ? "PDF" : <FileImage className="h-4 w-4" />}
+                      {getTemplateKind(tpl) === "image" ? <ImageIcon className="h-4 w-4" /> : getTemplateKind(tpl) === "pdf" ? "PDF" : getTemplateKind(tpl) === "word" ? "DOC" : <FileImage className="h-4 w-4" />}
                     </div>
                     <div className="min-w-0 space-y-1">
                       <p className="truncate text-sm font-semibold text-slate-900">
@@ -603,45 +593,7 @@ function TemplatesContent() {
                       </p>
                     </div>
                   </div>
-                </div>
-                {viewMode === "grid" && (
-                  <div className="mt-4 h-40 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                    {getTemplatePreview(tpl)}
-                  </div>
-                )}
-                {viewMode === "grid" && (
-                  <div className="mt-4 flex items-center gap-2">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-500 text-xs font-semibold text-white">
-                      {tpl.initial}
-                    </div>
-                    <p className="truncate text-xs text-slate-600">
-                      Template preview
-                    </p>
-                  </div>
-                )}
-              </div>
-              <div className={viewMode === "grid" ? "border-t border-slate-200 bg-white/50 px-4 py-3" : "shrink-0"}>
-                <div className={`flex items-center ${viewMode === "grid" ? "justify-between text-[11px] text-slate-500" : "gap-2"}`}>
-                  <button
-                    type="button"
-                    className={`inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-base leading-none transition-all active:scale-95 ${favorites.has(tpl.id) ? "text-violet-600" : "text-slate-300 hover:text-slate-400"}`}
-                    onClick={() => {
-                      setFavorites(prev => {
-                        const newFavorites = new Set(prev);
-                        if (newFavorites.has(tpl.id)) {
-                          newFavorites.delete(tpl.id);
-                        } else {
-                          newFavorites.add(tpl.id);
-                        }
-                        return newFavorites;
-                      });
-                    }}
-                    aria-label="Favorite"
-                    title="Favorite"
-                  >
-                    {favorites.has(tpl.id) ? "★" : "☆"}
-                  </button>
-                  <div className="relative">
+                  <div className="relative shrink-0">
                     <button
                       type="button"
                       className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-100 transition-all active:scale-95"
@@ -700,6 +652,24 @@ function TemplatesContent() {
                           type="button"
                           className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors flex items-center gap-2"
                           onClick={() => {
+                            setFavorites(prev => {
+                              const newFavorites = new Set(prev);
+                              if (newFavorites.has(tpl.id)) {
+                                newFavorites.delete(tpl.id);
+                              } else {
+                                newFavorites.add(tpl.id);
+                              }
+                              return newFavorites;
+                            });
+                            setOpenMenuId(null);
+                          }}
+                        >
+                          {favorites.has(tpl.id) ? "Remove Favourite" : "Add to Favourite"}
+                        </button>
+                        <button
+                          type="button"
+                          className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors flex items-center gap-2"
+                          onClick={() => {
                             setPreviewId(tpl.id);
                             setOpenMenuId(null);
                           }}
@@ -729,14 +699,15 @@ function TemplatesContent() {
                       </div>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 hover:bg-slate-100 transition-all active:scale-95"
-                    onClick={() => setPreviewId(tpl.id)}
-                    aria-label={`Preview ${tpl.name}`}
-                  >
-                    <Eye className="h-4 w-4" />
-                  </button>
+                </div>
+                {viewMode === "grid" && (
+                  <div className="mt-4 h-40 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                    {getTemplatePreview(tpl)}
+                  </div>
+                )}
+              </div>
+              <div className={viewMode === "grid" ? "border-t border-slate-200 bg-white/50 px-4 py-3" : "shrink-0"}>
+                <div className={`flex items-center ${viewMode === "grid" ? "justify-end text-[11px] text-slate-500" : "gap-2"}`}>
                   <button
                     onClick={() => {
                       setSelectedForUse(tpl.id);
@@ -832,19 +803,23 @@ function TemplatesContent() {
                         alt={selectedForPreview.name}
                         className="max-h-[70vh] w-auto max-w-full object-contain"
                       />
+                    ) : getTemplateKind(selectedForPreview) === "word" ? (
+                      <div className="w-full max-h-[70vh] overflow-y-auto">
+                        <div className="mb-4 flex items-center gap-2">
+                          <span className="inline-flex rounded-md bg-blue-100 px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-blue-600">
+                            DOC
+                          </span>
+                        </div>
+                        <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-slate-700">
+                          {selectedForPreview.detectedText || "No text content could be extracted from this Word document."}
+                        </div>
+                      </div>
                     ) : (
-                      <object
-                        data={selectedForPreview.fileDataUrl}
-                        type={selectedForPreview.mimeType || "application/pdf"}
+                      <iframe
+                        src={selectedForPreview.fileDataUrl}
+                        title={selectedForPreview.name}
                         className="h-[70vh] w-full rounded-[1rem] border border-slate-200 bg-white"
-                        aria-label={selectedForPreview.name}
-                      >
-                        <iframe
-                          src={selectedForPreview.fileDataUrl}
-                          title={selectedForPreview.name}
-                          className="h-[70vh] w-full rounded-[1rem] border border-slate-200 bg-white"
-                        />
-                      </object>
+                      />
                     )}
                   </div>
                 ) : (
@@ -1517,7 +1492,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                   setStep("send");
                 }
               }}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-violet-600 text-white text-sm font-bold hover:bg-violet-700 transition-all shadow-md"
+              disabled={step === "recipients" && selectedRecipients.length === 0 && !manualEmail}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-white text-sm font-bold transition-all shadow-md ${step === "recipients" && selectedRecipients.length === 0 && !manualEmail ? "bg-violet-300 cursor-not-allowed" : "bg-violet-600 hover:bg-violet-700"}`}
             >
               Continue →
             </button>
@@ -1536,9 +1512,9 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
           <div className="flex h-[calc(100vh-73px)] overflow-hidden bg-slate-50">
             {/* Left Sidebar: Edit Fields */}
             <div className="w-80 bg-white border-r border-slate-200 flex flex-col shrink-0">
-              <div className="p-6 border-b border-slate-100 shrink-0 bg-white/50 backdrop-blur-sm sticky top-0 z-10">
-                <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Edit Details</h3>
-                <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-wider">Update placeholders</p>
+              <div className="px-6 pt-6 pb-4 border-b border-slate-100 shrink-0 bg-white/50 backdrop-blur-sm sticky top-0 z-10">
+                <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">Edit details</h3>
+                <p className="text-xs text-slate-500 font-medium mt-1">Update placeholders</p>
               </div>
               <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar pb-24">
                 {hasUploadedDocument ? (
@@ -1546,7 +1522,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                     {detectedPlaceholders.length > 0 ? (
                       detectedPlaceholders.map((placeholder, index) => (
                         <div key={`${placeholder}-${index}`} className="space-y-1.5 group">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider group-focus-within:text-violet-500 transition-colors">
+                          <label className="text-[10px] font-black text-slate-600 uppercase tracking-wider group-focus-within:text-violet-500 transition-colors">
                             {placeholder}
                           </label>
                           <input
@@ -1568,7 +1544,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                     .filter((f) => f.key !== "SIGNATURE" && f.key !== "CURRENT_DATE" && f.key !== "MANAGER_NAME_DESIGNATION" && f.key !== "OFFER_EXPIRY_DATE" && f.key !== "TEAM_NAME")
                     .map((field) => (
                       <div key={field.key} className="space-y-1.5 group">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider group-focus-within:text-violet-500 transition-colors">{field.label}</label>
+                        <label className="text-[10px] font-black text-slate-600 uppercase tracking-wider group-focus-within:text-violet-500 transition-colors">{field.label}</label>
                         <input
                           type={field.type}
                           value={formValues[field.key] || ""}
@@ -1585,29 +1561,14 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
             </div>
 
             {/* Main Area: Document Preview */}
-            <div className="flex-1 overflow-y-auto p-6 md:p-12 lg:p-20 flex justify-center bg-slate-100/30 custom-scrollbar">
-              <div className="w-full max-w-4xl h-fit bg-white rounded-[2.5rem] shadow-2xl shadow-slate-200 border border-slate-200 p-8 md:p-16 lg:p-20 relative overflow-hidden mb-20 origin-top animate-in fade-in zoom-in duration-500">
-                <div className="absolute top-0 right-0 w-64 h-64 bg-slate-50 -mr-32 -mt-32 rounded-full opacity-30" />
-                <div className="absolute bottom-0 left-0 w-48 h-48 bg-slate-50 -ml-24 -mb-24 rounded-full opacity-30" />
-
-                {hasUploadedDocument && template.fileDataUrl ? (
-                  <div className="relative z-10 flex min-h-[70vh] items-center justify-center rounded-[2rem] border border-slate-100 bg-slate-50/60 p-6">
-                    {template.detectedText || detectedPlaceholders.length > 0 ? (
-                      <div className="flex h-full w-full items-center justify-center rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-2xl shadow-slate-200">
-                        <div className="h-full w-full max-w-3xl overflow-auto rounded-[1.5rem] border border-slate-100 bg-white p-8">
-                          <div className="mb-6 flex items-center justify-between border-b border-slate-100 pb-4">
-                            <div>
-                              <p className="text-[10px] font-black uppercase tracking-[0.28em] text-violet-600">
-                                Live Preview
-                              </p>
-                              <p className="mt-1 text-xs text-slate-500">
-                                Updates as you edit placeholders on the left.
-                              </p>
-                            </div>
-                            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-                              {template.sourceFileName || template.name}
-                            </p>
-                          </div>
+            <div className="flex-1 overflow-y-auto p-6 flex justify-center bg-slate-100/30 custom-scrollbar">
+              <div className="w-full max-w-4xl h-fit">
+                <p className="text-sm font-bold text-slate-700 mb-4">Live preview</p>
+                <div className="bg-white rounded-2xl shadow-lg shadow-slate-200 border border-slate-200 overflow-hidden">
+                  {hasUploadedDocument && template.fileDataUrl ? (
+                    <div className="p-6">
+                      {template.detectedText || detectedPlaceholders.length > 0 ? (
+                        <div className="overflow-auto max-h-[75vh]">
                           {template.detectedText ? (
                             <div className="whitespace-pre-wrap break-words text-[15px] leading-8 text-slate-900">
                               {liveUploadedPreviewText || template.detectedText}
@@ -1627,89 +1588,76 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                             </div>
                           )}
                         </div>
-                      </div>
-                    ) : template.mimeType?.startsWith("image/") ? (
-                      <img
-                        src={template.fileDataUrl}
-                        alt={template.name}
-                        className="max-h-[78vh] w-auto max-w-full object-contain shadow-2xl shadow-slate-200"
-                      />
-                    ) : (
-                      <object
-                        data={template.fileDataUrl}
-                        type={template.mimeType || "application/pdf"}
-                        className="h-[78vh] w-full rounded-[1.5rem] border border-slate-200 bg-white shadow-2xl shadow-slate-200"
-                        aria-label={template.name}
-                      >
+                      ) : template.mimeType?.startsWith("image/") ? (
+                        <img
+                          src={template.fileDataUrl}
+                          alt={template.name}
+                          className="max-h-[75vh] w-auto max-w-full object-contain mx-auto"
+                        />
+                      ) : template.mimeType === "application/msword" || template.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || template.sourceFileName?.toLowerCase().endsWith(".doc") || template.sourceFileName?.toLowerCase().endsWith(".docx") ? (
+                        <div className="overflow-auto max-h-[75vh]">
+                          <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-slate-700">
+                            {liveUploadedPreviewText || template.detectedText || "No text content could be extracted from this Word document."}
+                          </div>
+                        </div>
+                      ) : (
                         <iframe
                           src={template.fileDataUrl}
                           title={template.name}
-                          className="h-[78vh] w-full rounded-[1.5rem] border border-slate-200 bg-white shadow-2xl shadow-slate-200"
+                          className="h-[75vh] w-full"
                         />
-                      </object>
-                    )}
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex justify-between items-start mb-20 relative z-10 border-b border-slate-100 pb-12">
-                      <div className="flex items-center gap-6">
-                        <div className="w-20 h-20 rounded-[2rem] bg-violet-600 flex items-center justify-center text-white text-3xl font-black shadow-2xl shadow-violet-200 overflow-hidden relative">
-                          <div className="absolute inset-0 bg-white/10 opacity-50" />
-                          <span className="relative z-10">{template.initial}</span>
-                        </div>
-                        <div>
-                          <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-none mb-2">{template.name}</h1>
-                          <div className="flex items-center gap-2">
-                            <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">{template.category}</span>
-                            <span className="w-1 h-1 rounded-full bg-slate-200" />
-                            <span className="text-xs text-slate-400 font-bold tracking-tight">V2.1.0</span>
-                          </div>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="p-6">
+                        <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-none mb-2">{template.name}</h1>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">{template.category}</span>
+                          <span className="w-1 h-1 rounded-full bg-slate-200" />
+                          <span className="text-xs text-slate-400 font-bold tracking-tight">V2.1.0</span>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className="text-[10px] font-black text-slate-300 uppercase tracking-[0.3em] mb-2">Generated On</div>
-                        <div className="text-lg font-black text-slate-900 tracking-tighter leading-none">{formatDate(formValues.CURRENT_DATE || todayISO)}</div>
+
+                      {/* Full letter content with replaced placeholders */}
+                      <div className="space-y-6 text-slate-500 leading-[1.8] text-[15px] font-sans antialiased tracking-tight relative z-10 px-4 p-6" style={{ fontFamily: 'inherit' }}>
+                        {(() => {
+                          let filledContent = templateContent;
+
+                          // First handle standard bold tags for safety
+                          filledContent = filledContent.replace(/<strong>/g, '<span class="font-bold text-slate-500">').replace(/<\/strong>/g, '</span>');
+
+                          Object.keys(formValues).forEach(key => {
+                            const val = formValues[key] || `<span style="font-family: inherit;">[${key}]</span>`;
+                            const isDateKey = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
+                            const displayVal = isDateKey(key) ? formatDate(val) : val;
+                            filledContent = filledContent.replace(new RegExp(`\\[${key}\\]`, 'g'), `<span style="font-family: inherit;">${displayVal}</span>`);
+                          });
+
+                          // Add signature logic
+                          if (savedSignature) {
+                            filledContent = filledContent.replace(
+                              /\[SIGNATURE\]/g,
+                              `<div style="margin-top: 15px;">
+                                <img src="${savedSignature}" alt="Signature" class="h-20 w-auto object-contain" style="display: block; margin-bottom: -15px;" />
+                                <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 8px;">Signature</div>
+                              </div>`
+                            );
+                          } else {
+                            filledContent = filledContent.replace(
+                              /\[SIGNATURE\]/g,
+                              `<div style="margin-top: 15px;">
+                                <div style="height: 80px; margin-bottom: -15px;"></div>
+                                <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 8px;">Signature</div>
+                              </div>`
+                            );
+                          }
+                          return <div dangerouslySetInnerHTML={{ __html: filledContent.replace(/\n/g, "<br/>") }} />;
+                        })()}
                       </div>
-                    </div>
-
-                    {/* Full letter content with replaced placeholders */}
-                    <div className="space-y-6 text-slate-500 leading-[1.8] text-[15px] font-sans antialiased tracking-tight relative z-10 px-4" style={{ fontFamily: 'inherit' }}>
-                      {(() => {
-                        let filledContent = templateContent;
-
-                        // First handle standard bold tags for safety
-                        filledContent = filledContent.replace(/<strong>/g, '<span class="font-bold text-slate-500">').replace(/<\/strong>/g, '</span>');
-
-                        Object.keys(formValues).forEach(key => {
-                          const val = formValues[key] || `<span style="font-family: inherit;">[${key}]</span>`;
-                          const isDateKey = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
-                          const displayVal = isDateKey(key) ? formatDate(val) : val;
-                          filledContent = filledContent.replace(new RegExp(`\\[${key}\\]`, 'g'), `<span style="font-family: inherit;">${displayVal}</span>`);
-                        });
-
-                        // Add signature logic
-                        if (savedSignature) {
-                          filledContent = filledContent.replace(
-                            /\[SIGNATURE\]/g,
-                            `<div style="margin-top: 15px;">
-                              <img src="${savedSignature}" alt="Signature" class="h-20 w-auto object-contain" style="display: block; margin-bottom: -15px;" />
-                              <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 8px;">Signature</div>
-                            </div>`
-                          );
-                        } else {
-                          filledContent = filledContent.replace(
-                            /\[SIGNATURE\]/g,
-                            `<div style="margin-top: 15px;">
-                              <div style="height: 80px; margin-bottom: -15px;"></div>
-                              <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 8px;">Signature</div>
-                            </div>`
-                          );
-                        }
-                        return <div dangerouslySetInnerHTML={{ __html: filledContent.replace(/\n/g, "<br/>") }} />;
-                      })()}
-                    </div>
-                  </>
-                )}
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -1717,119 +1665,119 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
 
         {/* ── STEP 2: Select Recipients ── */}
         {step === "recipients" && (
-          <div className="flex-1 p-8 lg:p-12 bg-slate-100/30 flex items-center justify-center min-h-[calc(100vh-73px)]">
-            <div className="w-full max-w-6xl flex flex-col gap-6">
-              <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-slate-200/50 border border-slate-200 overflow-hidden flex h-[620px]">
-                {/* Left Sidebar: Categories */}
-                <div className="w-72 bg-slate-50/50 border-r border-slate-100 p-8 flex flex-col gap-6">
-                  <div>
-                    <div className="mb-4 flex items-center justify-between px-2">
-                      <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Categories</h3>
-                      <button
-                        type="button"
-                        onClick={addCategory}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-violet-100 text-violet-600 transition-colors hover:bg-violet-200"
-                        aria-label="Add category"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
-                    </div>
-                    <div className="mb-5 px-2">
-                      <input
-                        type="text"
-                        placeholder="New category"
-                        value={newCategoryName}
-                        onChange={(e) => setNewCategoryName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            addCategory();
-                          }
-                        }}
-                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition-all focus:border-violet-400"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      {categories.map(cat => {
-                        const count = recipientsByCategory[cat]?.length ?? 0;
-                        const isActive = activeCategory === cat;
-                        return (
-                          <div
-                            key={cat}
-                            className={`flex items-center gap-2 rounded-2xl transition-all duration-200 group ${isActive ? "bg-violet-100 text-violet-700 shadow-sm" : "text-slate-500 hover:bg-white hover:text-violet-600 hover:shadow-sm"}`}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setActiveCategory(cat);
-                                setRecipientSearch("");
-                              }}
-                              className="flex flex-1 items-center justify-between px-4 py-3.5 text-left"
-                            >
-                              <span className={`text-sm font-bold ${isActive ? "text-violet-700" : "text-slate-600 group-hover:text-violet-600"}`}>{cat}</span>
-                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg ${isActive ? "bg-violet-200 text-violet-800" : "bg-slate-100 text-slate-400 group-hover:bg-violet-50 group-hover:text-violet-600"}`}>
-                                {count}
-                              </span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void deleteCategory(cat)}
-                              className={`mr-3 inline-flex h-8 w-8 items-center justify-center rounded-xl transition-colors ${isActive ? "text-violet-500 hover:bg-violet-200" : "text-slate-300 hover:bg-red-50 hover:text-red-500"}`}
-                              aria-label={`Delete ${cat}`}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </div>
-                        );
-                      })}
-                      {/* Manual Entry Toggle */}
-                      <button
-                        onClick={() => setActiveCategory("Manual")}
-                        className={`w-full flex items-center justify-between px-4 py-3.5 rounded-2xl transition-all duration-200 group ${activeCategory === "Manual" ? "bg-violet-100 text-violet-700 shadow-sm" : "bg-transparent text-slate-500 hover:bg-white hover:text-violet-600 hover:shadow-sm"}`}
-                      >
-                        <span className={`text-sm font-bold ${activeCategory === "Manual" ? "text-violet-700" : "text-slate-600 group-hover:text-violet-600"}`}>Manual Entry</span>
-                        <div className={`w-2 h-2 rounded-full ${activeCategory === "Manual" ? "bg-violet-500" : "bg-slate-200"}`} />
-                      </button>
-                    </div>
-                  </div>
+          <div className="flex-1 flex min-h-[calc(100vh-73px)] bg-slate-50">
+            {/* Left Sidebar: Categories */}
+            <div className="w-80 bg-white border-r border-slate-200 flex flex-col">
+              <div className="p-6 border-b border-slate-100">
+                <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">Select Recipients</h3>
+                <p className="text-xs text-slate-500 font-medium mt-1">Choose a category below</p>
+              </div>
 
-                  <div className="mt-auto pt-6 border-t border-slate-100">
-                    <div className="px-2 mb-4 flex items-center justify-between">
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Selected</span>
-                      <span className="text-[10px] font-black text-violet-600 bg-violet-50 px-2 py-0.5 rounded-lg">{selectedRecipients.length}</span>
-                    </div>
-                    <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
-                      {selectedRecipients.map(r => (
-                        <div key={r.email} className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-white border border-slate-100 group">
-                          <div className="truncate">
-                            <p className="text-[10px] font-bold text-slate-900 truncate">{r.name}</p>
-                            <p className="text-[8px] text-slate-400 truncate">{r.email}</p>
-                          </div>
-                          <button
-                            onClick={() => setSelectedRecipients(selectedRecipients.filter(item => item.email !== r.email))}
-                            className="w-5 h-5 flex items-center justify-center rounded-lg hover:bg-red-50 text-slate-300 hover:text-red-500 transition-colors shrink-0"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ))}
-                      {selectedRecipients.length === 0 && (
-                        <p className="text-[9px] text-slate-400 italic text-center py-4">No recipients selected</p>
-                      )}
-                    </div>
-                  </div>
+              <div className="p-4 border-b border-slate-100 bg-slate-50/50">
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-500">Selected</span>
+                  <span className="text-[10px] font-black text-violet-600 bg-violet-100 px-2 py-0.5 rounded-lg">{selectedRecipients.length}</span>
                 </div>
-
-                {/* Main Content Area */}
-                <div className="flex-1 bg-white flex flex-col">
-                  {activeCategory === "Manual" ? (
-                    <div className="flex-1 flex flex-col items-center justify-center p-12 text-center max-w-md mx-auto space-y-8">
-                      <div className="w-20 h-20 rounded-3xl bg-violet-50 flex items-center justify-center text-3xl shadow-inner">✉️</div>
-                      <div className="space-y-2">
-                        <h4 className="text-xl font-black text-slate-900 tracking-tight">Enter Email Manually</h4>
-                        <p className="text-sm text-slate-500 font-medium leading-relaxed">Send this document to an external recipient not listed in our system.</p>
+                <div className="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar">
+                  {selectedRecipients.map(r => (
+                    <div key={r.email} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-white border border-slate-100 group">
+                      <div className="truncate min-w-0">
+                        <p className="text-xs font-bold text-slate-900 truncate">{r.name}</p>
+                        <p className="text-[10px] text-slate-400 truncate">{r.email}</p>
                       </div>
-                      <div className="w-full relative">
+                      <button
+                        onClick={() => setSelectedRecipients(selectedRecipients.filter(item => item.email !== r.email))}
+                        className="w-5 h-5 flex items-center justify-center rounded-md hover:bg-red-50 text-slate-300 hover:text-red-500 transition-colors shrink-0"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  {selectedRecipients.length === 0 && (
+                    <p className="text-xs text-slate-400 italic text-center py-3">No recipients selected</p>
+                  )}
+                </div>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                <div className="mb-4 flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="New category"
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addCategory();
+                      }
+                    }}
+                    className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-700 outline-none transition-all focus:border-violet-400 focus:bg-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={addCategory}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100 text-violet-600 transition-colors hover:bg-violet-200"
+                    aria-label="Add category"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="space-y-1">
+                  {categories.map(cat => {
+                    const count = recipientsByCategory[cat]?.length ?? 0;
+                    const isActive = activeCategory === cat;
+                    return (
+                      <div
+                        key={cat}
+                        className={`flex items-center gap-2 rounded-xl transition-all duration-200 group ${isActive ? "bg-violet-100 text-violet-700 shadow-sm" : "text-slate-500 hover:bg-violet-50 hover:text-violet-600"}`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveCategory(cat);
+                            setRecipientSearch("");
+                          }}
+                          className="flex flex-1 items-center justify-between px-4 py-3 text-left"
+                        >
+                          <span className={`text-sm font-bold ${isActive ? "text-violet-700" : "text-slate-600 group-hover:text-violet-600"}`}>{cat}</span>
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg ${isActive ? "bg-violet-200 text-violet-800" : "bg-slate-100 text-slate-400 group-hover:bg-violet-100 group-hover:text-violet-600"}`}>
+                            {count}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void deleteCategory(cat)}
+                          className={`mr-2 inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${isActive ? "text-violet-500 hover:bg-violet-200" : "text-slate-300 hover:bg-red-50 hover:text-red-500"}`}
+                          aria-label={`Delete ${cat}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {/* Manual Entry Toggle */}
+                  <button
+                    onClick={() => setActiveCategory("Manual")}
+                    className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all duration-200 group ${activeCategory === "Manual" ? "bg-violet-100 text-violet-700 shadow-sm" : "text-slate-500 hover:bg-violet-50 hover:text-violet-600"}`}
+                  >
+                    <span className={`text-sm font-bold ${activeCategory === "Manual" ? "text-violet-700" : "text-slate-600 group-hover:text-violet-600"}`}>Manual Entry</span>
+                    <div className={`w-2 h-2 rounded-full ${activeCategory === "Manual" ? "bg-violet-500" : "bg-slate-300"}`} />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Main Content Area */}
+            <div className="flex-1 bg-white flex flex-col">
+              {activeCategory === "Manual" ? (
+                <div className="flex-1 flex flex-col items-center justify-center p-12 text-center max-w-md mx-auto space-y-8">
+                  <div className="w-20 h-20 rounded-3xl bg-violet-50 flex items-center justify-center text-3xl shadow-inner">✉️</div>
+                  <div className="space-y-2">
+                    <h4 className="text-lg font-extrabold text-slate-900 tracking-tight">Enter Email Manually</h4>
+                    <p className="text-xs text-slate-500 font-medium leading-relaxed">Send this document to an external recipient not listed in our system.</p>
+                  </div>
+                  <div className="w-full relative">
                         <input
                           type="email"
                           placeholder="recipient@example.com"
@@ -1845,8 +1793,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                       <div className="px-10 py-8 border-b border-slate-50 shrink-0">
                         <div className="flex items-center justify-between mb-6">
                           <div>
-                            <h4 className="text-2xl font-black text-slate-900 tracking-tight">{activeCategory}</h4>
-                            <p className="text-xs text-slate-400 font-medium mt-1">Select one or more recipients to continue</p>
+                            <h4 className="text-lg font-extrabold text-slate-900 tracking-tight">{activeCategory}</h4>
+                            <p className="text-xs text-slate-500 font-medium mt-1">Select one or more recipients to continue</p>
                           </div>
                         </div>
                         <div className="mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
@@ -1957,13 +1905,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                   )}
                 </div>
               </div>
-
-              {/* Action Buttons */}
-            </div>
-          </div>
         )}
-
-        {/* ── STEP 3: Confirm & Send ── */}
         {step === "send" && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-300">
             <div className="w-full max-w-3xl mx-4 bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-300">
@@ -2084,8 +2026,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
               )}
             </div>
           </div>
-        )
-        }
+        )}
       </div >
     </div >
   );

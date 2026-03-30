@@ -14,6 +14,7 @@
     "@uploadthing/react": "^7.3.3",
     "effect": "^3.21.0",
     "lucide-react": "^0.577.0",
+    "mammoth": "^1.12.0",
     "next": "16.1.6",
     "pdfjs-dist": "^5.5.207",
     "react": "19.2.3",

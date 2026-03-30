@@ -4,10 +4,12 @@ const f = createUploadthing();
 
 // File router for handling all file uploads
 export const ourFileRouter = {
-    // Document upload endpoint - accepts PDF, images, documents
+    // Document upload endpoint - accepts all file types
     documentUploader: f({
         pdf: { maxFileSize: "16MB" },
-        image: { maxFileSize: "8MB" },
+        image: { maxFileSize: "16MB" },
+        text: { maxFileSize: "16MB" },
+        blob: { maxFileSize: "16MB" },
     })
         .middleware(() => ({ userId: "user-123" }))
         .onUploadComplete(async ({ file }) => {
@@ -25,10 +27,12 @@ export const ourFileRouter = {
             return { url: file.url };
         }),
 
-    // Template upload endpoint - accepts PDF and images
+    // Template upload endpoint - accepts all file types
     templateUploader: f({
         pdf: { maxFileSize: "16MB" },
-        image: { maxFileSize: "8MB" },
+        image: { maxFileSize: "16MB" },
+        text: { maxFileSize: "16MB" },
+        blob: { maxFileSize: "16MB" },
     })
         .middleware(() => ({ userId: "user-123" }))
         .onUploadComplete(async ({ file }) => {
@@ -39,7 +43,9 @@ export const ourFileRouter = {
     // Signed document upload endpoint
     signedDocUploader: f({
         pdf: { maxFileSize: "16MB" },
-        image: { maxFileSize: "8MB" },
+        image: { maxFileSize: "16MB" },
+        text: { maxFileSize: "16MB" },
+        blob: { maxFileSize: "16MB" },
     })
         .middleware(() => ({ userId: "user-123" }))
         .onUploadComplete(async ({ file }) => {

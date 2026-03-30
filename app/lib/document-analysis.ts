@@ -67,11 +67,37 @@ export const extractTextFromImage = async (file: File) => {
   return result.data.text || "";
 };
 
+export const extractTextFromWord = async (file: File) => {
+  const mammoth = await import("mammoth");
+  const arrayBuffer = await file.arrayBuffer();
+  const result = await mammoth.extractRawText({ arrayBuffer });
+  return result.value || "";
+};
+
 export const analyzeDocumentFile = async (file: File): Promise<DocumentAnalysis> => {
   const dataUrl = await readFileAsDataUrl(file);
 
   if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
     const textContent = await extractTextFromPdf(file);
+    return {
+      dataUrl,
+      textContent,
+      placeholders: extractPlaceholdersFromText(textContent),
+    };
+  }
+
+  if (
+    file.type === "application/msword" ||
+    file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    file.name.toLowerCase().endsWith(".doc") ||
+    file.name.toLowerCase().endsWith(".docx")
+  ) {
+    let textContent = "";
+    try {
+      textContent = await extractTextFromWord(file);
+    } catch (error) {
+      console.error("Word document text extraction failed:", error);
+    }
     return {
       dataUrl,
       textContent,

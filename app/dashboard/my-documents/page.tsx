@@ -142,6 +142,7 @@ export default function MyDocumentsPage() {
         },
         onUploadError: (error) => {
             console.error("Upload error:", error);
+            setSchemaError(`Upload failed: ${error.message}`);
             setPendingCategory(null);
             setShowUploadModal(false);
         },

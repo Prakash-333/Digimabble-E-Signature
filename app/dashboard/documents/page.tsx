@@ -270,13 +270,12 @@ export default function DocumentsPage() {
       return <img src={doc.fileUrl} alt={doc.name} className="h-full w-full object-cover" />;
     }
 
+    if (kind === "pdf" && doc.fileUrl) {
+      return <iframe src={doc.fileUrl} title={doc.name} className="h-full w-full" />;
+    }
+
     return (
-      <div className="flex h-full w-full flex-col justify-between bg-gradient-to-br from-slate-50 via-white to-slate-100 p-4">
-        <div className="flex items-center gap-2">
-          <span className={`inline-flex rounded-md px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${kind === "pdf" ? "bg-red-100 text-red-600" : kind === "doc" ? "bg-blue-100 text-blue-600" : "bg-slate-200 text-slate-600"}`}>
-            {kind}
-          </span>
-        </div>
+      <div className="flex h-full w-full flex-col justify-center bg-gradient-to-br from-slate-50 via-white to-slate-100 p-4">
         <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
           <p className="line-clamp-3 text-xs font-semibold leading-5 text-slate-700">
             {doc.subject || doc.name}
@@ -293,37 +292,8 @@ export default function DocumentsPage() {
       (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
     ).length;
 
-    // Multi-recipient or general status logic: "In Progress" or "Finished"
-    if (totalCount > 0) {
-      if (completedCount === totalCount) {
-        const label = totalCount === 1 
-          ? (recipients[0]?.status === "reviewed" ? "Reviewed" : "Signed")
-          : "Finished";
-        return (
-          <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
-            <CheckCircle2 className="mr-1 h-3 w-3" />
-            {label}
-          </span>
-        );
-      }
-      return (
-        <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-[10px] font-semibold text-blue-700">
-          <Clock className="mr-1 h-3 w-3" />
-          In Progress
-        </span>
-      );
-    }
-
-    // Fallback for docs with no recipients (uploaded documents)
-    if (status === "signed" || status === "completed") {
-      return (
-        <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
-          <CheckCircle2 className="mr-1 h-3 w-3" />
-          Signed
-        </span>
-      );
-    }
-    if (status === "reviewed") {
+    // Check document-level status first for reviewed/signed/approved
+    if (status === "reviewed" || (totalCount === 1 && recipients[0]?.status === "reviewed")) {
       return (
         <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
           <CheckCircle2 className="mr-1 h-3 w-3" />
@@ -339,6 +309,36 @@ export default function DocumentsPage() {
         </span>
       );
     }
+    if (status === "signed" || status === "completed") {
+      return (
+        <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
+          <CheckCircle2 className="mr-1 h-3 w-3" />
+          Signed
+        </span>
+      );
+    }
+
+    // Multi-recipient or general status logic: "Pending" or "Finished"
+    if (totalCount > 0) {
+      if (completedCount === totalCount) {
+        const label = totalCount === 1 
+          ? (recipients[0]?.status === "reviewed" ? "Reviewed" : "Signed")
+          : "Finished";
+        return (
+          <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
+            <CheckCircle2 className="mr-1 h-3 w-3" />
+            {label}
+          </span>
+        );
+      }
+      return (
+        <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-[10px] font-semibold text-blue-700">
+          <Clock className="mr-1 h-3 w-3" />
+          Pending
+        </span>
+      );
+    }
+
     if (status === "reviewing" || category === "Reviewer") {
       return (
         <span className="inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-0.5 text-[10px] font-semibold text-yellow-700">
@@ -824,18 +824,20 @@ function DocumentDetailModal({
       (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
     ).length;
 
+    // Check document-level status first
+    if (doc.status === "reviewed") return "Reviewed";
+    if (doc.status === "approved") return "Approved";
+    if (doc.status === "signed" || doc.status === "completed") return "Signed";
+
     if (totalCount > 0) {
       if (completedCount === totalCount) {
         return totalCount === 1 
           ? (doc.recipients[0]?.status === "reviewed" ? "Reviewed" : "Signed")
           : "Finished";
       }
-      return "In Progress";
+      return "Pending";
     }
 
-    if (doc.status === "signed" || doc.status === "completed") return "Signed";
-    if (doc.status === "reviewed") return "Reviewed";
-    if (doc.status === "approved") return "Approved";
     if (doc.status === "reviewing") return "Under Review";
     if (doc.status === "waiting") return "Awaiting Signer";
     return doc.category === "Reviewer" ? "Yet to Review" : "Yet to Sign";
@@ -847,12 +849,14 @@ function DocumentDetailModal({
       (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
     ).length;
 
+    // Check document-level status first
+    if (["signed", "completed", "reviewed", "approved"].includes(doc.status)) return "bg-green-100 text-green-700 border-green-200";
+
     if (totalCount > 0) {
       if (completedCount === totalCount) return "bg-green-100 text-green-700 border-green-200";
       return "bg-blue-100 text-blue-700 border-blue-200";
     }
 
-    if (["signed", "completed", "reviewed", "approved"].includes(doc.status)) return "bg-green-100 text-green-700 border-green-200";
     if (doc.status === "reviewing") return "bg-yellow-100 text-yellow-700 border-yellow-200";
     if (doc.status === "waiting") return "bg-orange-100 text-orange-700 border-orange-200";
     return "bg-slate-100 text-slate-600 border-slate-200";
@@ -864,12 +868,14 @@ function DocumentDetailModal({
       (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
     ).length;
 
+    // Check document-level status first
+    if (["signed", "completed", "reviewed", "approved"].includes(doc.status)) return <CheckCircle2 className="h-5 w-5" />;
+
     if (totalCount > 0) {
       if (completedCount === totalCount) return <CheckCircle2 className="h-5 w-5" />;
       return <Clock className="h-5 w-5" />;
     }
 
-    if (["signed", "completed", "reviewed", "approved"].includes(doc.status)) return <CheckCircle2 className="h-5 w-5" />;
     return <Clock className="h-5 w-5" />;
   };
 
