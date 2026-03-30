@@ -18,6 +18,8 @@ import {
   LogOut
 } from "lucide-react";
 import { supabase } from "../lib/supabase/browser";
+import { getMatchingRecipient, isCompletedForRecipient, normalizeEmail, type SharedDocumentRecord } from "../lib/documents";
+import { getHiddenNotificationIds, getSeenNotificationIds } from "../lib/notification-storage";
 
 // Same navItems...
 const navItems = [
@@ -39,6 +41,8 @@ export default function DashboardLayout({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [loadingSession, setLoadingSession] = useState(true);
   const [userLabel, setUserLabel] = useState("User");
+  const [notificationCount, setNotificationCount] = useState(0);
+
 
   useEffect(() => {
     let mounted = true;
@@ -64,6 +68,25 @@ export default function DashboardLayout({
         session.user.email ||
         "User";
       setUserLabel(name);
+      const userEmail = normalizeEmail(session.user.email);
+      if (userEmail) {
+        const { data: rows } = await supabase
+          .from("documents")
+          .select("id, owner_id, recipients, status, category, sender, sent_at, file_url, file_key, content, name, subject")
+          .order("sent_at", { ascending: false })
+          .limit(200);
+
+        const hiddenIds = getHiddenNotificationIds(session.user.id);
+        const seenIds = getSeenNotificationIds(session.user.id);
+        const count = ((rows ?? []) as SharedDocumentRecord[]).filter((row) => {
+          if (row.owner_id === session.user.id) return false;
+          if (hiddenIds.has(row.id) || seenIds.has(row.id)) return false;
+          return Boolean(getMatchingRecipient(row.recipients, userEmail)) && !isCompletedForRecipient(row.status);
+        }).length;
+        setNotificationCount(count);
+      } else {
+        setNotificationCount(0);
+      }
       setLoadingSession(false);
     };
 
@@ -80,6 +103,22 @@ export default function DashboardLayout({
         session.user.email ||
         "User";
       setUserLabel(name);
+      void supabase
+        .from("documents")
+        .select("id, owner_id, recipients, status, category, sender, sent_at, file_url, file_key, content, name, subject")
+        .order("sent_at", { ascending: false })
+        .limit(200)
+        .then(({ data: rows }) => {
+          const userEmail = normalizeEmail(session.user.email);
+          const hiddenIds = getHiddenNotificationIds(session.user.id);
+          const seenIds = getSeenNotificationIds(session.user.id);
+          const count = ((rows ?? []) as SharedDocumentRecord[]).filter((row) => {
+            if (row.owner_id === session.user.id) return false;
+            if (hiddenIds.has(row.id) || seenIds.has(row.id)) return false;
+            return Boolean(getMatchingRecipient(row.recipients, userEmail)) && !isCompletedForRecipient(row.status);
+          }).length;
+          setNotificationCount(count);
+        });
       setLoadingSession(false);
     });
 
@@ -114,30 +153,42 @@ export default function DashboardLayout({
         <div className={`flex items-center ${isSidebarCollapsed ? "justify-center px-0 py-4" : "gap-3 px-5 py-5"}`}>
           {!isSidebarCollapsed ? (
             <>
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-violet-500 text-sm font-semibold text-white shadow-md">
-                HD
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-100 text-sm font-semibold text-violet-600 shadow-sm border border-violet-200">
+                {userLabel
+                  .split(" ")
+                  .map((part) => part[0])
+                  .slice(0, 2)
+                  .join("")
+                  .toUpperCase() || "U"}
               </div>
+
               <div className="overflow-hidden whitespace-nowrap">
                 <p className="text-sm font-bold tracking-tight text-violet-600 uppercase">SMARTDOCS</p>
                 <p className="text-[11px] text-slate-500 uppercase tracking-wider">Intelligent Agreements</p>
               </div>
             </>
           ) : (
-            <div className="flex h-10 w-10 mt-1 shrink-0 items-center justify-center rounded-2xl bg-violet-500 text-sm font-semibold text-white shadow-md">
-              HD
+            <div className="flex h-10 w-10 mt-1 shrink-0 items-center justify-center rounded-full bg-violet-100 text-sm font-semibold text-violet-600 shadow-sm border border-violet-200">
+              {userLabel
+                .split(" ")
+                .map((part) => part[0])
+                .slice(0, 2)
+                .join("")
+                .toUpperCase() || "U"}
             </div>
+
           )}
         </div>
 
-        <nav className="mt-2 flex-1 flex flex-col px-3 text-sm font-medium h-full">
-          <div className="flex-1 space-y-1">
+        <nav className="mt-2 flex flex-col px-3 text-sm font-medium">
+          <div className="space-y-1">
             {["MAIN", "DOCUMENTS", "ANALYTICS"].map((section, idx) => {
               const items = navItems.filter((item) => item.section === section);
               if (!items.length) return null;
               return (
                 <div key={section} className={`${idx > 0 && !isSidebarCollapsed ? "mt-4" : ""} ${isSidebarCollapsed ? "mb-1" : "mb-4"} text-slate-600 space-y-1`}>
                   {!isSidebarCollapsed && (
-                    <p className="px-3 mb-2 text-[10px] uppercase tracking-[0.18em] text-slate-400">
+                    <p className="px-4 mb-2 text-[10px] uppercase tracking-[0.18em] text-slate-400">
                       {section === "MAIN" ? "MAIN" : section}
                     </p>
                   )}
@@ -165,9 +216,10 @@ export default function DashboardLayout({
             })}
           </div>
 
-          <div className={`mt-auto ${isSidebarCollapsed ? "mb-2" : "mb-4"} text-slate-600 space-y-1`}>
+          <div className={`${isSidebarCollapsed ? "mb-2" : "mb-4"} text-slate-600 space-y-1`}>
+
             {!isSidebarCollapsed && (
-              <p className="px-3 mb-2 text-[10px] uppercase tracking-[0.18em] text-slate-400">
+              <p className="px-4 mb-2 text-[10px] uppercase tracking-[0.18em] text-slate-400">
                 SETTINGS
               </p>
             )}
@@ -189,22 +241,29 @@ export default function DashboardLayout({
         {!isSidebarCollapsed ? (
           <div className="border-t border-slate-200 p-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-semibold text-violet-600">
-                {userLabel
-                  .split(" ")
-                  .map((part) => part[0])
-                  .slice(0, 2)
-                  .join("")
-                  .toUpperCase() || "U"}
-              </div>
-              <div className="text-xs overflow-hidden whitespace-nowrap">
+              <div className="overflow-hidden whitespace-nowrap">
                 <p className="font-semibold text-slate-700">{userLabel}</p>
                 <p className="text-[11px] text-slate-500">Admin</p>
               </div>
-              <button title="Notifications" className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-full bg-violet-50 text-violet-500 hover:bg-violet-100 hover:text-violet-600 transition-colors">
+              <button 
+                onClick={() => router.push("/dashboard/notifications")}
+                title="Notifications" 
+                className={`relative ml-auto inline-flex h-9 w-9 items-center justify-center rounded-xl transition-colors ${
+                  pathname.includes("/notifications")
+                    ? "bg-violet-100 text-violet-600 shadow-sm"
+                    : "bg-slate-50 text-slate-400 hover:bg-violet-50 hover:text-violet-600"
+                }`}
+              >
                 <Bell className="h-4 w-4" />
+                {notificationCount > 0 && (
+                  <span className="absolute -right-1 -top-1 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-black text-white">
+                    {notificationCount}
+                  </span>
+                )}
               </button>
+
             </div>
+
             <button onClick={handleLogout} className="mt-4 flex items-center gap-3 rounded-full border border-violet-600 bg-white px-5 py-2.5 text-sm font-medium text-violet-600 hover:bg-red-600 hover:!text-white hover:border-red-600 transition-all group">
               <LogOut className="h-4 w-4 shrink-0 transition-colors text-violet-600 group-hover:!text-white" />
               <span className="text-violet-600 group-hover:!text-white font-semibold">Log out</span>
@@ -212,17 +271,24 @@ export default function DashboardLayout({
           </div>
         ) : (
           <div className="border-t border-slate-200 py-4 flex flex-col items-center gap-4">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-semibold text-violet-600">
-              {userLabel
-                .split(" ")
-                .map((part) => part[0])
-                .slice(0, 2)
-                .join("")
-                .toUpperCase() || "U"}
-            </div>
-            <button title="Notifications" className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-violet-50 text-violet-500 hover:bg-violet-100 hover:text-violet-600 transition-colors">
-              <Bell className="h-4 w-4" />
+            <button 
+              onClick={() => router.push("/dashboard/notifications")}
+              title="Notifications" 
+              className={`relative inline-flex h-12 w-12 items-center justify-center rounded-xl transition-colors ${
+                pathname.includes("/notifications")
+                  ? "bg-violet-100 text-violet-600 shadow-sm"
+                  : "bg-slate-50 text-slate-400 hover:bg-violet-50 hover:text-violet-600"
+              }`}
+            >
+              <Bell className="h-5 w-5" />
+              {notificationCount > 0 && (
+                <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-black text-white">
+                  {notificationCount}
+                </span>
+              )}
             </button>
+
+
             <button onClick={handleLogout} title="Logout" className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-violet-600 bg-white text-violet-600 hover:bg-red-600 hover:!text-white hover:border-red-600 transition-all group">
               <LogOut className="h-5 w-5 transition-colors text-violet-600 group-hover:!text-white" />
             </button>
@@ -247,8 +313,21 @@ export default function DashboardLayout({
           </div>
 
           <div className="flex items-center gap-3 text-xs">
-            <button className="hidden items-center rounded-full border border-violet-600 bg-white px-4 py-2 text-xs font-semibold text-violet-600 shadow-sm hover:bg-violet-600 hover:text-white transition-all active:scale-95 md:inline-flex">
-              + Add New
+            <button
+              onClick={() => router.push("/dashboard/notifications")}
+              title="Notifications"
+              className={`relative inline-flex h-10 w-10 items-center justify-center rounded-full border transition-colors ${
+                pathname.includes("/notifications")
+                  ? "border-violet-200 bg-violet-100 text-violet-600"
+                  : "border-slate-200 bg-white text-slate-500 hover:border-violet-200 hover:bg-violet-50 hover:text-violet-600"
+              }`}
+            >
+              <Bell className="h-4 w-4" />
+              {notificationCount > 0 && (
+                <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-black text-white">
+                  {notificationCount}
+                </span>
+              )}
             </button>
             <button onClick={handleLogout} className="inline-flex items-center rounded-full border border-violet-600 bg-white px-5 py-2 text-sm font-semibold text-violet-600 shadow-sm hover:bg-red-600 hover:!text-white hover:border-red-600 transition-all active:scale-95 group">
               <LogOut className="h-4 w-4 mr-2 transition-colors text-violet-600 group-hover:!text-white" />

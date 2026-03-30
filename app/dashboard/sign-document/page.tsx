@@ -2,13 +2,15 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { RotateCw, CloudUpload, PenLine as Pen, Square, User, Mail, Building2, Tag, Type, CheckSquare, PenTool, X, Image as ImageIcon, Loader2, Calendar } from "lucide-react";
 import { useUploadThing } from "../../lib/uploadthing-client";
 import { deleteCloudFiles } from "../../actions/uploadthing";
 import { supabase } from "../../lib/supabase/browser";
+import { normalizeEmail } from "../../lib/documents";
+import { getStoredSignature, setStoredSignature } from "../../lib/signature-storage";
 // Dynamic import for pdfjs-dist to avoid SSR issues with DOMMatrix
 let pdfjsLib: typeof import("pdfjs-dist") | null = null;
 
@@ -68,11 +70,16 @@ const ACCEPTED_INPUT =
 
 export default function SignDocumentPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const previewStageRef = useRef<HTMLDivElement | null>(null);
   const previewImgRef = useRef<HTMLImageElement | null>(null);
   const docsRef = useRef<UploadedDoc[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
+  const sourceDocumentId = searchParams.get("documentId");
+  const [signedUploadAction, setSignedUploadAction] = useState<"close" | "send">("close");
+  const [htmlContent, setHtmlContent] = useState<string | null>(null);
+  const [signedHtmlContent, setSignedHtmlContent] = useState<string | null>(null);
 
   // UploadThing hook for document uploads
   const { startUpload, isUploading: isUploadingToCloud } = useUploadThing("documentUploader", {
@@ -137,19 +144,77 @@ export default function SignDocumentPage() {
           setBanner("Please sign in again before saving a signed document.");
           return;
         }
+        const { data } = await supabase.auth.getUser();
+        const currentUser = data.user;
+        const senderEmail = normalizeEmail(currentUser?.email);
+        const senderName = currentUser?.user_metadata?.full_name || currentUser?.email || "User";
         const newDoc = {
           id: `signed-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           name: activeDoc?.name || "Signed Document",
           subject: "Document signed via sign-now",
-          recipients: [{ name: "Raj Kumar", email: "raj@smartdocs.in", role: "Signer" }],
-          sender: { fullName: "Raj Kumar", workEmail: "raj@smartdocs.in" },
+          recipients: senderEmail ? [{ name: senderName, email: senderEmail, role: "Signer" }] : [],
+          sender: { fullName: senderName, workEmail: senderEmail || "user@gmail.com" },
           sentAt: new Date().toISOString(),
           status: "signed",
           fileUrl: file.url, // Store the cloud URL
           fileKey: file.key, // Store the unique key for deletion
         };
         try {
-          const { error } = await supabase.from("documents").insert({
+          if (sourceDocumentId) {
+            // First, fetch the current recipients array so we can update
+            // the signing user's individual status within it
+            const { data: docRow } = await supabase
+              .from("documents")
+              .select("recipients, category")
+              .eq("id", sourceDocumentId)
+              .maybeSingle();
+
+            const isReviewDoc = docRow?.category === "Reviewer";
+            const recipientStatus = isReviewDoc ? "reviewed" : "signed";
+            const statusPatch = isReviewDoc
+              ? { status: "reviewed", reviewed_at: new Date().toISOString() }
+              : { status: "signed", signed_at: new Date().toISOString() };
+
+            // Update per-recipient status in the JSONB array
+            let updatedRecipients = docRow?.recipients;
+            if (Array.isArray(updatedRecipients)) {
+              let matched = false;
+              updatedRecipients = updatedRecipients.map((r: { name?: string; email?: string; role?: string; status?: string }) => {
+                if (!matched && normalizeEmail(r.email) === senderEmail) {
+                  matched = true;
+                  return { ...r, status: recipientStatus };
+                }
+                return r;
+              });
+              // If no email match and only one recipient, update that one
+              if (!matched && updatedRecipients.length === 1) {
+                updatedRecipients = [{ ...updatedRecipients[0], status: recipientStatus }];
+              }
+            }
+
+            const { error: sourceUpdateError } = await supabase
+              .from("documents")
+              .update({
+                ...statusPatch,
+                file_url: newDoc.fileUrl,
+                file_key: newDoc.fileKey,
+                ...(updatedRecipients ? { recipients: updatedRecipients } : {}),
+              })
+              .eq("id", sourceDocumentId);
+
+            if (sourceUpdateError) {
+              throw sourceUpdateError;
+            }
+
+            setBanner("Document signed successfully. The sender can now view the signed file.");
+            setTimeout(() => {
+              setSignedPreview(null);
+              setIsSigning(false);
+            }, 2000);
+            return;
+          }
+
+          const { data: insertedRow, error } = await supabase.from("documents").insert({
             owner_id: userId,
             name: newDoc.name,
             subject: newDoc.subject,
@@ -161,13 +226,14 @@ export default function SignDocumentPage() {
             file_key: newDoc.fileKey,
             category: null,
             content: null,
-          });
+          }).select("id").single();
           if (error) throw error;
-          
-          // Delete original source files from cloud since they are now processed?
-          // The user said "same document should be delete on uploadthing dadtabase"
-          // If they mean the original uploaded photo, we'll keep it for now unless they delete it from UI.
-          
+
+          if (signedUploadAction === "send" && insertedRow?.id) {
+            router.push(`/dashboard/templates?step=recipients&documentId=${insertedRow.id}`);
+            return;
+          }
+
           setBanner("Document uploaded & signed! View in Shared Documents.");
           setTimeout(() => {
             setSignedPreview(null);
@@ -192,10 +258,38 @@ export default function SignDocumentPage() {
 
   const [isSigning, setIsSigning] = useState(false);
   const [signedPreview, setSignedPreview] = useState<string | null>(null);
+  const [signaturePlaced, setSignaturePlaced] = useState(false);
+  const [draggingSignature, setDraggingSignature] = useState(false);
+  // Fixed (viewport) cursor position while dragging
+  const [dragCursorPos, setDragCursorPos] = useState<{ x: number; y: number } | null>(null);
+  // Stage-relative preview position (when cursor is over document)
+  const [dragPreviewPosition, setDragPreviewPosition] = useState<{ x: number; y: number } | null>(null);
+  const [signatureLoaded, setSignatureLoaded] = useState(false);
 
   const [signatureX, setSignatureX] = useState(24);
   const [signatureY, setSignatureY] = useState(24);
   const [signatureScale, setSignatureScale] = useState(1);
+
+  const downloadSignedPreview = async () => {
+    if (!signedPreview) return;
+
+    try {
+      const response = await fetch(signedPreview);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = `signed-${activeDoc?.name?.replace(/\s+/g, "-") || "document"}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+      setBanner("Signed document downloaded.");
+    } catch (error) {
+      console.error("Signed preview download failed", error);
+      setBanner("Failed to download the signed document.");
+    }
+  };
 
   // Signature pad modal
   const [showSignaturePad, setShowSignaturePad] = useState(false);
@@ -205,6 +299,9 @@ export default function SignDocumentPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawing = useRef(false);
   const lastPos = useRef({ x: 0, y: 0 });
+  const signatureToolDragRef = useRef<{
+    pointerId: number;
+  } | null>(null);
 
   // Signature pad helper functions
   const getCanvasPos = (e: React.MouseEvent | React.TouchEvent) => {
@@ -293,6 +390,17 @@ export default function SignDocumentPage() {
     isDrawing.current = false;
   };
 
+  const getSignatureStagePosition = (clientX: number, clientY: number) => {
+    const stage = previewStageRef.current;
+    if (!stage) return null;
+    const rect = stage.getBoundingClientRect();
+
+    const nextX = Math.max(0, Math.min(clientX - rect.left - signatureWidthPx / 2, rect.width - signatureWidthPx));
+    const nextY = Math.max(0, Math.min(clientY - rect.top - signatureHeightPx / 2, rect.height - signatureHeightPx));
+
+    return { x: Math.round(nextX), y: Math.round(nextY) };
+  };
+
   const clearCanvas = () => {
     const canvas = canvasRef.current;
     if (canvas) {
@@ -350,6 +458,7 @@ export default function SignDocumentPage() {
       signatureData = uploadedSignature;
     }
     setSavedSignature(signatureData);
+    setStoredSignature(userId, signatureData);
     if (userId) {
       void supabase.from("signatures").insert({
         owner_id: userId,
@@ -377,11 +486,35 @@ export default function SignDocumentPage() {
   } | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
     const loadSignature = async () => {
-      const { data } = await supabase.auth.getUser();
-      const currentUser = data.user;
-      if (!currentUser) return;
-      setUserId(currentUser.id);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        let user = (session?.user ?? undefined) as any;
+        
+        if (!user) {
+          const { data: { user: freshUser }, error: authError } = await supabase.auth.getUser();
+          if (authError) {
+            if (authError.message?.includes("stole it")) {
+              setSignatureLoaded(true);
+              return;
+            }
+            throw authError;
+          }
+          user = freshUser;
+        }
+
+        const currentUser = user;
+        if (!currentUser) {
+          setSignatureLoaded(true);
+          return;
+        }
+        setUserId(currentUser.id);
+
+      const cachedSignature = getStoredSignature(currentUser.id);
+      if (cachedSignature) {
+        setSavedSignature(cachedSignature);
+      }
 
       const { data: row } = await supabase
         .from("signatures")
@@ -391,13 +524,92 @@ export default function SignDocumentPage() {
         .limit(1)
         .maybeSingle();
 
-      if (row?.data_url) {
-        setSavedSignature(row.data_url);
+      setSignatureLoaded(true);
+    } catch (err) {
+      console.error("Auth lock or load signature error:", err);
+      if (isMounted) setSignatureLoaded(true);
+    }
+  };
+
+  loadSignature();
+}, []);
+
+  useEffect(() => {
+    if (!sourceDocumentId || docs.length > 0) return;
+
+    const loadIncomingDocument = async () => {
+      const { data: row, error } = await supabase
+        .from("documents")
+        .select("id, name, file_url, content")
+        .eq("id", sourceDocumentId)
+        .maybeSingle();
+
+      if (error || (!row?.file_url && !row?.content)) {
+        setBanner("Could not load the incoming document for signing.");
+        return;
+      }
+
+      if (row.content) {
+        setHtmlContent(row.content);
+        setDocs([
+          {
+            id: row.id,
+            name: row.name,
+            type: "text/html",
+            sizeBytes: new Blob([row.content]).size,
+            previewUrl: "",
+          },
+        ]);
+        setActiveDocId(row.id);
+        setIsSigning(true);
+        setBanner(null);
+        return;
+      }
+
+      try {
+        const response = await fetch(row.file_url);
+        const blob = await response.blob();
+        const isPdf = blob.type === "application/pdf" || row.name.toLowerCase().endsWith(".pdf");
+        let previewUrl = row.file_url;
+
+        if (isPdf) {
+          const pdfjs = await getPdfJs();
+          const arrayBuffer = await blob.arrayBuffer();
+          const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+          const page = await pdf.getPage(1);
+          const viewport = page.getViewport({ scale: 1.5 });
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            await page.render({ canvasContext: ctx, viewport, canvas: ctx.canvas }).promise;
+            previewUrl = canvas.toDataURL("image/jpeg", 0.8);
+          }
+        } else if (!blob.type.startsWith("image/")) {
+          previewUrl = row.file_url;
+        }
+
+        setDocs([
+          {
+            id: row.id,
+            name: row.name,
+            type: blob.type || "application/octet-stream",
+            sizeBytes: blob.size,
+            previewUrl,
+          },
+        ]);
+        setActiveDocId(row.id);
+        setIsSigning(true);
+        setBanner(null);
+      } catch (loadError) {
+        console.error("Failed to load incoming document", loadError);
+        setBanner("Could not prepare the incoming document for signing.");
       }
     };
 
-    loadSignature();
-  }, []);
+    void loadIncomingDocument();
+  }, [docs.length, sourceDocumentId]);
 
   useEffect(() => {
     docsRef.current = docs;
@@ -431,7 +643,7 @@ export default function SignDocumentPage() {
     []
   );
 
-  const isActiveDocImage = Boolean(activeDoc?.type?.startsWith("image/") || activeDoc?.previewUrl);
+  const isActiveDocImage = Boolean(activeDoc?.type?.startsWith("image/") || activeDoc?.previewUrl || htmlContent);
   const signatureWidthPx = Math.round(180 * signatureScale);
   const signatureHeightPx = Math.round(64 * signatureScale);
 
@@ -463,9 +675,9 @@ export default function SignDocumentPage() {
       if (stage) {
         const rect = stage.getBoundingClientRect();
         if (rect.width > 50 && rect.height > 50) {
-          // Position signature at center-bottom of the document (where "Sincerely," would be)
-          const defaultX = Math.max(40, Math.round((rect.width - signatureWidthPx) / 2));
-          const defaultY = Math.max(40, Math.round(rect.height - 160));
+          // Keep the signature visible near the top so it can be dragged anywhere.
+          const defaultX = Math.max(24, Math.round(rect.width - signatureWidthPx - 32));
+          const defaultY = 24;
           setSignatureX(defaultX);
           setSignatureY(defaultY);
           return;
@@ -504,6 +716,7 @@ export default function SignDocumentPage() {
     setSignatureScale(1);
     setSignatureX(24);
     setSignatureY(24);
+    setSignaturePlaced(false);
     setIsSigning(true);
     setBanner(null);
 
@@ -516,6 +729,7 @@ export default function SignDocumentPage() {
   const handleSignaturePointerDown = (event: React.PointerEvent) => {
     if (!isSigning) return;
     if (!savedSignature) return;
+    if (!signaturePlaced) return;
     if (!isActiveDocImage) return;
     event.preventDefault();
     event.stopPropagation();
@@ -775,6 +989,30 @@ export default function SignDocumentPage() {
       setBanner("No signature found. Create one first.");
       return;
     }
+
+    if (htmlContent) {
+      if (!signaturePlaced) {
+        setBanner("Drag the signature onto the document first.");
+        return;
+      }
+
+      let newHtml = htmlContent;
+      // We overlay the signature directly at the dragged absolute X/Y coordinates
+      const sigImg = `<div style="position: absolute; left: ${signatureX}px; top: ${signatureY}px; width: ${signatureWidthPx}px; height: ${signatureHeightPx}px; z-index: 50; pointer-events: none;"><img src="${savedSignature}" alt="Signature" style="width: 100%; height: 100%; object-fit: contain;" /><div style="position: absolute; bottom: -20px; left: 0; width: 100%; text-align: center; font-weight: 700; color: #64748b; font-size: 10px; text-transform: uppercase;">Signed via Dashboard</div></div>`;
+
+      // Simple append; the viewer wrapper will be position: relative
+      newHtml += sigImg;
+
+      setSignedHtmlContent(newHtml);
+      setIsSigning(false);
+      setBanner("Signature placed on HTML document. Review and submit below.");
+      return;
+    }
+
+    if (!signaturePlaced) {
+      setBanner("Drag the signature onto the document first.");
+      return;
+    }
     if (!activeDoc || !activeDoc.previewUrl) {
       setBanner("Upload or select a valid document to save a signed copy.");
       return;
@@ -910,94 +1148,166 @@ export default function SignDocumentPage() {
                 className="rounded-full bg-violet-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-violet-900/20 hover:bg-violet-500 transition-all active:scale-95"
                 onClick={saveSignedImage}
               >
-                Save
+                Sign
               </button>
             </div>
           </header>
 
           <div className="flex flex-1 overflow-hidden bg-slate-100" style={{ height: 'calc(100vh - 120px)' }}>
-            {/* Left Sidebar: Draggable Fields */}
-            <aside className="w-72 flex-shrink-0 border-r border-slate-200 bg-white shadow-sm overflow-y-auto hidden md:block">
-              <div className="px-6 py-6 border-b border-slate-50">
-                <p className="text-[11px] font-bold tracking-[0.2em] text-slate-500 uppercase">Fields</p>
+            {/* Sidebar - Signature Only */}
+            <aside className="hidden w-64 flex-shrink-0 border-r border-slate-200 bg-white md:block overflow-y-auto">
+              <div className="border-b border-slate-100 px-6 py-5">
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-500">Signature</p>
               </div>
-              <div className="space-y-6 px-4 py-6">
-                <div className="space-y-1.5">
-                  {DRAGGABLE_FIELDS.slice(0, 4).map((field) => (
-                    <div
-                      key={field.type}
-                      draggable
-                      onDragStart={(e) => {
-                        e.dataTransfer.setData("fieldType", field.type);
-                        setDraggingFieldType(field.type);
-                      }}
-                      onDragEnd={() => setDraggingFieldType(null)}
-                      className={`flex cursor-grab items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-violet-50 hover:text-violet-700 transition-all active:cursor-grabbing group ${draggingFieldType === field.type ? "opacity-40" : ""}`}
-                    >
-                      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-50 group-hover:bg-white border border-transparent group-hover:border-violet-100 shadow-sm transition-all">
-                        {field.icon}
-                      </span>
-                      <span>{field.label}</span>
+              <div className="p-4 space-y-4">
+                {/* Signature preview */}
+                {savedSignature ? (
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                    <div className="rounded-lg bg-slate-50 p-4 flex items-center justify-center h-24">
+                      <img src={savedSignature} alt="My signature" className="max-h-full max-w-full object-contain" draggable={false} />
                     </div>
-                  ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border-2 border-dashed border-slate-200 bg-slate-50/50 p-6 text-center">
+                    <PenTool className="h-8 w-8 mx-auto text-slate-300 mb-2" />
+                    <p className="text-xs text-slate-400 font-medium">No signature yet</p>
+                  </div>
+                )}
+
+                {/* Action buttons */}
+                <div className="space-y-2">
+                  {savedSignature ? (
+                    <>
+                      {!signaturePlaced ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const stage = previewStageRef.current;
+
+                            if (stage) {
+                              const rect = stage.getBoundingClientRect();
+                              const placedX = Math.max(0, Math.round((rect.width - signatureWidthPx) / 2));
+                              const placedY = Math.max(0, Math.round(rect.height - signatureHeightPx - 80));
+                              setSignatureX(placedX);
+                              setSignatureY(placedY);
+                              setSignaturePlaced(true);
+                              setBanner(null);
+                            }
+                          }}
+                          className="w-full rounded-xl bg-violet-600 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                        >
+                          <PenTool className="h-4 w-4" />
+                          Place on Document
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setSignaturePlaced(false)}
+                          className="w-full rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-600 hover:bg-red-100 transition-all flex items-center justify-center gap-2"
+                        >
+                          <X className="h-4 w-4" />
+                          Remove from Document
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setShowSignaturePad(true)}
+                        className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-all flex items-center justify-center gap-2"
+                      >
+                        <RotateCw className="h-3.5 w-3.5" />
+                        Change Signature
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setShowSignaturePad(true)}
+                      className="w-full rounded-xl bg-violet-600 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                    >
+                      <PenTool className="h-4 w-4" />
+                      Create Signature
+                    </button>
+                  )}
                 </div>
 
-                <div className="h-px bg-slate-100 mx-4" />
-
-                <div className="space-y-1.5">
-                  {DRAGGABLE_FIELDS.slice(4).map((field) => (
-                    <div
-                      key={field.type}
-                      draggable
-                      onDragStart={(e) => {
-                        e.dataTransfer.setData("fieldType", field.type);
-                        setDraggingFieldType(field.type);
-                      }}
-                      onDragEnd={() => setDraggingFieldType(null)}
-                      className={`flex cursor-grab items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-violet-50 hover:text-violet-700 transition-all active:cursor-grabbing group ${draggingFieldType === field.type ? "opacity-40" : ""}`}
-                    >
-                      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-50 group-hover:bg-white border border-transparent group-hover:border-violet-100 shadow-sm transition-all">
-                        {field.icon}
-                      </span>
-                      <span>{field.label}</span>
+                {/* Resize controls - visible when signature is placed */}
+                {signaturePlaced && (
+                  <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Resize</p>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => { setSignatureScale(s => Math.max(0.3, s - 0.1)); setTimeout(clampSignatureToStage, 0); }}
+                        className="h-8 w-8 rounded-lg flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-violet-100 hover:text-violet-600 transition-colors text-lg font-bold"
+                      >
+                        −
+                      </button>
+                      <input
+                        type="range"
+                        min="0.3"
+                        max="3"
+                        step="0.05"
+                        value={signatureScale}
+                        onChange={(e) => { setSignatureScale(parseFloat(e.target.value)); setTimeout(clampSignatureToStage, 0); }}
+                        className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-violet-600"
+                      />
+                      <button
+                        onClick={() => { setSignatureScale(s => Math.min(3, s + 0.1)); setTimeout(clampSignatureToStage, 0); }}
+                        className="h-8 w-8 rounded-lg flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-violet-100 hover:text-violet-600 transition-colors text-lg font-bold"
+                      >
+                        +
+                      </button>
                     </div>
-                  ))}
+                    <p className="text-[10px] text-center text-slate-400">{Math.round(signatureScale * 100)}%</p>
+                  </div>
+                )}
+
+                {/* Instructions */}
+                <div className="rounded-xl bg-slate-50 border border-slate-100 p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">How to sign</p>
+                  <ol className="text-[11px] text-slate-500 space-y-1.5 list-decimal list-inside">
+                    <li>Create or upload your signature</li>
+                    <li>Click &quot;Place on Document&quot;</li>
+                    <li>Drag it to the desired position</li>
+                    <li>Resize as needed</li>
+                    <li>Click &quot;Sign&quot; to finalize</li>
+                  </ol>
                 </div>
               </div>
             </aside>
 
-            {/* Center Area: Document Canvas */}
+            {/* Document Preview Area */}
             <main className="flex-1 flex flex-col overflow-hidden relative">
               <div className="flex-1 overflow-auto p-8 md:p-12 lg:p-16 flex items-start justify-center">
                 <div
                   ref={previewStageRef}
-                  className="relative bg-white shadow-[0_20px_50px_rgba(0,0,0,0.1)] rounded-sm overflow-hidden select-none transition-all border border-slate-200"
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    const fieldType = e.dataTransfer.getData("fieldType") as PlacedField["type"];
-                    if (fieldType) handleFieldDrop(e, fieldType);
-                  }}
+                  className="relative mx-auto w-fit h-fit bg-white shadow-[0_20px_50px_rgba(0,0,0,0.1)] rounded-sm select-none transition-all border border-slate-200"
                 >
-                  {activeDoc?.previewUrl ? (
+                  {htmlContent ? (
+                    <div className="w-[800px] min-h-[1056px] text-left shrink-0 bg-white p-12 md:p-16 text-[15px] text-slate-800 leading-[1.9] tracking-tight"
+                         dangerouslySetInnerHTML={{ __html: htmlContent.replace(/\n/g, "<br/>").replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">') }} />
+                  ) : activeDoc?.previewUrl ? (
                     <img
                       ref={previewImgRef}
                       src={activeDoc.previewUrl}
                       alt={activeDoc.name}
                       crossOrigin="anonymous"
-                      className="max-h-[85vh] w-auto pointer-events-none"
+                      className="max-h-[85vh] w-auto block pointer-events-none"
                       onLoad={() => {
-                        // Re-position signature after image loads
                         setTimeout(() => {
                           clampSignatureToStage();
+                          // Auto-place signature if we have one and it's not placed yet
                           const stage = previewStageRef.current;
-                          if (stage) {
+                          if (stage && savedSignature && !signaturePlaced) {
                             const rect = stage.getBoundingClientRect();
                             if (rect.width > 50 && rect.height > 50) {
-                              setSignatureX(Math.max(40, Math.round((rect.width - signatureWidthPx) / 2)));
-                              setSignatureY(Math.max(40, Math.round(rect.height - 160)));
+                              const placedX = Math.max(0, Math.round((rect.width - signatureWidthPx) / 2));
+                              const placedY = Math.max(0, Math.round(rect.height - signatureHeightPx - 80));
+                              setSignatureX(placedX);
+                              setSignatureY(placedY);
+                              setSignaturePlaced(true);
                             }
                           }
-                        }, 100);
+                        }, 150);
                       }}
                     />
                   ) : (
@@ -1006,201 +1316,72 @@ export default function SignDocumentPage() {
                     </div>
                   )}
 
-                  {/* Signature Area */}
-                  {savedSignature ? (
+                  {/* Signature placed on document - draggable */}
+                  {savedSignature && signaturePlaced && (
                     <div
-                      className="absolute cursor-grab group active:cursor-grabbing z-10 rounded-lg border border-dashed border-violet-300 hover:border-violet-500 hover:bg-violet-50/30 transition-all"
+                      className="absolute cursor-grab group active:cursor-grabbing rounded-lg border-2 border-dashed border-violet-400 hover:border-violet-600 hover:bg-violet-50/20 transition-colors"
                       style={{
-                        transform: `translate(${signatureX}px, ${signatureY}px)`,
+                        left: `${signatureX}px`,
+                        top: `${signatureY}px`,
                         width: `${signatureWidthPx}px`,
                         height: `${signatureHeightPx}px`,
                         touchAction: 'none',
                         userSelect: 'none',
+                        zIndex: 20,
                       }}
                       onPointerDown={handleSignaturePointerDown}
                       onPointerMove={handleSignaturePointerMove}
                       onPointerUp={handleSignaturePointerUp}
                       onPointerCancel={handleSignaturePointerUp}
                     >
-                      <div className="relative h-full w-full">
-                        <img
-                          src={savedSignature}
-                          alt="Signature"
-                          className="h-full w-full object-contain pointer-events-none select-none"
-                          style={{ border: 'none', outline: 'none' }}
-                          draggable={false}
-                        />
-                        {/* Close button */}
-                        <button
-                          type="button"
-                          className="absolute -right-2 -top-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-900 border border-white text-[10px] text-white shadow-xl hover:bg-red-600 transition-transform active:scale-90 z-20"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSavedSignature(null);
-                          }}
-                        >
-                          ✕
-                        </button>
-                        {/* Resize handle */}
-                        <div
-                          className="absolute right-0 bottom-0 w-5 h-5 cursor-se-resize flex items-end justify-end z-20"
-                          onPointerDown={handleSigResizePointerDown}
-                          onPointerMove={handleSigResizePointerMove}
-                          onPointerUp={handleSigResizePointerUp}
-                          onPointerCancel={handleSigResizePointerUp}
-                        >
-                          <svg className="w-3.5 h-3.5 text-slate-400 group-hover:text-violet-500 transition-colors" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M22 22H20V20H22V22ZM22 18H20V16H22V18ZM18 22H16V20H18V22ZM22 14H20V12H22V14ZM18 18H16V16H18V18ZM14 22H12V20H14V22Z" />
-                          </svg>
-                        </div>
-                        {/* Drag hint label */}
-                        <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 whitespace-nowrap text-[8px] font-bold text-violet-500 uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">
-                          Drag to move
-                        </div>
+                      <img
+                        src={savedSignature}
+                        alt="Signature"
+                        className="h-full w-full object-contain pointer-events-none select-none p-1"
+                        draggable={false}
+                      />
+                      {/* Close button */}
+                      <button
+                        type="button"
+                        className="absolute -right-2.5 -top-2.5 h-6 w-6 rounded-full bg-red-500 border-2 border-white text-white shadow-lg hover:bg-red-600 transition-all active:scale-90 flex items-center justify-center"
+                        style={{ zIndex: 30 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSignaturePlaced(false);
+                        }}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                      {/* Resize handle */}
+                      <div
+                        className="absolute -right-1 -bottom-1 w-6 h-6 cursor-se-resize flex items-center justify-center bg-white border-2 border-violet-400 rounded-full shadow-md hover:bg-violet-50 transition-colors"
+                        style={{ zIndex: 30 }}
+                        onPointerDown={handleSigResizePointerDown}
+                        onPointerMove={handleSigResizePointerMove}
+                        onPointerUp={handleSigResizePointerUp}
+                        onPointerCancel={handleSigResizePointerUp}
+                      >
+                        <svg className="w-3 h-3 text-violet-500" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M22 22H20V20H22V22ZM22 18H20V16H22V18ZM18 22H16V20H18V22ZM22 14H20V12H22V14ZM18 18H16V16H18V18ZM14 22H12V20H14V22Z" />
+                        </svg>
                       </div>
-                    </div>
-                  ) : (
-                    /* Signature Placeholder - draggable + click to create */
-                    <div
-                      className="absolute cursor-grab active:cursor-grabbing z-10 group"
-                      style={{
-                        transform: `translate(${signatureX}px, ${signatureY}px)`,
-                        width: `${signatureWidthPx}px`,
-                        height: `${signatureHeightPx}px`,
-                        touchAction: 'none',
-                        userSelect: 'none',
-                      }}
-                      onPointerDown={(e) => {
-                        const stage = previewStageRef.current;
-                        if (!stage) return;
-                        e.preventDefault();
-                        e.stopPropagation();
-                        const startX = e.clientX;
-                        const startY = e.clientY;
-                        const origX = signatureX;
-                        const origY = signatureY;
-                        let moved = false;
-                        const onMove = (ev: PointerEvent) => {
-                          const dx = ev.clientX - startX;
-                          const dy = ev.clientY - startY;
-                          if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
-                          const rect = stage.getBoundingClientRect();
-                          const maxX = Math.max(0, Math.floor(rect.width - signatureWidthPx));
-                          const maxY = Math.max(0, Math.floor(rect.height - signatureHeightPx));
-                          setSignatureX(Math.min(Math.max(0, Math.round(origX + dx)), maxX));
-                          setSignatureY(Math.min(Math.max(0, Math.round(origY + dy)), maxY));
-                        };
-                        const onUp = () => {
-                          window.removeEventListener("pointermove", onMove);
-                          window.removeEventListener("pointerup", onUp);
-                          if (!moved) setShowSignaturePad(true);
-                        };
-                        window.addEventListener("pointermove", onMove);
-                        window.addEventListener("pointerup", onUp);
-                      }}
-                    >
-                      <div className="relative h-full w-full flex items-center justify-center rounded-lg border-2 border-dashed border-violet-400 bg-violet-50/60 hover:bg-violet-100/80 hover:border-violet-500 transition-all">
-                        <div className="flex flex-col items-center gap-1">
-                          <Pen className="h-5 w-5 text-violet-500 group-hover:text-violet-600 transition-colors" />
-                          <span className="text-[9px] font-bold text-violet-600 uppercase tracking-wider">Add Signature</span>
-                          <span className="text-[7px] text-violet-400 font-medium">Click or Drag</span>
-                        </div>
+                      {/* Drag hint */}
+                      <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap text-[9px] font-bold text-violet-500 uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity bg-white/80 px-2 py-0.5 rounded-full">
+                        Drag to move
                       </div>
                     </div>
                   )}
-
-                  {/* Placed Fields */}
-                  {placedFields.map((field) => {
-                    const isSelected = field.id === selectedFieldId;
-                    return (
-                      <div
-                        key={field.id}
-                        className={
-                          "absolute cursor-move group transition-all " +
-                          (isSelected
-                            ? "ring-2 ring-violet-500 border-transparent bg-violet-50/30 z-20"
-                            : "bg-transparent z-10")
-                        }
-                        style={{
-                          left: field.x,
-                          top: field.y,
-                          width: field.width,
-                          height: field.height,
-                          transform: `scale(${field.scale || 1})`,
-                          transformOrigin: "top left",
-                          touchAction: 'none',
-                          userSelect: 'none',
-                        }}
-                        onPointerDown={(e) => handlePlacedFieldPointerDown(field.id, e)}
-                        onPointerMove={(e) => handlePlacedFieldPointerMove(e)}
-                        onPointerUp={(e) => handlePlacedFieldPointerUp(e)}
-                        onPointerCancel={(e) => handlePlacedFieldPointerUp(e)}
-                      >
-                        <div className="relative flex h-full w-full items-center justify-center px-2 py-1">
-                          {field.type === "checkbox" ? (
-                            <div className="h-4 w-4 border-2 border-slate-400 rounded bg-white flex items-center justify-center">
-                              {field.value === "checked" && <div className="h-2 w-2 bg-violet-600 rounded-sm" />}
-                            </div>
-                          ) : field.type === "date" ? (
-                            <span className="text-[10px] font-bold text-slate-700">{field.value || new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })}</span>
-                          ) : (
-                            <span className="text-[10px] font-bold text-slate-700 truncate">{field.value}</span>
-                          )}
-
-                          {isSelected && (
-                            <>
-                              {/* Resize handle */}
-                              <div
-                                className="absolute right-0 bottom-0 w-4 h-4 cursor-se-resize flex items-end justify-end"
-                                onPointerDown={(e) => handleFieldResizePointerDown(field.id, e)}
-                                onPointerMove={(e) => handleFieldResizePointerMove(e)}
-                                onPointerUp={(e) => handleFieldResizePointerUp(e)}
-                                onPointerCancel={(e) => handleFieldResizePointerUp(e)}
-                              >
-                                <svg className="w-3 h-3 text-violet-500" viewBox="0 0 24 24" fill="currentColor">
-                                  <path d="M22 22H20V20H22V22ZM22 18H20V16H22V18ZM18 22H16V20H18V22ZM22 14H20V12H22V14ZM18 18H16V16H18V18ZM14 22H12V20H14V22Z" />
-                                </svg>
-                              </div>
-                              {/* Delete button */}
-                              <button
-                                type="button"
-                                className="absolute -right-2 -top-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-900 border border-white text-[10px] text-white shadow-xl hover:bg-black transition-transform active:scale-90 z-20"
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  deleteField(field.id);
-                                }}
-                              >
-                                ✕
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
                 </div>
               </div>
 
-              {/* Floating Zoom Controls & Signature Controls */}
-              <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex items-center gap-4 px-6 py-2 bg-white/90 backdrop-blur-md rounded-full shadow-2xl border border-slate-200 z-40">
-              </div>
+              {/* Bottom status bar */}
+              {signaturePlaced && (
+                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 px-5 py-2 bg-green-50 border border-green-200 rounded-full shadow-lg z-40">
+                  <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                  <span className="text-xs font-semibold text-green-700">Signature placed — drag to reposition, then click Sign</span>
+                </div>
+              )}
             </main>
-
-            {/* Right Sidebar: Quick Actions */}
-            <aside className="w-16 flex-shrink-0 border-l border-slate-200 bg-white hidden lg:flex flex-col items-center py-8 gap-8">
-              <button title="Summarize" className="flex flex-col items-center gap-1.5 text-slate-400 hover:text-violet-600 transition-colors">
-                <span className="text-xl">✦</span>
-                <span className="text-[9px] font-bold uppercase tracking-tighter">Sum</span>
-              </button>
-              <button title="Search" className="flex flex-col items-center gap-1.5 text-slate-400 hover:text-violet-600 transition-colors text-lg">🔎</button>
-              <button title="Download" className="flex flex-col items-center gap-1.5 text-slate-400 hover:text-violet-600 transition-colors text-lg">⬇</button>
-              <div className="mt-auto flex flex-col items-center gap-3">
-                <div className="h-10 w-10 rounded-full border-2 border-violet-100 p-0.5">
-                  <div className="h-full w-full rounded-full bg-violet-500 flex items-center justify-center text-[10px] font-bold text-white shadow-inner">RK</div>
-                </div>
-              </div>
-            </aside>
           </div>
         </div>
       ) : (
@@ -1223,27 +1404,24 @@ export default function SignDocumentPage() {
                 </div>
               )}
 
-              {signedPreview ? (
+              {signedPreview || signedHtmlContent ? (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-bold text-slate-900">Signed Document Preview</p>
-                      <p className="text-[11px] text-slate-500 uppercase tracking-tighter">Ready for download</p>
+                      <p className="text-[11px] text-slate-500 uppercase tracking-tighter">Choose what to do next</p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <a
-                        href={signedPreview}
-                        download={`signed-${activeDoc?.name?.replace(/\s+/g, "-") || "document"}.png`}
-                        className="rounded-full border border-violet-600 bg-white px-4 py-2 text-xs font-bold text-violet-600 shadow-sm hover:bg-violet-600 hover:text-white transition-all active:scale-95"
-                      >
-                        Download PNG
-                      </a>
                       <button
                         type="button"
                         disabled={isUploadingSigned}
                         onClick={async () => {
                           if (!signedPreview) return;
-                          
+                          if (sourceDocumentId) {
+                            await downloadSignedPreview();
+                            return;
+                          }
+                          setSignedUploadAction("close");
                           setBanner("Uploading to cloud...");
                           try {
                             // Convert dataUrl to File
@@ -1263,16 +1441,110 @@ export default function SignDocumentPage() {
                         {isUploadingSigned ? (
                           <>
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            Finalizing...
+                            Uploading...
                           </>
                         ) : (
-                          "Finish & Close"
+                          sourceDocumentId ? "Download" : "Save"
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isUploadingSigned && (!signedHtmlContent || signedUploadAction !== "send")}
+                        onClick={async () => {
+                          if (signedHtmlContent) {
+                            if (!sourceDocumentId) return; // HTML mode relies on updating an existing sourceDoc
+                            setSignedUploadAction("send");
+                            setBanner("Updating signed HTML document...");
+                            try {
+                              const { data: docRow } = await supabase
+                                .from("documents")
+                                .select("recipients, category")
+                                .eq("id", sourceDocumentId)
+                                .maybeSingle();
+
+                              const isReviewDoc = docRow?.category === "Reviewer";
+                              const recipientStatus = isReviewDoc ? "reviewed" : "signed";
+                              const statusPatch = isReviewDoc
+                                ? { status: "reviewed", reviewed_at: new Date().toISOString() }
+                                : { status: "signed", signed_at: new Date().toISOString() };
+
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const senderEmail = normalizeEmail(session?.user?.email) || "";
+
+                              let updatedRecipients = docRow?.recipients;
+                              if (Array.isArray(updatedRecipients)) {
+                                let matched = false;
+                                updatedRecipients = updatedRecipients.map((r: any) => {
+                                  if (!matched && normalizeEmail(r.email) === senderEmail) {
+                                    matched = true;
+                                    return { ...r, status: recipientStatus };
+                                  }
+                                  return r;
+                                });
+                                if (!matched && updatedRecipients.length === 1) {
+                                  updatedRecipients = [{ ...updatedRecipients[0], status: recipientStatus }];
+                                }
+                              }
+
+                              const { error: sourceUpdateError } = await supabase
+                                .from("documents")
+                                .update({
+                                  ...statusPatch,
+                                  content: signedHtmlContent,
+                                  ...(updatedRecipients ? { recipients: updatedRecipients } : {}),
+                                })
+                                .eq("id", sourceDocumentId);
+
+                              if (sourceUpdateError) throw sourceUpdateError;
+
+                              setBanner("Document signed successfully. The sender can now view the updated document.");
+                              setTimeout(() => {
+                                setSignedHtmlContent(null);
+                                setSignedPreview(null);
+                                setIsSigning(false);
+                                router.push("/dashboard/documents");
+                              }, 2000);
+                            } catch (err) {
+                              setBanner("Failed to update HTML document.");
+                            }
+                            return;
+                          }
+
+                          if (!signedPreview) return;
+                          setSignedUploadAction("send");
+                          setBanner("Preparing signed document for sending...");
+                          try {
+                            const response = await fetch(signedPreview);
+                            const blob = await response.blob();
+                            const filename = `signed-${activeDoc?.name?.replace(/\s+/g, "-") || "document"}.png`;
+                            const file = new File([blob], filename, { type: "image/png" });
+
+                            await uploadSigned([file]);
+                          } catch (e) {
+                            console.error("Upload preparation failed", e);
+                            setBanner("Failed to prepare file for sending.");
+                          }
+                        }}
+                        className="rounded-full bg-violet-600 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-violet-900/20 hover:bg-violet-700 transition-all active:scale-95 flex items-center gap-2"
+                      >
+                        {((isUploadingSigned || signedHtmlContent) && signedUploadAction === "send") ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            {sourceDocumentId ? "Updating..." : "Sending..."}
+                          </>
+                        ) : (
+                          sourceDocumentId ? "Signed" : "Send"
                         )}
                       </button>
                     </div>
                   </div>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-inner">
-                    <img src={signedPreview} alt="Signed" className="mx-auto max-h-[600px] w-auto rounded-lg shadow-2xl border border-white" />
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-inner flex overflow-auto max-h-[800px]">
+                    {signedHtmlContent ? (
+                      <div className="mx-auto w-[800px] min-h-[1056px] shrink-0 bg-white p-12 md:p-16 shadow-sm border border-slate-100 text-[15px] text-slate-800 leading-[1.9] tracking-tight relative"
+                           dangerouslySetInnerHTML={{ __html: signedHtmlContent.replace(/\n/g, "<br/>").replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">') }} />
+                    ) : (
+                      <img src={signedPreview!} alt="Signed" className="mx-auto h-[600px] w-auto shadow-2xl border border-white" />
+                    )}
                   </div>
                 </div>
               ) : (
@@ -1418,6 +1690,31 @@ export default function SignDocumentPage() {
 
             </aside>
           </div>
+        </div>
+      )}
+
+      {/* Global Fixed Drag Ghost - follows cursor anywhere on screen while dragging signature from sidebar */}
+      {draggingSignature && savedSignature && dragCursorPos && (
+        <div
+          className="fixed z-[9999] pointer-events-none select-none"
+          style={{
+            left: dragCursorPos.x - signatureWidthPx / 2,
+            top: dragCursorPos.y - signatureHeightPx / 2,
+            width: `${signatureWidthPx}px`,
+            height: `${signatureHeightPx + 20}px`,
+          }}
+        >
+          <div className="w-full rounded-lg border-2 border-dashed border-violet-500 bg-white/90 shadow-2xl backdrop-blur-sm overflow-hidden" style={{ height: `${signatureHeightPx}px` }}>
+            <img
+              src={savedSignature}
+              alt="Signature drag ghost"
+              className="h-full w-full object-contain p-1"
+              draggable={false}
+            />
+          </div>
+          <p className="text-center text-[10px] font-bold text-violet-600 mt-1 uppercase tracking-widest whitespace-nowrap">
+            Drop on document
+          </p>
         </div>
       )}
 

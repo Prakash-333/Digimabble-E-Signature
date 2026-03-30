@@ -85,6 +85,17 @@ create table if not exists public.signatures (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.recipient_contacts (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  category text not null,
+  name text not null,
+  email text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (owner_id, category, email)
+);
+
 -- Generic updated_at trigger function
 create or replace function public.set_updated_at()
 returns trigger
@@ -121,6 +132,11 @@ create trigger set_signatures_updated_at
 before update on public.signatures
 for each row execute function public.set_updated_at();
 
+drop trigger if exists set_recipient_contacts_updated_at on public.recipient_contacts;
+create trigger set_recipient_contacts_updated_at
+before update on public.recipient_contacts
+for each row execute function public.set_updated_at();
+
 -- Create a profile row automatically for new auth users
 create or replace function public.handle_new_user()
 returns trigger
@@ -152,6 +168,7 @@ alter table public.documents enable row level security;
 alter table public.document_events enable row level security;
 alter table public.templates enable row level security;
 alter table public.signatures enable row level security;
+alter table public.recipient_contacts enable row level security;
 
 -- Profiles policies
 drop policy if exists "profiles_select_own" on public.profiles;
@@ -184,6 +201,35 @@ on public.documents for all
 using (auth.uid() = owner_id)
 with check (auth.uid() = owner_id);
 
+drop policy if exists "documents_select_recipient" on public.documents;
+create policy "documents_select_recipient"
+on public.documents for select
+using (
+  exists (
+    select 1
+    from jsonb_array_elements(recipients) as recipient
+    where lower(btrim(recipient ->> 'email')) = lower(btrim(coalesce(auth.jwt() ->> 'email', '')))
+  )
+);
+
+drop policy if exists "documents_update_recipient" on public.documents;
+create policy "documents_update_recipient"
+on public.documents for update
+using (
+  exists (
+    select 1
+    from jsonb_array_elements(recipients) as recipient
+    where lower(btrim(recipient ->> 'email')) = lower(btrim(coalesce(auth.jwt() ->> 'email', '')))
+  )
+)
+with check (
+  exists (
+    select 1
+    from jsonb_array_elements(recipients) as recipient
+    where lower(btrim(recipient ->> 'email')) = lower(btrim(coalesce(auth.jwt() ->> 'email', '')))
+  )
+);
+
 -- Events policies
 drop policy if exists "document_events_crud_own" on public.document_events;
 create policy "document_events_crud_own"
@@ -215,5 +261,11 @@ with check (auth.uid() = owner_id);
 drop policy if exists "signatures_crud_own" on public.signatures;
 create policy "signatures_crud_own"
 on public.signatures for all
+using (auth.uid() = owner_id)
+with check (auth.uid() = owner_id);
+
+drop policy if exists "recipient_contacts_crud_own" on public.recipient_contacts;
+create policy "recipient_contacts_crud_own"
+on public.recipient_contacts for all
 using (auth.uid() = owner_id)
 with check (auth.uid() = owner_id);

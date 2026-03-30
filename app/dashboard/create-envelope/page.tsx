@@ -8,6 +8,8 @@ import { RotateCw, CloudUpload, Monitor, FileText, Cloud } from "lucide-react";
 import {
   analyzeDocumentFile,
 } from "../../lib/document-analysis";
+import { supabase } from "../../lib/supabase/browser";
+import { getScopedStorageItem } from "../../lib/user-storage";
 
 type SignMethod = "template" | "photo";
 
@@ -108,26 +110,33 @@ function CreateEnvelopeContent() {
   }, [signMethod, selected]);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as Partial<Profile>;
-      const workEmail =
-        typeof parsed.workEmail === "string" && parsed.workEmail.trim()
-          ? parsed.workEmail
-          : null;
-      if (workEmail) {
-        setSender((prev) => ({
-          fullName:
-            typeof parsed.fullName === "string" && parsed.fullName.trim()
-              ? parsed.fullName
-              : prev.fullName,
-          workEmail,
-        }));
+    const loadProfile = async () => {
+      const { data } = await supabase.auth.getUser();
+      const currentUser = data.user;
+
+      try {
+        const raw = getScopedStorageItem(PROFILE_STORAGE_KEY, currentUser?.id);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as Partial<Profile>;
+        const workEmail =
+          typeof parsed.workEmail === "string" && parsed.workEmail.trim()
+            ? parsed.workEmail
+            : null;
+        if (workEmail) {
+          setSender((prev) => ({
+            fullName:
+              typeof parsed.fullName === "string" && parsed.fullName.trim()
+                ? parsed.fullName
+                : prev.fullName,
+            workEmail,
+          }));
+        }
+      } catch {
+        // Ignore invalid stored values.
       }
-    } catch {
-      // Ignore invalid stored values.
-    }
+    };
+
+    void loadProfile();
   }, []);
 
   useEffect(() => {

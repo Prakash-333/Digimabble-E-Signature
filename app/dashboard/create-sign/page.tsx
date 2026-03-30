@@ -4,6 +4,7 @@
 import { useRef, useState, useEffect } from "react";
 import type React from "react";
 import { supabase } from "../../lib/supabase/browser";
+import { removeStoredSignature, setStoredSignature } from "../../lib/signature-storage";
 
 type SignatureRow = {
   id: string;
@@ -139,6 +140,7 @@ export default function CreateSignPage() {
           return;
         }
         setSavedSignature(dataUrl);
+        setStoredSignature(userId, dataUrl);
         setBanner("Saved to Supabase.");
       });
   };
@@ -170,6 +172,7 @@ export default function CreateSignPage() {
     }
 
     setSavedSignature(dataUrl);
+    setStoredSignature(userId, dataUrl);
     setBanner("Uploaded and saved to Supabase.");
   };
 
@@ -189,6 +192,7 @@ export default function CreateSignPage() {
           return;
         }
         setSavedSignature(null);
+        removeStoredSignature(userId);
         setBanner("Removed saved signature.");
       });
   };

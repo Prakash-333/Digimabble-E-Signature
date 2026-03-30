@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useUploadThing } from "../../lib/uploadthing-client";
 import { deleteCloudFiles } from "../../actions/uploadthing";
 import { supabase } from "../../lib/supabase/browser";
+import { getMissingTableMessage, isMissingSupabaseTable } from "../../lib/supabase/errors";
 import { CloudUpload, FileText, Image as ImageIcon, Folder, X, File, FileSpreadsheet, Presentation, FileType, Briefcase, User, Check, MoreHorizontal, Download, Trash2, Loader2, List, LayoutGrid } from "lucide-react";
 
 type DocumentCategory = "personal" | "company";
@@ -43,6 +44,7 @@ export default function MyDocumentsPage() {
     const [showSaveSuccess, setShowSaveSuccess] = useState(false);
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const [userId, setUserId] = useState<string | null>(null);
+    const [schemaError, setSchemaError] = useState<string | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
     // Load documents from Supabase on mount
@@ -60,15 +62,18 @@ export default function MyDocumentsPage() {
                 .order("uploaded_at", { ascending: false });
 
             if (error) {
-                console.error("Failed to load documents:", {
-                    message: error.message,
-                    details: error.details,
-                    hint: error.hint,
-                    code: error.code
-                });
+                if (isMissingSupabaseTable(error, "my_documents")) {
+                    setSchemaError(getMissingTableMessage("my_documents"));
+                    console.warn("Missing Supabase table: public.my_documents");
+                    return;
+                }
+
+                setSchemaError("Unable to load your documents right now. Please refresh and try again.");
+                console.warn("Failed to load my_documents:", error);
                 return;
             }
 
+            setSchemaError(null);
             setStoredDocuments((rows ?? []).map((row: MyDocumentRow) => ({
                 id: row.id,
                 name: row.name,
@@ -117,10 +122,16 @@ export default function MyDocumentsPage() {
 
                 const { error } = await supabase.from("my_documents").insert(payload);
                 if (error) {
-                    console.error("Failed to save documents:", error);
+                    if (isMissingSupabaseTable(error, "my_documents")) {
+                        setSchemaError(getMissingTableMessage("my_documents"));
+                    } else {
+                        setSchemaError("Upload finished, but saving the document record failed. Please try again.");
+                        console.warn("Failed to save my_documents:", error);
+                    }
                     return;
                 }
 
+                setSchemaError(null);
                 setStoredDocuments((prev) => [...newDocs, ...prev]);
 
                 setPendingCategory(null);
@@ -152,6 +163,9 @@ export default function MyDocumentsPage() {
     };
 
     const handleButtonClick = () => {
+        if (schemaError) {
+            return;
+        }
         setShowUploadModal(true);
     };
 
@@ -179,7 +193,15 @@ export default function MyDocumentsPage() {
             }
 
             if (target?.id) {
-                await supabase.from("my_documents").delete().eq("id", target.id);
+                const { error } = await supabase.from("my_documents").delete().eq("id", target.id);
+                if (error) {
+                    if (isMissingSupabaseTable(error, "my_documents")) {
+                        setSchemaError(getMissingTableMessage("my_documents"));
+                    } else {
+                        setSchemaError("Deleting the document record failed. Please refresh and try again.");
+                        console.warn("Failed to delete from my_documents:", error);
+                    }
+                }
             }
         };
 
@@ -285,6 +307,12 @@ export default function MyDocumentsPage() {
                 </div>
             )}
 
+            {schemaError && (
+                <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 shadow-sm">
+                    {schemaError}
+                </div>
+            )}
+
             {/* Header with Upload Button */}
             <div className="mb-6 flex items-center justify-between">
                 <div>
@@ -296,7 +324,7 @@ export default function MyDocumentsPage() {
                 <button
                     type="button"
                     onClick={handleButtonClick}
-                    disabled={isUploading}
+                    disabled={isUploading || Boolean(schemaError)}
                     className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-5 py-2.5 text-xs font-semibold !text-white shadow-md hover:bg-violet-700 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     {isUploading ? (
@@ -348,7 +376,7 @@ export default function MyDocumentsPage() {
                     <button
                         type="button"
                         onClick={() => setViewMode("list")}
-                        className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "list" ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}
+                        className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "list" ? "bg-violet-600 text-white" : "text-slate-500 hover:bg-slate-100"}`}
                         aria-label="List view"
                     >
                         <List className="h-4 w-4" />
@@ -356,7 +384,7 @@ export default function MyDocumentsPage() {
                     <button
                         type="button"
                         onClick={() => setViewMode("grid")}
-                        className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "grid" ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}
+                        className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "grid" ? "bg-violet-600 text-white" : "text-slate-500 hover:bg-slate-100"}`}
                         aria-label="Grid view"
                     >
                         <LayoutGrid className="h-4 w-4" />

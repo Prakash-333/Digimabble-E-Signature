@@ -7,6 +7,7 @@ import type React from "react";
 import { PenLine as Pen, Square, Calendar, User, Mail, Building2, Tag, Type, CheckSquare } from "lucide-react";
 import { supabase } from "../../../lib/supabase/browser";
 import { analyzeDocumentFile } from "../../../lib/document-analysis";
+import { getScopedStorageItem, setScopedStorageItem } from "../../../lib/user-storage";
 
 const DRAFT_STORAGE_KEY = "smartdocs.envelope_draft.v1";
 
@@ -132,7 +133,7 @@ const extractPlaceholdersFromText = (content: string): DetectedPlaceholder[] => 
 
 export default function PrepareEnvelopePage() {
   const pageRef = useRef<HTMLDivElement | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null | undefined>(undefined);
 
   const [draft, setDraft] = useState<EnvelopeDraft | null>(null);
   const [savedSignature, setSavedSignature] = useState<string | null>(null);
@@ -159,11 +160,14 @@ export default function PrepareEnvelopePage() {
     const loadDraft = async () => {
       const { data } = await supabase.auth.getUser();
       const currentUser = data.user;
-      if (!currentUser) return;
+      if (!currentUser) {
+        setUserId(null);
+        return;
+      }
       setUserId(currentUser.id);
 
       try {
-        const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
+        const raw = getScopedStorageItem(DRAFT_STORAGE_KEY, currentUser.id);
         if (!raw) {
           setDraft(null);
           return;
@@ -186,10 +190,11 @@ export default function PrepareEnvelopePage() {
   }, []);
 
   useEffect(() => {
-    if (!draft) return;
+    if (!draft || userId === undefined) return;
     try {
-      localStorage.setItem(
+      setScopedStorageItem(
         DRAFT_STORAGE_KEY,
+        userId,
         JSON.stringify({
           ...draft,
           placeholderValues,
@@ -198,7 +203,7 @@ export default function PrepareEnvelopePage() {
     } catch {
       // Ignore storage failures.
     }
-  }, [draft, placeholderValues]);
+  }, [draft, placeholderValues, userId]);
 
   useEffect(() => {
     const primary = draft?.documents[0];

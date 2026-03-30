@@ -79,7 +79,7 @@ export default function SettingsPage() {
           Settings
         </h1>
         <p className="mt-1 text-xs text-slate-500 md:text-sm">
-          Configure your profile, workspace, and notification preferences for
+          Configure your profile and workspace for
           this platform.
         </p>
       </div>
@@ -160,42 +160,6 @@ export default function SettingsPage() {
           </button>
         </section>
 
-        <section className="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900">
-              Notifications
-            </h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Manage how you receive updates and alerts.
-            </p>
-          </div>
-          <div className="space-y-4 text-xs text-slate-700">
-            <label className="flex items-center gap-3 cursor-pointer group">
-              <input type="checkbox" defaultChecked className="h-4 w-4 rounded border-slate-300 accent-violet-600 focus:ring-violet-400" />
-              <span className="group-hover:text-slate-900 transition-colors">
-                Email me when I&apos;m assigned a new deal or contact.
-              </span>
-            </label>
-            <label className="flex items-center gap-3 cursor-pointer group">
-              <input type="checkbox" defaultChecked className="h-4 w-4 rounded border-slate-300 accent-violet-600 focus:ring-violet-400" />
-              <span className="group-hover:text-slate-900 transition-colors">
-                Send a daily summary of overdue and upcoming activities.
-              </span>
-            </label>
-            <label className="flex items-center gap-3 cursor-pointer group">
-              <input type="checkbox" className="h-4 w-4 rounded border-slate-300 accent-violet-600 focus:ring-violet-400" />
-              <span className="group-hover:text-slate-900 transition-colors">Notify me about new product and feature updates.</span>
-            </label>
-          </div>
-
-          <div className="rounded-xl bg-slate-50 p-4 border border-slate-100">
-            <p className="font-bold text-slate-800 text-[11px] uppercase tracking-wider">Current plan</p>
-            <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
-              You&apos;re using the <strong className="text-slate-900">Trial</strong> plan. This setup
-              is front-end only and safe for demos and learning.
-            </p>
-          </div>
-        </section>
       </div>
 
     </div>

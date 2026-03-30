@@ -3,18 +3,69 @@
 import { Suspense, useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
-import { Search, Eye, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage } from "lucide-react";
-import { templates, OFFER_LETTER_TEMPLATE, type Template } from "./data";
+import { Search, Eye, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2 } from "lucide-react";
+import { OFFER_LETTER_TEMPLATE, type Template } from "./data";
 import { useUploadThing } from "../../lib/uploadthing-client";
 import { supabase } from "../../lib/supabase/browser";
 import { analyzeDocumentFile, extractPlaceholdersFromText } from "../../lib/document-analysis";
+import { normalizeEmail, normalizeRecipients } from "../../lib/documents";
+import { getScopedStorageItem, setScopedStorageItem } from "../../lib/user-storage";
 
-type AppTemplate = Template & {
+type TemplateId = string | number;
+
+type AppTemplate = Omit<Template, "id"> & {
+  id: TemplateId;
   fileDataUrl?: string;
   mimeType?: string;
   detectedText?: string;
   detectedPlaceholders?: string[];
   sourceFileName?: string;
+};
+
+type TemplateRow = {
+  id: string;
+  owner_id: string;
+  name: string;
+  category: string;
+  color: string | null;
+  preview: {
+    headline?: string;
+    sections?: Array<{ title: string; lines: string[] }>;
+    fileUrl?: string;
+    mimeType?: string;
+    detectedPlaceholders?: string[];
+    sourceFileName?: string;
+  } | null;
+  content: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type Recipient = { name: string; email: string; role?: string };
+
+type RecipientContactRow = {
+  id: string;
+  owner_id: string;
+  category: string;
+  name: string;
+  email: string;
+};
+
+type ReviewedDocumentRow = {
+  id: string;
+  name: string;
+  category: string | null;
+  file_url: string | null;
+};
+
+type ProfileRow = {
+  full_name: string | null;
+  company: string | null;
+  timezone: string | null;
+};
+
+type SignatureRow = {
+  data_url: string;
 };
 
 const getTemplatePlaceholders = (template: AppTemplate) => {
@@ -44,6 +95,28 @@ const escapeHtml = (value: string) =>
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 
+const formatTemplateUpdatedLabel = (value?: string) =>
+  `Updated ${new Date(value ?? Date.now()).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+
+const mapTemplateRowToAppTemplate = (row: TemplateRow): AppTemplate => ({
+  id: row.id,
+  initial: row.name.charAt(0).toUpperCase(),
+  name: row.name,
+  category: (row.category as Template["category"]) || "Legal",
+  updated: formatTemplateUpdatedLabel(row.updated_at),
+  uses: "0 uses",
+  color: row.color ?? "bg-violet-50 text-violet-600",
+  preview: {
+    headline: row.preview?.headline || row.name,
+    sections: row.preview?.sections ?? [{ title: "Document", lines: ["Saved template"] }],
+  },
+  fileDataUrl: row.preview?.fileUrl,
+  mimeType: row.preview?.mimeType,
+  detectedText: row.content ?? undefined,
+  detectedPlaceholders: row.preview?.detectedPlaceholders ?? undefined,
+  sourceFileName: row.preview?.sourceFileName,
+});
+
 const persistSharedDocument = async (record: {
   id: string;
   name: string;
@@ -57,31 +130,48 @@ const persistSharedDocument = async (record: {
   category?: string;
   content?: string;
 }) => {
-  try {
-    const { data } = await supabase.auth.getUser();
-    const currentUser = data.user;
-    if (!currentUser) return;
+  const { data } = await supabase.auth.getUser();
+  const currentUser = data.user;
+  if (!currentUser) {
+    throw new Error("Please sign in again before sending this document.");
+  }
 
-    const { error } = await supabase.from("documents").insert({
+  const senderEmail = normalizeEmail(currentUser.email);
+  if (!senderEmail) {
+    throw new Error("Your account is missing an email address.");
+  }
+
+  const recipients = normalizeRecipients(record.recipients);
+  if (!recipients.length) {
+    throw new Error("Please choose at least one valid recipient email.");
+  }
+
+  const { data: insertedRow, error } = await supabase
+    .from("documents")
+    .insert({
       owner_id: currentUser.id,
       name: record.name,
       subject: record.subject,
-      recipients: record.recipients,
-      sender: record.sender,
+      recipients,
+      sender: {
+        ...record.sender,
+        workEmail: senderEmail,
+      },
       sent_at: record.sentAt,
       status: record.status,
       file_url: record.fileUrl ?? null,
       file_key: record.fileKey ?? null,
       category: record.category ?? null,
       content: record.content ?? null,
-    });
+    })
+    .select("id")
+    .single();
 
-    if (error) {
-      console.warn("Shared document save skipped:", error.message || error);
-    }
-  } catch (error) {
-    console.warn("Shared document persistence skipped:", error);
+  if (error) {
+    throw new Error(error.message || "Failed to save the shared document.");
   }
+
+  return insertedRow;
 };
 
 function TemplatesContent() {
@@ -89,16 +179,17 @@ function TemplatesContent() {
   const searchParams = useSearchParams();
   const urlSearch = searchParams.get("search") || "";
 
-  const [previewId, setPreviewId] = useState<number | null>(null);
-  const [openMenuId, setOpenMenuId] = useState<number | null>(null);
+  const [previewId, setPreviewId] = useState<TemplateId | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<TemplateId | null>(null);
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState(urlSearch);
-  const [favorites, setFavorites] = useState<Set<number>>(new Set());
+  const [favorites, setFavorites] = useState<Set<TemplateId>>(new Set());
   const [showCreateDropdown, setShowCreateDropdown] = useState(false);
   const [useStep, setUseStep] = useState<"review" | "recipients" | "send" | null>(null);
-  const [selectedForUse, setSelectedForUse] = useState<number | null>(null);
-  const [appTemplates, setAppTemplates] = useState<AppTemplate[]>(templates);
+  const [selectedForUse, setSelectedForUse] = useState<TemplateId | null>(null);
+  const [appTemplates, setAppTemplates] = useState<AppTemplate[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null | undefined>(undefined);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingTemplateAnalysisRef = useRef<Array<{
     fileName: string;
@@ -108,18 +199,54 @@ function TemplatesContent() {
     placeholders: string[];
   }>>([]);
 
-  // Load saved templates from localStorage on mount
   useEffect(() => {
-    const savedTemplates = localStorage.getItem("smartdocs.templates.v1");
-    if (savedTemplates) {
+    const loadCurrentUser = async () => {
       try {
-        const parsed = JSON.parse(savedTemplates);
-        setAppTemplates([...templates, ...(parsed as AppTemplate[])]);
-        } catch {
-          // ignore parse errors
+        const { data: { session } } = await supabase.auth.getSession();
+        let user = (session?.user ?? undefined) as any;
+        
+        if (!user) {
+          const { data: { user: freshUser }, error: authError } = await supabase.auth.getUser();
+          if (authError) {
+            if (authError.message?.includes("stole it")) return;
+            throw authError;
+          }
+          user = freshUser;
         }
+
+        setCurrentUserId(user?.id ?? null);
+      } catch (err) {
+        console.error("Auth lock error in templates:", err);
       }
+    };
+
+    void loadCurrentUser();
   }, []);
+
+  useEffect(() => {
+    if (currentUserId === undefined) return;
+
+    if (!currentUserId) return;
+
+    const loadTemplates = async () => {
+      const { data: rows, error } = await supabase
+        .from("templates")
+        .select("id, owner_id, name, category, color, preview, content, created_at, updated_at")
+        .eq("owner_id", currentUserId)
+        .order("updated_at", { ascending: false });
+
+      if (error) {
+        console.warn("Failed to load templates:", error);
+        setAppTemplates([]);
+        return;
+      }
+
+      const remoteTemplates = (rows ?? []).map((row: TemplateRow) => mapTemplateRowToAppTemplate(row));
+      setAppTemplates(remoteTemplates);
+    };
+
+    void loadTemplates();
+  }, [currentUserId]);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -130,38 +257,21 @@ function TemplatesContent() {
     }
   }, [openMenuId]);
 
-  // Save templates to localStorage whenever appTemplates changes
-  useEffect(() => {
-    const customTemplates = appTemplates.filter(t => t.id >= 1000000000);
-    if (customTemplates.length > 0) {
-      localStorage.setItem("smartdocs.templates.v1", JSON.stringify(customTemplates));
-    } else {
-      localStorage.removeItem("smartdocs.templates.v1");
-    }
-  }, [appTemplates]);
-
   const { startUpload, isUploading } = useUploadThing("templateUploader", {
-    onClientUploadComplete: (res) => {
+    onClientUploadComplete: async (res) => {
       const analyses = pendingTemplateAnalysisRef.current;
-      if (res && res.length > 0) {
-        const newTemplates: AppTemplate[] = res.map((file, index) => {
+      if (res && res.length > 0 && currentUserId) {
+        const payload = res.map((file, index) => {
           const analysis = analyses[index];
           const baseName = file.name.replace(/\.[^/.]+$/, "");
           const placeholderCount = analysis?.placeholders?.length ?? 0;
 
           return {
-            id: Date.now() + index,
-            initial: file.name.charAt(0).toUpperCase(),
             name: baseName,
             category: "Legal",
-            updated: `Updated ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`,
-            uses: "0 uses",
             color: "bg-violet-50 text-violet-600",
-            fileDataUrl: analysis?.dataUrl,
-            mimeType: analysis?.mimeType ?? file.type,
-            detectedText: analysis?.textContent,
-            detectedPlaceholders: analysis?.placeholders,
-            sourceFileName: file.name,
+            owner_id: currentUserId,
+            content: analysis?.textContent ?? null,
             preview: {
               headline: baseName,
               sections: [
@@ -177,11 +287,25 @@ function TemplatesContent() {
                   ],
                 },
               ],
+              fileUrl: file.url,
+              mimeType: analysis?.mimeType ?? file.type,
+              detectedPlaceholders: analysis?.placeholders ?? [],
+              sourceFileName: file.name,
             },
           };
         });
 
-        setAppTemplates((prev) => [...newTemplates, ...prev]);
+        const { data: insertedRows, error } = await supabase
+          .from("templates")
+          .insert(payload)
+          .select("id, owner_id, name, category, color, preview, content, created_at, updated_at");
+
+        if (error) {
+          alert(`Template save failed: ${error.message}`);
+        } else {
+          const newTemplates = (insertedRows ?? []).map((row: TemplateRow) => mapTemplateRowToAppTemplate(row));
+          setAppTemplates((prev) => [...newTemplates, ...prev]);
+        }
         setShowCreateDropdown(false);
       }
 
@@ -230,53 +354,54 @@ function TemplatesContent() {
     }
   };
 
-  // Update search query when URL changes
-  useEffect(() => {
-    const urlSearchParam = searchParams.get("search");
-    if (urlSearchParam) {
-      setSearchQuery(urlSearchParam);
-    }
-  }, [searchParams]);
-
   // Check for step=recipients parameter to open template flow at step 2
   useEffect(() => {
+    if (currentUserId === undefined) return;
+
     const stepParam = searchParams.get("step");
-    if (stepParam === "recipients") {
-      const reviewedDocData = localStorage.getItem("smartdocs.send_reviewed_doc");
-      if (reviewedDocData) {
-        try {
-          const docData = JSON.parse(reviewedDocData);
-          // Find or create a template for this document
-          const existingTemplate = appTemplates.find(t => t.name === docData.name);
-          if (existingTemplate) {
-            setSelectedForUse(existingTemplate.id);
-          } else {
-            // Create a temporary template for this document
-          const tempTemplate = {
-            id: Date.now(),
-            initial: docData.name.charAt(0).toUpperCase(),
-              name: docData.name,
-              category: docData.category || "Legal",
-              updated: `Updated ${new Date().toLocaleDateString("en-US", { month: 'short', day: 'numeric', year: 'numeric' })}`,
-              uses: "0 uses",
-              color: "bg-violet-50 text-violet-600",
-              preview: {
-                headline: docData.name,
-                sections: [{ title: "Document", lines: ["Reviewed document ready to send"] }]
-              }
-            };
-            setAppTemplates(prev => [tempTemplate, ...prev]);
-            setSelectedForUse(tempTemplate.id);
-          }
-          setUseStep("recipients");
-          // Clear the stored document data
-          localStorage.removeItem("smartdocs.send_reviewed_doc");
-        } catch (e) {
-          console.error("Failed to parse reviewed document data:", e);
-        }
+    const documentId = searchParams.get("documentId");
+    if (stepParam !== "recipients" || !documentId || !currentUserId) return;
+
+    const loadReviewedDocument = async () => {
+      const { data: docData, error } = await supabase
+        .from("documents")
+        .select("id, name, category, file_url")
+        .eq("id", documentId)
+        .eq("owner_id", currentUserId)
+        .maybeSingle<ReviewedDocumentRow>();
+
+      if (error || !docData) {
+        console.warn("Failed to load reviewed document:", error);
+        return;
       }
-    }
-  }, [searchParams, appTemplates]);
+
+      const existingTemplate = appTemplates.find((template) => template.name === docData.name);
+      if (existingTemplate) {
+        setSelectedForUse(existingTemplate.id);
+      } else {
+        const tempTemplate: AppTemplate = {
+          id: `review-${docData.id}`,
+          initial: docData.name.charAt(0).toUpperCase(),
+          name: docData.name,
+          category: (docData.category as Template["category"]) || "Legal",
+          updated: formatTemplateUpdatedLabel(),
+          uses: "0 uses",
+          color: "bg-violet-50 text-violet-600",
+          fileDataUrl: docData.file_url ?? undefined,
+          preview: {
+            headline: docData.name,
+            sections: [{ title: "Document", lines: ["Reviewed document ready to send"] }],
+          },
+        };
+        setAppTemplates((prev) => [tempTemplate, ...prev]);
+        setSelectedForUse(tempTemplate.id);
+      }
+
+      setUseStep("recipients");
+    };
+
+    void loadReviewedDocument();
+  }, [searchParams, appTemplates, currentUserId]);
 
   const filteredTemplates = useMemo(() => {
     let filtered = appTemplates;
@@ -303,6 +428,11 @@ function TemplatesContent() {
   const selectedForPreview = useMemo(
     () => appTemplates.find((tpl) => tpl.id === previewId) ?? null,
     [previewId, appTemplates]
+  );
+
+  const selectedTemplateForUse = useMemo(
+    () => appTemplates.find((tpl) => tpl.id === selectedForUse) ?? null,
+    [selectedForUse, appTemplates]
   );
 
   const getTemplateKind = (tpl: AppTemplate) => {
@@ -417,7 +547,7 @@ function TemplatesContent() {
             <button
               type="button"
               onClick={() => setViewMode("list")}
-              className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "list" ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "list" ? "bg-violet-600 text-white" : "text-slate-500 hover:bg-slate-100"}`}
               aria-label="List view"
             >
               <List className="h-4 w-4" />
@@ -425,7 +555,7 @@ function TemplatesContent() {
             <button
               type="button"
               onClick={() => setViewMode("grid")}
-              className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "grid" ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`}
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "grid" ? "bg-violet-600 text-white" : "text-slate-500 hover:bg-slate-100"}`}
               aria-label="Grid view"
             >
               <LayoutGrid className="h-4 w-4" />
@@ -532,18 +662,32 @@ function TemplatesContent() {
                         <button
                           type="button"
                           className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors flex items-center gap-2"
-                          onClick={() => {
+                          onClick={async () => {
                             const nextName = window.prompt("Rename template", tpl.name);
                             if (!nextName || !nextName.trim()) {
                               setOpenMenuId(null);
                               return;
                             }
-                            setAppTemplates(prev => prev.map((item) => (
+
+                            if (typeof tpl.id === "string") {
+                              const { error } = await supabase
+                                .from("templates")
+                                .update({ name: nextName.trim() })
+                                .eq("id", tpl.id);
+
+                              if (error) {
+                                alert(`Rename failed: ${error.message}`);
+                                setOpenMenuId(null);
+                                return;
+                              }
+                            }
+
+                            setAppTemplates((prev) => prev.map((item) => (
                               item.id === tpl.id
                                 ? {
                                     ...item,
                                     name: nextName.trim(),
-                                    updated: `Updated ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`,
+                                    updated: formatTemplateUpdatedLabel(),
                                   }
                                 : item
                             )));
@@ -565,8 +709,16 @@ function TemplatesContent() {
                         <button
                           type="button"
                           className="w-full px-3 py-2 text-left text-xs font-medium text-red-500 hover:bg-red-50 transition-colors flex items-center gap-2"
-                          onClick={() => {
+                          onClick={async () => {
                             if (confirm(`Delete template "${tpl.name}"?`)) {
+                              if (typeof tpl.id === "string") {
+                                const { error } = await supabase.from("templates").delete().eq("id", tpl.id);
+                                if (error) {
+                                  alert(`Delete failed: ${error.message}`);
+                                  setOpenMenuId(null);
+                                  return;
+                                }
+                              }
                               setAppTemplates(prev => prev.filter(t => t.id !== tpl.id));
                             }
                             setOpenMenuId(null);
@@ -603,12 +755,13 @@ function TemplatesContent() {
       </div>
 
       {/* Use Template Modal Flow */}
-      {useStep && selectedForUse && (
+      {useStep && selectedTemplateForUse && (
         <TemplateFlowModal
-          template={appTemplates.find(t => t.id === selectedForUse)!}
+          template={selectedTemplateForUse}
           step={useStep}
           setStep={setUseStep}
           router={router}
+          currentUserId={currentUserId}
           onClose={() => {
             setUseStep(null);
             setSelectedForUse(null);
@@ -739,37 +892,14 @@ export default function TemplatesPage() {
     </Suspense>
   );
 }
+const RECIPIENT_CATEGORIES = ["Companies", "Employees", "Investors", "Clients", "Reviewer"] as const;
+const CATEGORY_STORAGE_KEY = "smartdocs.recipient-categories.v1";
 
-const RECIPIENT_DATA: Record<string, { name: string, email: string }[]> = {
-  Companies: [
-    { name: "Google", email: "contact@google.com" },
-    { name: "Microsoft", email: "info@microsoft.com" },
-    { name: "Apple", email: "support@apple.com" },
-    { name: "Amazon", email: "hr@amazon.com" },
-    { name: "Meta", email: "legal@meta.com" }
-  ],
-  Employees: [
-    { name: "John Doe", email: "john.doe@example.com" },
-    { name: "Jane Smith", email: "jane.smith@example.com" },
-    { name: "Bob Johnson", email: "bob.j@example.com" },
-    { name: "Alice Brown", email: "alice.b@example.com" }
-  ],
-  Investors: [
-    { name: "Sequoia Capital", email: "invest@sequoia.com" },
-    { name: "Andreessen Horowitz", email: "deals@a16z.com" },
-    { name: "Y Combinator", email: "apply@ycombinator.com" }
-  ],
-  Clients: [
-    { name: "Acme Corp", email: "billing@acme.com" },
-    { name: "Global Industries", email: "hello@global.com" },
-    { name: "Stark Enterprises", email: "tony@stark.com" }
-  ],
-  Reviewer: [
-    { name: "Sarah Johnson", email: "sarah.johnson@review.com" },
-    { name: "Michael Chen", email: "michael.chen@review.com" },
-    { name: "Emily Rodriguez", email: "emily.r@review.com" }
-  ]
-};
+const createEmptyRecipientGroups = (categories: readonly string[] = RECIPIENT_CATEGORIES): Record<string, Recipient[]> =>
+  categories.reduce<Record<string, Recipient[]>>((acc, category) => {
+    acc[category] = [];
+    return acc;
+  }, {});
 
 // Generate template fields based on the template content
 const generateTemplateFields = (templateContent: string) => {
@@ -813,21 +943,28 @@ const generateTemplateFields = (templateContent: string) => {
     }));
 };
 
-function TemplateFlowModal({ template, step, setStep, onClose, router }: {
+function TemplateFlowModal({ template, step, setStep, onClose, router, currentUserId }: {
   template: AppTemplate,
   step: "review" | "recipients" | "send",
   setStep: (s: "review" | "recipients" | "send" | null) => void,
   onClose: () => void,
-  router: ReturnType<typeof useRouter>
+  router: ReturnType<typeof useRouter>,
+  currentUserId: string | null | undefined
 }) {
   const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
   const todayISO = new Date().toISOString().split("T")[0];
 
   const hasUploadedDocument = Boolean(template.fileDataUrl);
-  const templateContent = template.name.includes("Employment Offer") || template.name.includes("Offer Letter")
+  const isOfferLetterTemplate = template.name.includes("Employment Offer") || template.name.includes("Offer Letter");
+  const templateContent = isOfferLetterTemplate
     ? OFFER_LETTER_TEMPLATE
     : "";
   const templateFields = templateContent ? generateTemplateFields(templateContent) : [];
+  const resolvedTemplateBaseContent = hasUploadedDocument
+    ? ""
+    : isOfferLetterTemplate
+      ? OFFER_LETTER_TEMPLATE
+      : "Template Document Content";
   const detectedPlaceholders = useMemo(() => getTemplatePlaceholders(template), [template]);
 
   // Demo values for placeholders
@@ -919,44 +1056,250 @@ function TemplateFlowModal({ template, step, setStep, onClose, router }: {
   }, [detectedPlaceholders]);
 
   // Step 2: recipients
-  const [selectedRecipients, setSelectedRecipients] = useState<{ name: string, email: string }[]>([]);
+  const [selectedRecipients, setSelectedRecipients] = useState<Recipient[]>([]);
   const [isSent, setIsSent] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [isPersisting, setIsPersisting] = useState(false);
   const [manualEmail, setManualEmail] = useState("");
   const [activeCategory, setActiveCategory] = useState<string>("Companies");
+  const [categoryNames, setCategoryNames] = useState<string[]>([...RECIPIENT_CATEGORIES]);
   const [recipientSearch, setRecipientSearch] = useState("");
+  const [recipientsByCategory, setRecipientsByCategory] = useState<Record<string, Recipient[]>>(createEmptyRecipientGroups);
+  const [newRecipientName, setNewRecipientName] = useState("");
+  const [newRecipientEmail, setNewRecipientEmail] = useState("");
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [savedSignature, setSavedSignature] = useState<string | null>(null);
 
   // Categories for the sidebar
-  const categories = Object.keys(RECIPIENT_DATA);
+  const categories = categoryNames;
+  const activeRecipients = activeCategory === "Manual" ? [] : (recipientsByCategory[activeCategory] ?? []);
+  const filteredRecipients = activeRecipients.filter(
+    (r) =>
+      recipientSearch === "" ||
+      r.name.toLowerCase().includes(recipientSearch.toLowerCase()) ||
+      r.email.toLowerCase().includes(recipientSearch.toLowerCase())
+  );
 
   // Auto-fill name from settings on mount
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("smartdocs.profile.v1");
-      if (raw) {
-        const profile = JSON.parse(raw);
-        setFormValues(prev => ({
-          ...prev,
-          name: profile.fullName || prev.name,
-          email: profile.workEmail || prev.email,
-          company: profile.company || prev.company,
-        }));
-      }
-    } catch { /* ignore */ }
-  }, []);
+    if (!currentUserId) return;
 
-  const savedSignature = typeof window !== "undefined"
-    ? localStorage.getItem("smartdocs.my_signature.v1")
-    : null;
+    const loadProfileAndSignature = async () => {
+      const [{ data: userData }, { data: profileRow }, { data: signatureRow }] = await Promise.all([
+        supabase.auth.getUser(),
+        supabase
+          .from("profiles")
+          .select("full_name, company, timezone")
+          .eq("id", currentUserId)
+          .maybeSingle<ProfileRow>(),
+        supabase
+          .from("signatures")
+          .select("data_url")
+          .eq("owner_id", currentUserId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle<SignatureRow>(),
+      ]);
+
+      setFormValues((prev) => ({
+        ...prev,
+        SENDER_NAME: profileRow?.full_name || prev.SENDER_NAME,
+        SENDER_COMPANY: profileRow?.company || prev.SENDER_COMPANY,
+        SENDER_EMAIL: userData.user?.email || prev.SENDER_EMAIL,
+      }));
+
+      setSavedSignature(signatureRow?.data_url ?? null);
+    };
+
+    void loadProfileAndSignature();
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+
+    const storedCategoryNames = getScopedStorageItem(CATEGORY_STORAGE_KEY, currentUserId);
+    if (!storedCategoryNames) return;
+
+    try {
+      const parsed = JSON.parse(storedCategoryNames);
+      if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string" && item.trim())) {
+        setCategoryNames(Array.from(new Set(parsed.map((item) => item.trim()))));
+      }
+    } catch {
+      // Ignore malformed stored categories.
+    }
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    setScopedStorageItem(CATEGORY_STORAGE_KEY, currentUserId, JSON.stringify(categoryNames));
+  }, [categoryNames, currentUserId]);
+
+  useEffect(() => {
+    if (activeCategory === "Manual") return;
+    if (!categoryNames.includes(activeCategory)) {
+      setActiveCategory(categoryNames[0] ?? "Manual");
+    }
+  }, [activeCategory, categoryNames]);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+
+    const loadRecipientContacts = async () => {
+      const { data: rows, error } = await supabase
+        .from("recipient_contacts")
+        .select("id, owner_id, category, name, email")
+        .eq("owner_id", currentUserId)
+        .order("category", { ascending: true })
+        .order("name", { ascending: true });
+
+      if (error) {
+        console.warn("Failed to load recipient contacts:", error);
+        return;
+      }
+
+      const grouped = ((rows ?? []) as RecipientContactRow[]).reduce<Record<string, Recipient[]>>((acc, row) => {
+        acc[row.category] = [...(acc[row.category] ?? []), { 
+          name: row.name, 
+          email: row.email,
+          role: row.category === "Reviewer" ? "reviewer" : "signer"
+        }];
+        return acc;
+      }, createEmptyRecipientGroups(categoryNames));
+
+      setRecipientsByCategory(grouped);
+    };
+
+    void loadRecipientContacts();
+  }, [categoryNames, currentUserId]);
+
+  useEffect(() => {
+    setNewRecipientName("");
+    setNewRecipientEmail("");
+  }, [activeCategory]);
+
+  const addRecipientToCategory = async () => {
+    if (activeCategory === "Manual") return;
+
+    const name = newRecipientName.trim();
+    const email = newRecipientEmail.trim().toLowerCase();
+
+    if (!name || !email) {
+      return;
+    }
+
+    const existing = recipientsByCategory[activeCategory] ?? [];
+    if (existing.some((recipient) => recipient.email.toLowerCase() === email)) {
+      return;
+    }
+
+    if (currentUserId) {
+      const { error } = await supabase.from("recipient_contacts").insert({
+        owner_id: currentUserId,
+        category: activeCategory,
+        name,
+        email,
+      });
+
+      if (error) {
+        alert(`Could not save recipient: ${error.message}`);
+        return;
+      }
+    }
+
+    setRecipientsByCategory((prev) => ({
+      ...prev,
+      [activeCategory]: [...(prev[activeCategory] ?? []), { 
+        name, 
+        email, 
+        role: activeCategory === "Reviewer" ? "reviewer" : "signer" 
+      }],
+    }));
+
+    setNewRecipientName("");
+    setNewRecipientEmail("");
+  };
+
+  const addCategory = () => {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    if (name.toLowerCase() === "manual") return;
+    if (categoryNames.some((category) => category.toLowerCase() === name.toLowerCase())) {
+      return;
+    }
+
+    setCategoryNames((prev) => [...prev, name]);
+    setRecipientsByCategory((prev) => ({
+      ...prev,
+      [name]: prev[name] ?? [],
+    }));
+    setActiveCategory(name);
+    setNewCategoryName("");
+    setRecipientSearch("");
+  };
+
+  const deleteCategory = async (category: string) => {
+    const recipientsToRemove = recipientsByCategory[category] ?? [];
+
+    if (currentUserId) {
+      const { error } = await supabase
+        .from("recipient_contacts")
+        .delete()
+        .eq("owner_id", currentUserId)
+        .eq("category", category);
+
+      if (error) {
+        alert(`Could not delete category: ${error.message}`);
+        return;
+      }
+    }
+
+    setCategoryNames((prev) => prev.filter((item) => item !== category));
+    setRecipientsByCategory((prev) => {
+      const next = { ...prev };
+      delete next[category];
+      return next;
+    });
+    setSelectedRecipients((prev) =>
+      prev.filter((recipient) => !recipientsToRemove.some((item) => item.email === recipient.email))
+    );
+    if (activeCategory === category) {
+      const remaining = categoryNames.filter((item) => item !== category);
+      setActiveCategory(remaining[0] ?? "Manual");
+    }
+  };
+
+  const deleteRecipientFromCategory = async (category: string, recipient: Recipient) => {
+    if (currentUserId) {
+      const { error } = await supabase
+        .from("recipient_contacts")
+        .delete()
+        .eq("owner_id", currentUserId)
+        .eq("category", category)
+        .eq("email", recipient.email);
+
+      if (error) {
+        alert(`Could not delete recipient: ${error.message}`);
+        return;
+      }
+    }
+
+    setRecipientsByCategory((prev) => ({
+      ...prev,
+      [category]: (prev[category] ?? []).filter((item) => item.email !== recipient.email),
+    }));
+
+    setSelectedRecipients((prev) => prev.filter((item) => item.email !== recipient.email));
+  };
 
   const { startUpload: uploadDoc, isUploading: isUploadingDoc } = useUploadThing("signedDocUploader", {
-    onClientUploadComplete: (res) => {
+    onClientUploadComplete: async (res) => {
       if (res && res[0]) {
         const file = res[0];
-        const SENT_DOCUMENTS_KEY = "smartdocs.sent_documents.v1";
         // Generate filled HTML content for viewing
         const isDateKeyLocal = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
-        let filledHtmlContent = hasUploadedDocument ? uploadedPreviewHtml : template.id === 1 ? OFFER_LETTER_TEMPLATE : "Template Document Content";
-        if (!hasUploadedDocument) {
+        let filledHtmlContent = hasUploadedDocument ? uploadedPreviewHtml : resolvedTemplateBaseContent;
+        if (!hasUploadedDocument && resolvedTemplateBaseContent) {
           Object.entries(formValues).forEach(([key, val]) => {
             const displayVal = isDateKeyLocal(key) ? formatDate(val) : val;
             filledHtmlContent = filledHtmlContent.replace(new RegExp(`\\[${key}\\]`, 'g'), displayVal);
@@ -984,10 +1327,11 @@ function TemplateFlowModal({ template, step, setStep, onClose, router }: {
         const newDoc = {
           id: `tmp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           name: template.name,
-          subject: `Please sign: ${template.name}`,
-          recipients: selectedRecipients.length > 0
+          subject: activeCategory === "Reviewer" ? `Please review: ${template.name}` : `Please sign: ${template.name}`,
+          recipients: (selectedRecipients.length > 0
             ? selectedRecipients
-            : [{ name: "Manual", email: manualEmail, role: "signer" }],
+            : [{ name: "Manual", email: manualEmail, role: activeCategory === "Reviewer" ? "reviewer" : "signer" }]
+          ).map((r) => ({ ...r, role: r.role || (activeCategory === "Reviewer" ? "reviewer" : "signer"), status: "pending" })),
           sender: { fullName: formValues.SENDER_NAME || "User", workEmail: formValues.SENDER_EMAIL || "user@example.com" },
           sentAt: new Date().toISOString(),
           status: activeCategory === "Reviewer" ? "reviewing" : "waiting",
@@ -996,13 +1340,21 @@ function TemplateFlowModal({ template, step, setStep, onClose, router }: {
           category: activeCategory, // Store the category for reviewer tracking
           content: filledHtmlContent, // Store the filled HTML content for viewing
         };
-        const savedDocs = JSON.parse(localStorage.getItem(SENT_DOCUMENTS_KEY) || "[]");
-        localStorage.setItem(SENT_DOCUMENTS_KEY, JSON.stringify([newDoc, ...savedDocs]));
-        void persistSharedDocument(newDoc);
-        setIsSent(true);
+        try {
+          setSendError(null);
+          await persistSharedDocument(newDoc);
+          setIsSent(true);
+        } catch (error) {
+          console.error("Failed to save uploaded template document:", error);
+          setSendError(error instanceof Error ? error.message : "Failed to save the document to Shared Documents.");
+        } finally {
+          setIsPersisting(false);
+        }
       }
     },
     onUploadError: (error) => {
+      setIsPersisting(false);
+      setSendError(`Cloud upload failed: ${error.message}`);
       alert(`Cloud storage failed: ${error.message}`);
     }
   });
@@ -1016,37 +1368,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router }: {
 
   const handleSend = async () => {
     const isDateKey = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
-
-    // Check if this is a reviewed document being sent
-    const reviewedDocData = localStorage.getItem("smartdocs.send_reviewed_doc");
-    if (reviewedDocData) {
-      try {
-        const docData = JSON.parse(reviewedDocData);
-        // Use the existing file URL from the reviewed document
-        const SENT_DOCUMENTS_KEY = "smartdocs.sent_documents.v1";
-        const newDoc = {
-          id: `tmp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          name: template.name,
-          subject: `Please review: ${template.name}`,
-          recipients: selectedRecipients.length > 0
-            ? selectedRecipients
-            : [{ name: "Manual", email: manualEmail, role: "reviewer" }],
-          sender: { fullName: formValues.SENDER_NAME || "User", workEmail: formValues.SENDER_EMAIL || "user@example.com" },
-          sentAt: new Date().toISOString(),
-          status: "reviewing",
-          fileUrl: docData.fileUrl,
-          category: "Reviewer"
-        };
-        const savedDocs = JSON.parse(localStorage.getItem(SENT_DOCUMENTS_KEY) || "[]");
-        localStorage.setItem(SENT_DOCUMENTS_KEY, JSON.stringify([newDoc, ...savedDocs]));
-        void persistSharedDocument(newDoc);
-        localStorage.removeItem("smartdocs.send_reviewed_doc");
-        setIsSent(true);
-        return;
-      } catch (e) {
-        console.error("Failed to parse reviewed document data:", e);
-      }
-    }
+    setSendError(null);
+    setIsPersisting(true);
 
     if (hasUploadedDocument && template.fileDataUrl) {
       try {
@@ -1064,16 +1387,19 @@ function TemplateFlowModal({ template, step, setStep, onClose, router }: {
         return;
       } catch (error) {
         console.error("Failed to reuse uploaded document:", error);
+        setSendError("Could not prepare the uploaded document for sending.");
       }
     }
 
     // Generate a simple snapshot of the document content
-    let htmlContent = template.id === 1 ? OFFER_LETTER_TEMPLATE : "Template Document Content";
+    let htmlContent = resolvedTemplateBaseContent || "Template Document Content";
 
-    Object.entries(formValues).forEach(([key, val]) => {
-      const displayVal = isDateKey(key) ? formatDate(val) : val;
-      htmlContent = htmlContent.replace(new RegExp(`\\[${key}\\]`, 'g'), displayVal);
-    });
+    if (resolvedTemplateBaseContent) {
+      Object.entries(formValues).forEach(([key, val]) => {
+        const displayVal = isDateKey(key) ? formatDate(val) : val;
+        htmlContent = htmlContent.replace(new RegExp(`\\[${key}\\]`, 'g'), displayVal);
+      });
+    }
 
     try {
       // Small delay to ensure state is settled
@@ -1115,27 +1441,37 @@ function TemplateFlowModal({ template, step, setStep, onClose, router }: {
       const file = new File([blob], `${template.name.replace(/\s+/g, "_")}_filled.png`, { type: "image/png" });
 
       await uploadDoc([file]);
+      return;
     } catch (e) {
       console.error("Template snapshot failed", e);
       // Fallback: send without file url if snapshot fails
-      const SENT_DOCUMENTS_KEY = "smartdocs.sent_documents.v1";
       const newDoc = {
         id: `tmp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         name: template.name,
-        subject: `Please sign: ${template.name}`,
-        recipients: selectedRecipients.length > 0
+        subject: activeCategory === "Reviewer" ? `Please review: ${template.name}` : `Please sign: ${template.name}`,
+        recipients: (selectedRecipients.length > 0
           ? selectedRecipients
-          : [{ name: "Manual", email: manualEmail, role: "signer" }],
-        sender: { fullName: formValues.name || "User", workEmail: formValues.email || "user@example.com" },
+          : [{ name: "Manual", email: manualEmail, role: activeCategory === "Reviewer" ? "reviewer" : "signer" }]
+        ).map((r) => ({ ...r, role: r.role || (activeCategory === "Reviewer" ? "reviewer" : "signer"), status: "pending" })),
+        sender: { fullName: formValues.SENDER_NAME || "User", workEmail: formValues.SENDER_EMAIL || "user@example.com" },
         sentAt: new Date().toISOString(),
         status: activeCategory === "Reviewer" ? "reviewing" : "pending",
-        category: activeCategory
+        category: activeCategory,
+        content: htmlContent,
       };
-      const savedDocs = JSON.parse(localStorage.getItem(SENT_DOCUMENTS_KEY) || "[]");
-      localStorage.setItem(SENT_DOCUMENTS_KEY, JSON.stringify([newDoc, ...savedDocs]));
-      void persistSharedDocument(newDoc);
-      setIsSent(true);
+      try {
+        await persistSharedDocument(newDoc);
+        setIsSent(true);
+      } catch (error) {
+        console.error("Failed to save fallback template document:", error);
+        setSendError(error instanceof Error ? error.message : "Failed to save the document to Shared Documents.");
+      } finally {
+        setIsPersisting(false);
+      }
+      return;
     }
+
+    setIsPersisting(false);
   };
 
   const stepIndex = step === "review" ? 1 : step === "recipients" ? 2 : 3;
@@ -1387,25 +1723,63 @@ function TemplateFlowModal({ template, step, setStep, onClose, router }: {
                 {/* Left Sidebar: Categories */}
                 <div className="w-72 bg-slate-50/50 border-r border-slate-100 p-8 flex flex-col gap-6">
                   <div>
-                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-6 px-2">Categories</h3>
+                    <div className="mb-4 flex items-center justify-between px-2">
+                      <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Categories</h3>
+                      <button
+                        type="button"
+                        onClick={addCategory}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-violet-100 text-violet-600 transition-colors hover:bg-violet-200"
+                        aria-label="Add category"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <div className="mb-5 px-2">
+                      <input
+                        type="text"
+                        placeholder="New category"
+                        value={newCategoryName}
+                        onChange={(e) => setNewCategoryName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            addCategory();
+                          }
+                        }}
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition-all focus:border-violet-400"
+                      />
+                    </div>
                     <div className="space-y-1.5">
                       {categories.map(cat => {
-                        const count = RECIPIENT_DATA[cat].length;
+                        const count = recipientsByCategory[cat]?.length ?? 0;
                         const isActive = activeCategory === cat;
                         return (
-                          <button
+                          <div
                             key={cat}
-                            onClick={() => {
-                              setActiveCategory(cat);
-                              setRecipientSearch("");
-                            }}
-                            className={`w-full flex items-center justify-between px-4 py-3.5 rounded-2xl transition-all duration-200 group ${isActive ? "bg-violet-100 text-violet-700 shadow-sm" : "bg-transparent text-slate-500 hover:bg-white hover:text-violet-600 hover:shadow-sm"}`}
+                            className={`flex items-center gap-2 rounded-2xl transition-all duration-200 group ${isActive ? "bg-violet-100 text-violet-700 shadow-sm" : "text-slate-500 hover:bg-white hover:text-violet-600 hover:shadow-sm"}`}
                           >
-                            <span className={`text-sm font-bold ${isActive ? "text-violet-700" : "text-slate-600 group-hover:text-violet-600"}`}>{cat}</span>
-                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg ${isActive ? "bg-violet-200 text-violet-800" : "bg-slate-100 text-slate-400 group-hover:bg-violet-50 group-hover:text-violet-600"}`}>
-                              {count}
-                            </span>
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveCategory(cat);
+                                setRecipientSearch("");
+                              }}
+                              className="flex flex-1 items-center justify-between px-4 py-3.5 text-left"
+                            >
+                              <span className={`text-sm font-bold ${isActive ? "text-violet-700" : "text-slate-600 group-hover:text-violet-600"}`}>{cat}</span>
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg ${isActive ? "bg-violet-200 text-violet-800" : "bg-slate-100 text-slate-400 group-hover:bg-violet-50 group-hover:text-violet-600"}`}>
+                                {count}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void deleteCategory(cat)}
+                              className={`mr-3 inline-flex h-8 w-8 items-center justify-center rounded-xl transition-colors ${isActive ? "text-violet-500 hover:bg-violet-200" : "text-slate-300 hover:bg-red-50 hover:text-red-500"}`}
+                              aria-label={`Delete ${cat}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
                         );
                       })}
                       {/* Manual Entry Toggle */}
@@ -1475,6 +1849,36 @@ function TemplateFlowModal({ template, step, setStep, onClose, router }: {
                             <p className="text-xs text-slate-400 font-medium mt-1">Select one or more recipients to continue</p>
                           </div>
                         </div>
+                        <div className="mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                          <input
+                            type="text"
+                            placeholder={`Add new ${activeCategory.slice(0, -1).toLowerCase()} name`}
+                            value={newRecipientName}
+                            onChange={(e) => setNewRecipientName(e.target.value)}
+                            className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-white text-sm font-semibold outline-none transition-all focus:border-violet-400"
+                          />
+                          <input
+                            type="email"
+                            placeholder="name@example.com"
+                            value={newRecipientEmail}
+                            onChange={(e) => setNewRecipientEmail(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                addRecipientToCategory();
+                              }
+                            }}
+                            className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-white text-sm font-semibold outline-none transition-all focus:border-violet-400"
+                          />
+                          <button
+                            type="button"
+                            onClick={addRecipientToCategory}
+                            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-violet-600 px-5 py-3 text-sm font-bold text-white transition-all hover:bg-violet-700"
+                          >
+                            <Plus className="h-4 w-4" />
+                            Add
+                          </button>
+                        </div>
                         <div className="relative">
                           <input
                             type="text"
@@ -1490,13 +1894,13 @@ function TemplateFlowModal({ template, step, setStep, onClose, router }: {
                       {/* Recipient Grid */}
                       <div className="flex-1 overflow-y-auto p-10 custom-scrollbar">
                         <div className="grid grid-cols-2 gap-4">
-                          {RECIPIENT_DATA[activeCategory]
-                            .filter(r => recipientSearch === "" || r.name.toLowerCase().includes(recipientSearch.toLowerCase()) || r.email.toLowerCase().includes(recipientSearch.toLowerCase()))
-                            .map(r => {
+                          {filteredRecipients.map(r => {
                               const isSelected = selectedRecipients.some(item => item.email === r.email);
                               return (
-                                <button
+                                <div
                                   key={r.email}
+                                  role="button"
+                                  tabIndex={0}
                                   onClick={() => {
                                     if (isSelected) {
                                       setSelectedRecipients(selectedRecipients.filter(item => item.email !== r.email));
@@ -1504,7 +1908,17 @@ function TemplateFlowModal({ template, step, setStep, onClose, router }: {
                                       setSelectedRecipients([...selectedRecipients, r]);
                                     }
                                   }}
-                                  className={`flex items-center text-left gap-4 p-4 rounded-[1.5rem] border-2 transition-all duration-300 group ${isSelected ? "border-violet-400 bg-violet-50/50 shadow-md shadow-violet-100/30" : "border-slate-50 bg-white hover:border-violet-200"}`}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      if (isSelected) {
+                                        setSelectedRecipients(selectedRecipients.filter(item => item.email !== r.email));
+                                      } else {
+                                        setSelectedRecipients([...selectedRecipients, r]);
+                                      }
+                                    }
+                                  }}
+                                  className={`flex cursor-pointer items-center text-left gap-4 p-4 rounded-[1.5rem] border-2 transition-all duration-300 group ${isSelected ? "border-violet-400 bg-violet-50/50 shadow-md shadow-violet-100/30" : "border-slate-50 bg-white hover:border-violet-200"}`}
                                 >
                                   <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-sm font-semibold transition-colors ${isSelected ? "bg-violet-500 text-white" : "bg-slate-100 text-slate-400 group-hover:bg-violet-100 group-hover:text-violet-600 shadow-inner"}`}>
                                     {r.name.charAt(0)}
@@ -1513,15 +1927,31 @@ function TemplateFlowModal({ template, step, setStep, onClose, router }: {
                                     <p className="text-sm font-bold text-slate-900 truncate leading-tight mb-0.5">{r.name}</p>
                                     <p className="text-[10px] text-slate-400 font-bold truncate tracking-tight">{r.email}</p>
                                   </div>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      deleteRecipientFromCategory(activeCategory, r);
+                                    }}
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-300 transition-colors hover:bg-red-50 hover:text-red-500"
+                                    aria-label={`Delete ${r.name}`}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
                                   <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${isSelected ? "bg-violet-500 scale-100" : "bg-slate-100 scale-75 opacity-0 group-hover:opacity-100"}`}>
                                     <svg className={`w-3.5 h-3.5 ${isSelected ? "text-white" : "text-slate-400"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
                                     </svg>
                                   </div>
-                                </button>
+                                </div>
                               );
                             })}
                         </div>
+                        {filteredRecipients.length === 0 && (
+                          <div className="flex h-40 items-center justify-center rounded-[1.75rem] border border-dashed border-slate-200 bg-slate-50 text-sm font-medium text-slate-400">
+                            No recipients in {activeCategory.toLowerCase()} yet. Add one above.
+                          </div>
+                        )}
                       </div>
                     </>
                   )}
@@ -1630,10 +2060,10 @@ function TemplateFlowModal({ template, step, setStep, onClose, router }: {
                     </button>
                     <button
                       onClick={handleSend}
-                      disabled={isUploadingDoc}
+                      disabled={isUploadingDoc || isPersisting}
                       className="flex-[2] py-3 rounded-2xl bg-violet-600 text-white font-bold text-sm shadow-lg shadow-violet-200 hover:bg-violet-700 hover:-translate-y-0.5 transition-all active:scale-95 disabled:bg-slate-300 disabled:shadow-none flex items-center justify-center gap-2"
                     >
-                      {isUploadingDoc ? (
+                      {isUploadingDoc || isPersisting ? (
                         <>
                           <Loader2 className="h-4 w-4 animate-spin" />
                           Sending...
@@ -1643,6 +2073,13 @@ function TemplateFlowModal({ template, step, setStep, onClose, router }: {
                       )}
                     </button>
                   </div>
+                  {sendError && (
+                    <div className="px-8 pb-6">
+                      <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+                        {sendError}
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>

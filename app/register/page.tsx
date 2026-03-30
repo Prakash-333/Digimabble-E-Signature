@@ -12,7 +12,6 @@ export default function RegisterPage() {
   const router = useRouter();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
-  const [company, setCompany] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +42,6 @@ export default function RegisterPage() {
       options: {
         data: {
           full_name: fullName,
-          company,
         },
       },
     });
@@ -77,7 +75,7 @@ export default function RegisterPage() {
       </div>
 
       <div className="relative w-full max-w-lg rounded-[2.5rem] bg-white/80 p-10 shadow-2xl shadow-violet-200/60 backdrop-blur-xl border border-white/40">
-        <div className="mb-8 flex items-center justify-between">
+        <div className="mb-8">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-600 text-sm font-semibold text-white shadow-lg shadow-violet-200">
               S
@@ -89,17 +87,11 @@ export default function RegisterPage() {
               <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Intelligent Agreement Management</p>
             </div>
           </div>
-          <Link
-            href="/login"
-            className="text-xs font-bold text-violet-600 hover:text-violet-700 transition-colors uppercase tracking-wider"
-          >
-            Back to Sign In
-          </Link>
         </div>
 
         <div className="mb-8 space-y-1.5">
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            Create your workspace
+            Register
           </h1>
           <p className="text-sm text-slate-500">
             Join the SmartDocs platform for intelligent agreements.
@@ -139,18 +131,6 @@ export default function RegisterPage() {
           </div>
           <div className="space-y-1.5">
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 ml-1">
-              Company
-            </label>
-            <input
-              type="text"
-              placeholder="Acme Industries"
-              value={company}
-              onChange={(e) => setCompany(e.target.value)}
-              className="w-full rounded-2xl border border-slate-200 bg-white/50 px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition-all placeholder:text-slate-400 focus:border-violet-400 focus:bg-white focus:ring-4 focus:ring-violet-50"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 ml-1">
               Password
             </label>
             <input
@@ -170,7 +150,7 @@ export default function RegisterPage() {
             className="group relative mt-2 inline-flex w-full items-center justify-center gap-2 overflow-hidden rounded-2xl bg-violet-600 p-[1px] transition-all hover:scale-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
           >
             <div className="flex h-full w-full items-center justify-center gap-2 rounded-[inherit] bg-transparent px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-violet-200/50">
-              <span>{loading ? "Signing In..." : "Sign in"}</span>
+              <span>{loading ? "Registering..." : "Register"}</span>
               <span className="text-xl transition-transform group-hover:translate-x-1">→</span>
             </div>
           </button>
@@ -192,7 +172,7 @@ export default function RegisterPage() {
           Already have credentials?{" "}
           <Link
             href="/login"
-            className="font-bold text-violet-600 hover:text-violet-700 transition-colors underline decoration-violet-200 underline-offset-4 hover:decoration-violet-600"
+            className="font-bold text-slate-700 transition-colors underline decoration-slate-200 underline-offset-4 hover:text-violet-600 hover:decoration-violet-600"
           >
             Log in
           </Link>
