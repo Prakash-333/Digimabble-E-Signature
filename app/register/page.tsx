@@ -36,7 +36,7 @@ export default function RegisterPage() {
     setError(null);
     setMessage(null);
 
-    const { error: signUpError } = await supabase.auth.signUp({
+    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -46,12 +46,22 @@ export default function RegisterPage() {
       },
     });
 
-    setLoading(false);
-
     if (signUpError) {
+      setLoading(false);
       setError(signUpError.message);
       return;
     }
+
+    if (signUpData.user) {
+      await supabase.from("profiles").upsert({
+        id: signUpData.user.id,
+        full_name: fullName,
+        company: null,
+        timezone: "Asia/Kolkata (IST)",
+      });
+    }
+
+    setLoading(false);
 
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email,

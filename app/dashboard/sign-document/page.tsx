@@ -169,7 +169,10 @@ export default function SignDocumentPage() {
               .eq("id", sourceDocumentId)
               .maybeSingle();
 
-            const isReviewDoc = docRow?.category === "Reviewer";
+            const myRecipientRole = Array.isArray(docRow?.recipients)
+              ? (docRow.recipients as any[]).find((r: any) => normalizeEmail(r.email) === senderEmail)?.role
+              : null;
+            const isReviewDoc = docRow?.category === "Reviewer" || myRecipientRole?.toLowerCase() === "reviewer";
             const recipientStatus = isReviewDoc ? "reviewed" : "signed";
             const statusPatch = isReviewDoc
               ? { status: "reviewed", reviewed_at: new Date().toISOString() }
@@ -182,13 +185,13 @@ export default function SignDocumentPage() {
               updatedRecipients = updatedRecipients.map((r: { name?: string; email?: string; role?: string; status?: string }) => {
                 if (!matched && normalizeEmail(r.email) === senderEmail) {
                   matched = true;
-                  return { ...r, status: recipientStatus };
+                  return { ...r, status: recipientStatus, signed_file_url: newDoc.fileUrl, signed_file_key: newDoc.fileKey };
                 }
                 return r;
               });
               // If no email match and only one recipient, update that one
               if (!matched && updatedRecipients.length === 1) {
-                updatedRecipients = [{ ...updatedRecipients[0], status: recipientStatus }];
+                updatedRecipients = [{ ...updatedRecipients[0], status: recipientStatus, signed_file_url: newDoc.fileUrl, signed_file_key: newDoc.fileKey }];
               }
             }
 
@@ -196,8 +199,7 @@ export default function SignDocumentPage() {
               .from("documents")
               .update({
                 ...statusPatch,
-                file_url: newDoc.fileUrl,
-                file_key: newDoc.fileKey,
+                // We DO NOT update global file_url/file_key here, maintaining the blank template for others.
                 ...(updatedRecipients ? { recipients: updatedRecipients } : {}),
               })
               .eq("id", sourceDocumentId);
@@ -1462,14 +1464,17 @@ export default function SignDocumentPage() {
                                 .eq("id", sourceDocumentId)
                                 .maybeSingle();
 
-                              const isReviewDoc = docRow?.category === "Reviewer";
+                              const { data: { session } } = await supabase.auth.getSession();
+                              const senderEmail = normalizeEmail(session?.user?.email) || "";
+
+                              const myRecipientRole = Array.isArray(docRow?.recipients)
+                                ? (docRow.recipients as any[]).find((r: any) => normalizeEmail(r.email) === senderEmail)?.role
+                                : null;
+                              const isReviewDoc = docRow?.category === "Reviewer" || myRecipientRole?.toLowerCase() === "reviewer";
                               const recipientStatus = isReviewDoc ? "reviewed" : "signed";
                               const statusPatch = isReviewDoc
                                 ? { status: "reviewed", reviewed_at: new Date().toISOString() }
                                 : { status: "signed", signed_at: new Date().toISOString() };
-
-                              const { data: { session } } = await supabase.auth.getSession();
-                              const senderEmail = normalizeEmail(session?.user?.email) || "";
 
                               let updatedRecipients = docRow?.recipients;
                               if (Array.isArray(updatedRecipients)) {
@@ -1477,12 +1482,12 @@ export default function SignDocumentPage() {
                                 updatedRecipients = updatedRecipients.map((r: any) => {
                                   if (!matched && normalizeEmail(r.email) === senderEmail) {
                                     matched = true;
-                                    return { ...r, status: recipientStatus };
+                                    return { ...r, status: recipientStatus, signed_content: signedHtmlContent };
                                   }
                                   return r;
                                 });
                                 if (!matched && updatedRecipients.length === 1) {
-                                  updatedRecipients = [{ ...updatedRecipients[0], status: recipientStatus }];
+                                  updatedRecipients = [{ ...updatedRecipients[0], status: recipientStatus, signed_content: signedHtmlContent }];
                                 }
                               }
 
@@ -1490,7 +1495,7 @@ export default function SignDocumentPage() {
                                 .from("documents")
                                 .update({
                                   ...statusPatch,
-                                  content: signedHtmlContent,
+                                  // We DO NOT update global content here to keep it clean for others
                                   ...(updatedRecipients ? { recipients: updatedRecipients } : {}),
                                 })
                                 .eq("id", sourceDocumentId);

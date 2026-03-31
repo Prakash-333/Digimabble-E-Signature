@@ -20,6 +20,7 @@ import {
 
 type NotificationItem = SharedDocumentRecord & {
   recipientRole: string | null;
+  recipientStatus: string | null;
 };
 
 const formatDateTime = (value: string) =>
@@ -83,6 +84,7 @@ export default function NotificationsPage() {
           return {
             ...row,
             recipientRole: recipient.role ?? null,
+            recipientStatus: (recipient as any).status ?? null,
           };
         })
         .filter((row): row is NotificationItem => Boolean(row));
@@ -95,7 +97,7 @@ export default function NotificationsPage() {
   }, []);
 
   const pendingCount = useMemo(
-    () => items.filter((item) => !isCompletedForRecipient(item.status) && !seenIds.has(item.id)).length,
+    () => items.filter((item) => !isCompletedForRecipient(item.recipientStatus || item.status) && !seenIds.has(item.id)).length,
     [items, seenIds]
   );
 
@@ -111,7 +113,23 @@ export default function NotificationsPage() {
       setSeenIds((prev) => new Set(prev).add(item.id));
     }
     setProcessingId(item.id);
-    const { error } = await supabase.from("documents").update(patch).eq("id", item.id);
+
+    // Fetch fresh document to get current recipients array
+    const { data: docRow } = await supabase
+      .from("documents")
+      .select("recipients")
+      .eq("id", item.id)
+      .single();
+
+    let finalPatch = { ...patch };
+    if (docRow?.recipients && Array.isArray(docRow.recipients)) {
+      const updatedRecipients = docRow.recipients.map((r: any) => 
+        normalizeEmail(r.email) === currentEmail ? { ...r, status: nextStatus } : r
+      );
+      finalPatch = { ...finalPatch, recipients: updatedRecipients } as any;
+    }
+
+    const { error } = await supabase.from("documents").update(finalPatch).eq("id", item.id);
     setProcessingId(null);
 
     if (error) {
@@ -120,7 +138,7 @@ export default function NotificationsPage() {
     }
 
     setItems((prev) =>
-      prev.map((entry) => (entry.id === item.id ? { ...entry, status: nextStatus } : entry))
+      prev.map((entry) => (entry.id === item.id ? { ...entry, recipientStatus: nextStatus } : entry))
     );
   };
 
@@ -177,7 +195,7 @@ export default function NotificationsPage() {
         <div className="grid gap-4">
           {items.map((item) => {
             const reviewRequest = isReviewRequest(item, item.recipientRole);
-            const completed = isCompletedForRecipient(item.status);
+            const completed = isCompletedForRecipient(item.recipientStatus || item.status);
 
             return (
               <div
@@ -197,7 +215,7 @@ export default function NotificationsPage() {
                             : "bg-amber-50 text-amber-700"
                         }`}
                       >
-                        {completed ? item.status : "Pending"}
+                        {completed ? (item.recipientStatus || item.status) : "Pending"}
                       </span>
                     </div>
                     <h2 className="text-lg font-bold text-slate-900">{item.name}</h2>

@@ -81,6 +81,7 @@ export default function DocumentsPage() {
   const [newName, setNewName] = useState("");
   const [viewingDoc, setViewingDoc] = useState<SentDocument | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [detailDoc, setDetailDoc] = useState<SentDocument | null>(null);
 
   useEffect(() => {
@@ -120,7 +121,10 @@ export default function DocumentsPage() {
           return;
         }
 
-        if (isMounted) setUserId(user.id);
+        if (isMounted) {
+          setUserId(user.id);
+          setCurrentUserEmail(normalizeEmail(user.email));
+        }
 
         const { data: rows, error } = await supabase
           .from("documents")
@@ -140,10 +144,11 @@ export default function DocumentsPage() {
           mapRowToSentDocument(row, user!.id, normalizeEmail(user!.email))
         );
 
-        // Consolidation logic
+        // Consolidation logic - only merge rows from the same owner with the same fileKey
         const consolidated = remoteDocsRaw.reduce((acc, doc) => {
           const timeKey = doc.sentAt ? doc.sentAt.substring(0, 16) : "no-time";
-          const groupKey = doc.fileKey || `${doc.name}-${doc.subject}-${timeKey}`;
+          // Include direction in groupKey to prevent merging sent with received docs
+          const groupKey = `${doc.direction}-${doc.fileKey || `${doc.name}-${doc.subject}-${timeKey}`}`;
 
           if (!acc[groupKey]) {
             acc[groupKey] = { ...doc };
@@ -286,14 +291,70 @@ export default function DocumentsPage() {
   };
 
   const getStatusBadge = (doc: SentDocument) => {
-    const { status, recipients, category } = doc;
-    const totalCount = recipients.length;
-    const completedCount = recipients.filter(
-      (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
-    ).length;
+    const { status, recipients, category, direction } = doc;
+    const isSender = direction === "sent";
 
-    // Check document-level status first for reviewed/signed/approved
-    if (status === "reviewed" || (totalCount === 1 && recipients[0]?.status === "reviewed")) {
+    if (isSender) {
+      // Sender sees overall status across all recipients
+      const totalCount = recipients.length;
+      const completedCount = recipients.filter(
+        (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
+      ).length;
+
+      if (totalCount > 0) {
+        if (completedCount === totalCount) {
+          const label = totalCount === 1
+            ? (recipients[0]?.status === "reviewed" ? "Reviewed" : "Signed")
+            : "Finished";
+          return (
+            <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
+              <CheckCircle2 className="mr-1 h-3 w-3" />
+              {label}
+            </span>
+          );
+        }
+        return (
+          <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-[10px] font-semibold text-blue-700">
+            <Clock className="mr-1 h-3 w-3" />
+            Pending
+          </span>
+        );
+      }
+    } else {
+      // Recipient sees only their own status
+      const myRecipient = doc.recipientRole
+        ? recipients.find(r => r.role?.toLowerCase() === doc.recipientRole?.toLowerCase())
+        : null;
+      const myStatus = myRecipient?.status || recipients.find(r => r.email)?.status;
+
+      if (myStatus === "signed") {
+        return (
+          <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
+            <CheckCircle2 className="mr-1 h-3 w-3" />
+            Signed
+          </span>
+        );
+      }
+      if (myStatus === "reviewed") {
+        return (
+          <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
+            <CheckCircle2 className="mr-1 h-3 w-3" />
+            Reviewed
+          </span>
+        );
+      }
+      if (myStatus === "approved") {
+        return (
+          <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
+            <CheckCircle2 className="mr-1 h-3 w-3" />
+            Approved
+          </span>
+        );
+      }
+    }
+
+    // Check document-level status for documents with no recipients
+    if (status === "reviewed") {
       return (
         <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
           <CheckCircle2 className="mr-1 h-3 w-3" />
@@ -314,27 +375,6 @@ export default function DocumentsPage() {
         <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
           <CheckCircle2 className="mr-1 h-3 w-3" />
           Signed
-        </span>
-      );
-    }
-
-    // Multi-recipient or general status logic: "Pending" or "Finished"
-    if (totalCount > 0) {
-      if (completedCount === totalCount) {
-        const label = totalCount === 1 
-          ? (recipients[0]?.status === "reviewed" ? "Reviewed" : "Signed")
-          : "Finished";
-        return (
-          <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
-            <CheckCircle2 className="mr-1 h-3 w-3" />
-            {label}
-          </span>
-        );
-      }
-      return (
-        <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-[10px] font-semibold text-blue-700">
-          <Clock className="mr-1 h-3 w-3" />
-          Pending
         </span>
       );
     }
@@ -367,7 +407,7 @@ export default function DocumentsPage() {
     const myRecipient = doc.recipients.find(r => normalizeEmail(r.email) === currentEmail);
 
     // Determine if the current user is a reviewer or signer
-    const isReviewer = myRecipient 
+    const isReviewer = myRecipient
       ? myRecipient.role?.toLowerCase() === "reviewer"
       : doc.category === "Reviewer" || doc.recipientRole === "reviewer" || doc.status === "reviewing";
 
@@ -376,7 +416,7 @@ export default function DocumentsPage() {
       ? { status: "reviewed", reviewed_at: new Date().toISOString() }
       : { status: "signed", signed_at: new Date().toISOString() };
 
-    // Also update per-recipient status in the JSONB array
+    // Update per-recipient status in the JSONB array
     if (doc.recipients.length > 0) {
       let updated = false;
       const updatedRecipients = doc.recipients.map((r) => {
@@ -388,44 +428,21 @@ export default function DocumentsPage() {
         return r;
       });
 
-      // Update all related rows (sender's copy, other recipients' copies)
-      const timeKey = doc.sentAt ? doc.sentAt.substring(0, 16) : "no-time";
-      
-      setDocuments((prev) => prev.map((item) => {
-        const itemTimeKey = item.sentAt ? item.sentAt.substring(0, 16) : "no-time";
-        const isRelated = (doc.fileKey && item.fileKey === doc.fileKey) || 
-                        (doc.fileUrl && item.fileUrl === doc.fileUrl) || 
-                        (item.name === doc.name && item.subject === doc.subject && itemTimeKey === timeKey);
-        return isRelated ? { ...item, status: nextStatus, recipients: updatedRecipients } : item;
-      }));
+      // Update only the current document row in local state
+      setDocuments((prev) => prev.map((item) =>
+        item.id === doc.id ? { ...item, status: nextStatus, recipients: updatedRecipients } : item
+      ));
 
-      // Database sync: Try multiple matching strategies for robustness
-      const matchConditions: any = { name: doc.name, subject: doc.subject };
-      if (doc.fileKey) {
-        await supabase.from("documents").update({ ...patch, recipients: updatedRecipients }).eq("file_key", doc.fileKey);
-      } else if (doc.fileUrl) {
-        await supabase.from("documents").update({ ...patch, recipients: updatedRecipients }).eq("file_url", doc.fileUrl);
-      } else {
-        // Fallback to name/subject and roughly matching time (if fileKey/Url missing)
-        await supabase.from("documents").update({ ...patch, recipients: updatedRecipients }).match(matchConditions);
-      }
+      // Database sync: update only the specific document row by id
+      await supabase.from("documents").update({ ...patch, recipients: updatedRecipients }).eq("id", doc.id);
     } else {
-      const timeKey = doc.sentAt ? doc.sentAt.substring(0, 16) : "no-time";
-      setDocuments((prev) => prev.map((item) => {
-        const itemTimeKey = item.sentAt ? item.sentAt.substring(0, 16) : "no-time";
-        const isRelated = (doc.fileKey && item.fileKey === doc.fileKey) || 
-                        (doc.fileUrl && item.fileUrl === doc.fileUrl) || 
-                        (item.name === doc.name && item.subject === doc.subject && itemTimeKey === timeKey);
-        return isRelated ? { ...item, status: nextStatus } : item;
-      }));
-      
-      if (doc.fileKey) {
-        await supabase.from("documents").update(patch).eq("file_key", doc.fileKey);
-      } else if (doc.fileUrl) {
-        await supabase.from("documents").update(patch).eq("file_url", doc.fileUrl);
-      } else {
-        await supabase.from("documents").update(patch).match({ name: doc.name, subject: doc.subject });
-      }
+      // Update only the current document row in local state
+      setDocuments((prev) => prev.map((item) =>
+        item.id === doc.id ? { ...item, status: nextStatus } : item
+      ));
+
+      // Database sync: update only the specific document row by id
+      await supabase.from("documents").update(patch).eq("id", doc.id);
     }
   };
 
@@ -534,6 +551,52 @@ export default function DocumentsPage() {
 
                   {openMenuId === doc.id && (
                     <div className="absolute top-10 right-0 w-36 rounded-xl border border-slate-200 bg-white p-1 shadow-xl z-20 animate-in fade-in zoom-in duration-200">
+                      {(() => {
+                        const hasSigned = doc.recipients.some(r => r.status === "signed" || r.status === "reviewed");
+                        if (hasSigned && doc.fileUrl) {
+                          return (
+                            <a
+                              href={doc.fileUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={() => setOpenMenuId(null)}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
+                            >
+                              <Eye className="h-3 w-3" />
+                              View
+                            </a>
+                          );
+                        }
+                        if (doc.content) {
+                          return (
+                            <button
+                              onClick={() => {
+                                setOpenMenuId(null);
+                                setViewingDoc(doc);
+                              }}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
+                            >
+                              <Eye className="h-3 w-3" />
+                              View
+                            </button>
+                          );
+                        }
+                        if (doc.fileUrl) {
+                          return (
+                            <a
+                              href={doc.fileUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={() => setOpenMenuId(null)}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
+                            >
+                              <Eye className="h-3 w-3" />
+                              View
+                            </a>
+                          );
+                        }
+                        return null;
+                      })()}
                       <button
                         onClick={() => handleDownload(doc.fileUrl || "", doc.name)}
                         className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
@@ -619,44 +682,14 @@ export default function DocumentsPage() {
               <div className="mt-4 flex items-center justify-between border-t border-slate-200 bg-white/50 px-4 py-3">
                 <div>{getStatusBadge(doc)}</div>
                 <div className="flex items-center gap-2">
-                  {doc.content ? (
-                    <button
-                      onClick={() => setViewingDoc(doc)}
-                      className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 transition-all flex items-center gap-1 bg-blue-50 px-2 py-0.5 rounded-md"
-                    >
-                      <ArrowUpRight className="h-3 w-3" />
-                      View
-                    </button>
-                  ) : doc.fileUrl ? (
-                    <a
-                      href={doc.fileUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 transition-all flex items-center gap-1 bg-blue-50 px-2 py-0.5 rounded-md"
-                    >
-                      <ArrowUpRight className="h-3 w-3" />
-                      View
-                    </a>
-                  ) : null}
+                  <button
+                    onClick={() => setDetailDoc(doc)}
+                    className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 transition-all flex items-center gap-1 bg-blue-50 px-2 py-0.5 rounded-md"
+                  >
+                    <ArrowUpRight className="h-3 w-3" />
+                    View More
+                  </button>
 
-                  {doc.direction === "received" && doc.status !== "reviewed" && doc.status !== "signed" && doc.status !== "completed" && (
-                    <button
-                      onClick={() => void markAsReceivedAction(doc)}
-                      className="text-[11px] font-semibold text-violet-600 hover:text-violet-700 transition-colors"
-                    >
-                      {doc.category === "Reviewer" || doc.recipientRole === "reviewer" || doc.status === "reviewing" ? "Mark Reviewed" : "Mark Signed"}
-                    </button>
-                  )}
-                  {doc.direction !== "received" && doc.category === "Reviewer" && doc.status === "reviewed" && (
-                    <button
-                      onClick={() => {
-                        window.location.href = `/dashboard/templates?step=recipients&documentId=${doc.id}`;
-                      }}
-                      className="text-[11px] font-semibold text-green-600 hover:text-green-700 transition-colors"
-                    >
-                      Send
-                    </button>
-                  )}
                 </div>
               </div>
             </div>
@@ -680,15 +713,9 @@ export default function DocumentsPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {doc.content ? (
-                  <button onClick={() => setViewingDoc(doc)} className="rounded-full bg-blue-50 px-3 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-100">
-                    View
-                  </button>
-                ) : doc.fileUrl ? (
-                  <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" className="rounded-full bg-blue-50 px-3 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-100">
-                    View
-                  </a>
-                ) : null}
+                <button onClick={() => setDetailDoc(doc)} className="rounded-full bg-blue-50 px-3 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-100">
+                  View More
+                </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -700,6 +727,31 @@ export default function DocumentsPage() {
                 </button>
                 {openMenuId === doc.id && (
                   <div className="absolute right-4 mt-40 w-36 rounded-xl border border-slate-200 bg-white p-1 shadow-xl z-20">
+                    {(() => {
+                      const hasSigned = doc.recipients.some(r => r.status === "signed" || r.status === "reviewed");
+                      if (hasSigned && doc.fileUrl) {
+                        return (
+                          <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" onClick={() => setOpenMenuId(null)} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2">
+                            <Eye className="h-3 w-3" />View
+                          </a>
+                        );
+                      }
+                      if (doc.content) {
+                        return (
+                          <button onClick={() => { setOpenMenuId(null); setViewingDoc(doc); }} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2">
+                            <Eye className="h-3 w-3" />View
+                          </button>
+                        );
+                      }
+                      if (doc.fileUrl) {
+                        return (
+                          <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" onClick={() => setOpenMenuId(null)} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2">
+                            <Eye className="h-3 w-3" />View
+                          </a>
+                        );
+                      }
+                      return null;
+                    })()}
                     <button onClick={() => handleDownload(doc.fileUrl || "", doc.name)} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">Download</button>
                     <button onClick={() => { setOpenMenuId(null); setIsRenaming(doc.id); setNewName(doc.name); }} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">Rename</button>
                     <button onClick={() => { setOpenMenuId(null); setDetailDoc(doc); }} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">More</button>
@@ -787,7 +839,66 @@ function DocumentDetailModal({
   formatDate: (d: string) => string;
 }) {
   const [viewingRecipient, setViewingRecipient] = useState<string | null>(null);
-  const isSingleRecipient = doc.recipients.length <= 1;
+  const [refreshedDoc, setRefreshedDoc] = useState<SentDocument>(doc);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+
+  // Fetch current user email
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setCurrentUserEmail(normalizeEmail(data.user?.email));
+    });
+  }, []);
+
+  // Fetch fresh document data when modal opens
+  useEffect(() => {
+    const fetchDocument = async () => {
+      try {
+        const { data: freshDoc, error } = await supabase
+          .from("documents")
+          .select("id, owner_id, name, subject, recipients, sender, sent_at, status, file_url, file_key, category, content")
+          .eq("id", doc.id)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (freshDoc) {
+          const typedSender = (freshDoc.sender ?? {}) as { fullName?: string; workEmail?: string };
+          const rawRecipients = freshDoc.recipients as Array<{ name: string; email: string; role: string; status?: string }> | null;
+          const mappedRecipients = (rawRecipients ?? []).map((r) => ({
+            name: r.name || "",
+            email: r.email || "",
+            role: r.role || "",
+            status: r.status,
+          }));
+
+          setRefreshedDoc({
+            id: freshDoc.id,
+            name: freshDoc.name,
+            subject: freshDoc.subject || "",
+            recipients: mappedRecipients,
+            sender: {
+              fullName: typedSender.fullName || "",
+              workEmail: typedSender.workEmail || "",
+            },
+            sentAt: freshDoc.sent_at || "",
+            status: freshDoc.status,
+            fileUrl: freshDoc.file_url || "",
+            fileKey: freshDoc.file_key || "",
+            category: freshDoc.category,
+            content: freshDoc.content,
+          });
+        }
+      } catch (err) {
+        console.error("Failed to refresh document:", err);
+      }
+    };
+
+    fetchDocument();
+  }, [doc.id]);
+
+  const currentDoc = refreshedDoc;
+  const isSender = doc.direction === "sent";
+  const isSingleRecipient = currentDoc.recipients.length <= 1;
 
   const getRoleLabel = (r: { role: string }) => {
     const role = r.role?.toLowerCase();
@@ -817,79 +928,110 @@ function DocumentDetailModal({
     return <Clock className="h-3.5 w-3.5" />;
   };
 
-  // For single-recipient or global doc status
+  // For sender: show overall status across all recipients
+  // For recipient: show only their own status
   const getOverallStatusLabel = () => {
-    const totalCount = doc.recipients.length;
-    const completedCount = doc.recipients.filter(
+    if (!isSender && currentDoc.recipients.length > 0) {
+      // Find the current user's recipient entry by matching their email
+      const myRecipient = currentUserEmail
+        ? currentDoc.recipients.find(r => normalizeEmail(r.email) === currentUserEmail)
+        : currentDoc.recipients[0];
+      const s = myRecipient?.status;
+      if (s === "signed") return "Signed";
+      if (s === "reviewed") return "Reviewed";
+      if (s === "approved") return "Approved";
+      return myRecipient?.role?.toLowerCase() === "reviewer" ? "Yet to Review" : "Yet to Sign";
+    }
+
+    const totalCount = currentDoc.recipients.length;
+    const completedCount = currentDoc.recipients.filter(
       (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
     ).length;
 
-    // Check document-level status first
-    if (doc.status === "reviewed") return "Reviewed";
-    if (doc.status === "approved") return "Approved";
-    if (doc.status === "signed" || doc.status === "completed") return "Signed";
-
+    // Multi-recipient logic: only show "Reviewed" when ALL recipients have reviewed
     if (totalCount > 0) {
       if (completedCount === totalCount) {
         return totalCount === 1 
-          ? (doc.recipients[0]?.status === "reviewed" ? "Reviewed" : "Signed")
+          ? (currentDoc.recipients[0]?.status === "reviewed" ? "Reviewed" : "Signed")
           : "Finished";
       }
       return "Pending";
     }
 
-    if (doc.status === "reviewing") return "Under Review";
-    if (doc.status === "waiting") return "Awaiting Signer";
-    return doc.category === "Reviewer" ? "Yet to Review" : "Yet to Sign";
+    // Check document-level status for documents with no recipients
+    if (currentDoc.status === "reviewed") return "Reviewed";
+    if (currentDoc.status === "approved") return "Approved";
+    if (currentDoc.status === "signed" || currentDoc.status === "completed") return "Signed";
+    if (currentDoc.status === "reviewing") return "Under Review";
+    if (currentDoc.status === "waiting") return "Awaiting Signer";
+    return currentDoc.category === "Reviewer" ? "Yet to Review" : "Yet to Sign";
   };
 
   const getOverallStatusColor = () => {
-    const totalCount = doc.recipients.length;
-    const completedCount = doc.recipients.filter(
+    if (!isSender && currentDoc.recipients.length > 0) {
+      const myRecipient = currentUserEmail
+        ? currentDoc.recipients.find(r => normalizeEmail(r.email) === currentUserEmail)
+        : currentDoc.recipients[0];
+      const s = myRecipient?.status;
+      if (s === "signed" || s === "reviewed" || s === "approved") return "bg-green-100 text-green-700 border-green-200";
+      return "bg-amber-100 text-amber-700 border-amber-200";
+    }
+
+    const totalCount = currentDoc.recipients.length;
+    const completedCount = currentDoc.recipients.filter(
       (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
     ).length;
 
-    // Check document-level status first
-    if (["signed", "completed", "reviewed", "approved"].includes(doc.status)) return "bg-green-100 text-green-700 border-green-200";
-
+    // Multi-recipient logic first
     if (totalCount > 0) {
       if (completedCount === totalCount) return "bg-green-100 text-green-700 border-green-200";
       return "bg-blue-100 text-blue-700 border-blue-200";
     }
 
-    if (doc.status === "reviewing") return "bg-yellow-100 text-yellow-700 border-yellow-200";
-    if (doc.status === "waiting") return "bg-orange-100 text-orange-700 border-orange-200";
+    // Check document-level status for documents with no recipients
+    if (["signed", "completed", "reviewed", "approved"].includes(currentDoc.status)) return "bg-green-100 text-green-700 border-green-200";
+    if (currentDoc.status === "reviewing") return "bg-yellow-100 text-yellow-700 border-yellow-200";
+    if (currentDoc.status === "waiting") return "bg-orange-100 text-orange-700 border-orange-200";
     return "bg-slate-100 text-slate-600 border-slate-200";
   };
 
   const getOverallIcon = () => {
-    const totalCount = doc.recipients.length;
-    const completedCount = doc.recipients.filter(
+    if (!isSender && currentDoc.recipients.length > 0) {
+      const myRecipient = currentUserEmail
+        ? currentDoc.recipients.find(r => normalizeEmail(r.email) === currentUserEmail)
+        : currentDoc.recipients[0];
+      const s = myRecipient?.status;
+      if (s === "signed" || s === "reviewed" || s === "approved") return <CheckCircle2 className="h-5 w-5" />;
+      return <Clock className="h-5 w-5" />;
+    }
+
+    const totalCount = currentDoc.recipients.length;
+    const completedCount = currentDoc.recipients.filter(
       (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
     ).length;
 
-    // Check document-level status first
-    if (["signed", "completed", "reviewed", "approved"].includes(doc.status)) return <CheckCircle2 className="h-5 w-5" />;
-
+    // Multi-recipient logic first
     if (totalCount > 0) {
       if (completedCount === totalCount) return <CheckCircle2 className="h-5 w-5" />;
       return <Clock className="h-5 w-5" />;
     }
 
+    // Check document-level status for documents with no recipients
+    if (["signed", "completed", "reviewed", "approved"].includes(currentDoc.status)) return <CheckCircle2 className="h-5 w-5" />;
     return <Clock className="h-5 w-5" />;
   };
 
   // Counts for multi-recipient summary
-  const completedCount = doc.recipients.filter(
+  const completedCount = currentDoc.recipients.filter(
     (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
   ).length;
-  const pendingCount = doc.recipients.length - completedCount;
+  const pendingCount = currentDoc.recipients.length - completedCount;
 
   const handleDownload = (recipientName: string) => {
-    if (!doc.fileUrl) return;
+    if (!currentDoc.fileUrl) return;
     const link = document.createElement("a");
-    link.href = doc.fileUrl;
-    link.download = `${doc.name}_${recipientName || "document"}`;
+    link.href = currentDoc.fileUrl;
+    link.download = `${currentDoc.name}_${recipientName || "document"}`;
     link.target = "_blank";
     document.body.appendChild(link);
     link.click();
@@ -910,8 +1052,8 @@ function DocumentDetailModal({
           </button>
           <div className="h-6 w-px bg-slate-200" />
           <div>
-            <h2 className="text-base font-bold text-slate-900 leading-tight">{doc.name}</h2>
-            <p className="text-[11px] text-slate-500 font-medium">{doc.subject}</p>
+            <h2 className="text-base font-bold text-slate-900 leading-tight">{currentDoc.name}</h2>
+            <p className="text-[11px] text-slate-500 font-medium">{currentDoc.subject}</p>
           </div>
         </div>
         <button
@@ -934,25 +1076,25 @@ function DocumentDetailModal({
             <div className="px-6 py-4 grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Sent By</p>
-                <p className="mt-1 text-sm font-medium text-slate-800">{doc.sender.fullName || doc.sender.workEmail}</p>
+                <p className="mt-1 text-sm font-medium text-slate-800">{currentDoc.sender.fullName || currentDoc.sender.workEmail}</p>
               </div>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Sent On</p>
-                <p className="mt-1 text-sm font-medium text-slate-800">{formatDate(doc.sentAt)}</p>
+                <p className="mt-1 text-sm font-medium text-slate-800">{formatDate(currentDoc.sentAt)}</p>
               </div>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Recipients</p>
-                <p className="mt-1 text-sm font-medium text-slate-800">{doc.recipients.length}</p>
+                <p className="mt-1 text-sm font-medium text-slate-800">{currentDoc.recipients.length}</p>
               </div>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Category</p>
-                <p className="mt-1 text-sm font-medium text-slate-800 capitalize">{doc.category || "General"}</p>
+                <p className="mt-1 text-sm font-medium text-slate-800 capitalize">{currentDoc.category || "General"}</p>
               </div>
             </div>
           </div>
 
-          {/* Overall Status Card (single recipient) */}
-          {isSingleRecipient && (
+          {/* Overall Status Card (single recipient - sender view) */}
+          {isSingleRecipient && isSender && (
             <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
               <div className="px-6 py-5 border-b border-slate-100">
                 <h3 className="text-sm font-bold text-slate-900">Status</h3>
@@ -964,28 +1106,83 @@ function DocumentDetailModal({
                   </div>
                   <div>
                     <p className="text-lg font-bold text-slate-900">{getOverallStatusLabel()}</p>
-                    {doc.recipients[0] && (
+                    {currentDoc.recipients[0] && (
                       <p className="text-xs text-slate-500 mt-0.5">
-                        Recipient: {doc.recipients[0].name || doc.recipients[0].email}
-                        <span className="capitalize"> ({getRoleLabel(doc.recipients[0])})</span>
+                        Recipient: {currentDoc.recipients[0].name || currentDoc.recipients[0].email}
+                        <span className="capitalize"> ({getRoleLabel(currentDoc.recipients[0])})</span>
                       </p>
                     )}
                   </div>
                 </div>
                 {/* Single recipient actions */}
                 <div className="flex items-center gap-2">
-                  {(doc.content || doc.fileUrl) && (
+                  {(currentDoc.content || currentDoc.fileUrl) && (
                     <button
-                      onClick={() => setViewingRecipient(doc.recipients[0]?.email || "__single__")}
+                      onClick={() => setViewingRecipient(currentDoc.recipients[0]?.email || "__single__")}
                       className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200 px-3 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-100 transition-colors"
                     >
                       <Eye className="h-3 w-3" />
                       View
                     </button>
                   )}
-                  {doc.fileUrl && (
+                  {currentDoc.fileUrl && (
                     <button
-                      onClick={() => handleDownload(doc.recipients[0]?.name || "document")}
+                      onClick={() => handleDownload(currentDoc.recipients[0]?.name || "document")}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
+                    >
+                      <Download className="h-3 w-3" />
+                      Download
+                    </button>
+                  )}
+                  {isSender && currentDoc.category === "Reviewer" && (getOverallStatusLabel() === "Reviewed" || getOverallStatusLabel() === "Finished") && (
+                    <button
+                      onClick={() => {
+                        window.location.href = `/dashboard/templates?step=recipients&documentId=${currentDoc.id}`;
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-green-600 border border-green-700 px-4 py-1.5 text-[11px] font-bold text-white hover:bg-green-700 transition-colors shadow-sm"
+                    >
+                      <ArrowUpRight className="h-3 w-3" />
+                      Send
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Recipient's Own Status Card (single recipient - recipient view) */}
+          {isSingleRecipient && !isSender && (
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div className="px-6 py-5 border-b border-slate-100">
+                <h3 className="text-sm font-bold text-slate-900">Your Status</h3>
+              </div>
+              <div className="px-6 py-6 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${getOverallStatusColor()}`}>
+                    {getOverallIcon()}
+                  </div>
+                  <div>
+                    <p className="text-lg font-bold text-slate-900">{getOverallStatusLabel()}</p>
+                    {currentDoc.recipients[0] && (
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Role: <span className="capitalize">{getRoleLabel(currentDoc.recipients[0])}</span>
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {(currentDoc.content || currentDoc.fileUrl) && (
+                    <button
+                      onClick={() => setViewingRecipient(currentDoc.recipients[0]?.email || "__single__")}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200 px-3 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-100 transition-colors"
+                    >
+                      <Eye className="h-3 w-3" />
+                      View
+                    </button>
+                  )}
+                  {currentDoc.fileUrl && (
+                    <button
+                      onClick={() => handleDownload(currentDoc.recipients[0]?.name || "document")}
                       className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
                     >
                       <Download className="h-3 w-3" />
@@ -997,12 +1194,23 @@ function DocumentDetailModal({
             </div>
           )}
 
-          {/* Multi-Recipient Status Table */}
-          {!isSingleRecipient && (
+          {/* Multi-Recipient Status Table (sender view - all recipients) */}
+          {!isSingleRecipient && isSender && (
             <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
               <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
                 <h3 className="text-sm font-bold text-slate-900">Recipient Status</h3>
                 <div className="flex items-center gap-3 text-xs">
+                  {isSender && currentDoc.category === "Reviewer" && (getOverallStatusLabel() === "Reviewed" || getOverallStatusLabel() === "Finished") && (
+                    <button
+                      onClick={() => {
+                        window.location.href = `/dashboard/templates?step=recipients&documentId=${currentDoc.id}`;
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-green-600 border border-green-700 px-3 py-1.5 font-bold text-white hover:bg-green-700 transition-colors shadow-sm mr-2"
+                    >
+                      <ArrowUpRight className="h-3 w-3" />
+                      Send document
+                    </button>
+                  )}
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-green-50 border border-green-200 px-2.5 py-1 font-semibold text-green-700">
                     <CheckCircle2 className="h-3 w-3" />
                     {completedCount} Completed
@@ -1019,11 +1227,11 @@ function DocumentDetailModal({
                 <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
                   <div
                     className="h-full rounded-full bg-gradient-to-r from-green-400 to-emerald-500 transition-all duration-500"
-                    style={{ width: `${doc.recipients.length > 0 ? (completedCount / doc.recipients.length) * 100 : 0}%` }}
+                    style={{ width: `${currentDoc.recipients.length > 0 ? (completedCount / currentDoc.recipients.length) * 100 : 0}%` }}
                   />
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1 font-medium">
-                  {completedCount} of {doc.recipients.length} completed
+                  {completedCount} of {currentDoc.recipients.length} completed
                 </p>
               </div>
 
@@ -1040,7 +1248,7 @@ function DocumentDetailModal({
                     </tr>
                   </thead>
                   <tbody>
-                    {doc.recipients.map((r, i) => (
+                    {currentDoc.recipients.map((r, i) => (
                       <tr key={`${r.email}-${i}`} className="border-b border-slate-50 last:border-b-0 hover:bg-slate-50/50 transition-colors">
                         <td className="py-3 pr-4">
                           <div className="flex items-center gap-2.5">
@@ -1073,7 +1281,18 @@ function DocumentDetailModal({
                                 View
                               </button>
                             )}
-                            {doc.fileUrl && (
+                            {isSender && getRoleLabel(r) === "Reviewer" && r.status === "reviewed" && (
+                              <button
+                                onClick={() => {
+                                  window.location.href = `/dashboard/templates?step=recipients&documentId=${currentDoc.id}`;
+                                }}
+                                className="inline-flex items-center gap-1 rounded-lg bg-green-50 px-2.5 py-1.5 text-[10px] font-bold text-green-600 hover:bg-green-100 transition-colors"
+                              >
+                                <ArrowUpRight className="h-3 w-3" />
+                                Send
+                              </button>
+                            )}
+                            {currentDoc.fileUrl && (
                               <button
                                 onClick={() => handleDownload(r.name)}
                                 className="inline-flex items-center gap-1 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[10px] font-bold text-slate-600 hover:bg-slate-100 transition-colors"
@@ -1091,6 +1310,54 @@ function DocumentDetailModal({
             </div>
           )}
 
+          {/* Multi-Recipient Status Card (recipient view - only own status) */}
+          {!isSingleRecipient && !isSender && (() => {
+            const myRecipient = currentUserEmail
+              ? currentDoc.recipients.find(r => normalizeEmail(r.email) === currentUserEmail)
+              : currentDoc.recipients[0];
+            const matchedRecipient = myRecipient || currentDoc.recipients[0];
+            return (
+              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                <div className="px-6 py-5 border-b border-slate-100">
+                  <h3 className="text-sm font-bold text-slate-900">Your Status</h3>
+                </div>
+                <div className="px-6 py-6 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${getRecipientStatusColor(matchedRecipient)}`}>
+                      {getRecipientIcon(matchedRecipient)}
+                    </div>
+                    <div>
+                      <p className="text-lg font-bold text-slate-900">{getRecipientStatusLabel(matchedRecipient)}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Role: <span className="capitalize">{getRoleLabel(matchedRecipient)}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {(currentDoc.content || currentDoc.fileUrl) && (
+                      <button
+                        onClick={() => setViewingRecipient(matchedRecipient.email)}
+                        className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200 px-3 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-100 transition-colors"
+                      >
+                        <Eye className="h-3 w-3" />
+                        View
+                      </button>
+                    )}
+                    {currentDoc.fileUrl && (
+                      <button
+                        onClick={() => handleDownload(matchedRecipient.name || "document")}
+                        className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
+                      >
+                        <Download className="h-3 w-3" />
+                        Download
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
         </div>
       </div>
 
@@ -1102,15 +1369,15 @@ function DocumentDetailModal({
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 shrink-0">
               <div className="flex items-center gap-3">
                 <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-100 text-xs font-bold text-violet-600">
-                  {(doc.recipients.find(r => r.email === viewingRecipient)?.name || viewingRecipient || "?").charAt(0).toUpperCase()}
+                  {(currentDoc.recipients.find(r => r.email === viewingRecipient)?.name || viewingRecipient || "?").charAt(0).toUpperCase()}
                 </div>
                 <div>
                   <p className="text-sm font-bold text-slate-900">
-                    {doc.recipients.find(r => r.email === viewingRecipient)?.name || "Recipient"} — {doc.name}
+                    {currentDoc.recipients.find(r => r.email === viewingRecipient)?.name || "Recipient"} — {currentDoc.name}
                   </p>
                   <p className="text-[10px] text-slate-500">
                     {(() => {
-                      const r = doc.recipients.find(r => r.email === viewingRecipient);
+                      const r = currentDoc.recipients.find(r => r.email === viewingRecipient);
                       if (!r) return "";
                       const s = (r as { status?: string }).status;
                       if (s === "signed") return "✅ Signed";
@@ -1121,9 +1388,11 @@ function DocumentDetailModal({
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {doc.fileUrl && (
+                {currentDoc.fileUrl && (
                   <a
-                    href={doc.fileUrl}
+                    href={currentDoc.name?.toLowerCase().endsWith(".doc") || currentDoc.name?.toLowerCase().endsWith(".docx")
+                      ? `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(currentDoc.fileUrl)}`
+                      : currentDoc.fileUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200 px-3 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-100 transition-colors"
@@ -1132,9 +1401,9 @@ function DocumentDetailModal({
                     Open
                   </a>
                 )}
-                {doc.fileUrl && (
+                {currentDoc.fileUrl && (
                   <button
-                    onClick={() => handleDownload(doc.recipients.find(r => r.email === viewingRecipient)?.name || "document")}
+                    onClick={() => handleDownload(currentDoc.recipients.find(r => r.email === viewingRecipient)?.name || "document")}
                     className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
                   >
                     <Download className="h-3 w-3" />
@@ -1152,37 +1421,69 @@ function DocumentDetailModal({
 
             {/* Sub-modal content */}
             <div className="flex-1 overflow-y-auto bg-slate-50/50 p-6">
-              {doc.content ? (
-                <div className="max-w-3xl mx-auto bg-white rounded-xl border border-slate-200 shadow-sm p-8 md:p-12">
-                  <div
-                    className="document-content text-[14px] text-slate-800 leading-[1.8] tracking-tight"
-                    style={{
-                      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                    }}
-                    dangerouslySetInnerHTML={{
-                      __html: doc.content
-                        .replace(/\n/g, "<br/>")
-                        .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">')
-                    }}
-                  />
-                </div>
-              ) : doc.fileUrl ? (
-                <div className="flex justify-center">
-                  {/\.(png|jpe?g|gif|webp|svg)$/i.test(doc.name) ? (
-                    <img src={doc.fileUrl} alt={doc.name} className="max-h-[60vh] rounded-xl border border-slate-200 shadow-sm object-contain" />
-                  ) : (
-                    <div className="flex flex-col items-center gap-3 py-12">
-                      <FileText className="h-16 w-16 text-slate-300" />
-                      <p className="text-sm font-medium text-slate-500">Click &quot;Open&quot; or &quot;Download&quot; above to view the full document.</p>
+              {(() => {
+                // Check if the recipient has signed - show the signed file instead of template
+                const viewingR = currentDoc.recipients.find(r => r.email === viewingRecipient);
+                const isSigned = viewingR?.status === "signed" || viewingR?.status === "reviewed";
+
+                // 1. Prefer individual signed content, then global template content (HTML/Text)
+                const displayContent = (viewingR as any)?.signed_content || currentDoc.content;
+
+                if (displayContent) {
+                  return (
+                    <div className="w-[800px] min-h-[1056px] mx-auto bg-white rounded-xl border border-slate-200 shadow-sm p-12 md:p-16 relative origin-top max-w-full">
+                      <div
+                        className="document-content text-[14px] text-slate-800 leading-[1.8] tracking-tight"
+                        style={{
+                          fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }}
+                        dangerouslySetInnerHTML={{
+                          __html: displayContent
+                            .replace(/\n/g, "<br/>")
+                            .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">')
+                        }}
+                      />
                     </div>
-                  )}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center gap-3 py-12">
-                  <FileText className="h-16 w-16 text-slate-300" />
-                  <p className="text-sm font-medium text-slate-500">No document preview available.</p>
-                </div>
-              )}
+                  );
+                }
+
+                // 2. Fallback to fileUrl (Iframe or Image)
+                const displayFileUrl = (viewingR as any)?.signed_file_url || currentDoc.fileUrl;
+                if (displayFileUrl) {
+                  const isWordDoc = /\.(doc|docx)$/i.test(currentDoc.name || "");
+                  const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(currentDoc.name || "");
+
+                  if (isImage) {
+                    return (
+                      <div className="flex justify-center">
+                        <img src={displayFileUrl} alt={currentDoc.name} className="max-h-[60vh] rounded-xl border border-slate-200 shadow-sm object-contain" />
+                      </div>
+                    );
+                  }
+
+                  const iframeSrc = isWordDoc
+                    ? `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(displayFileUrl)}`
+                    : displayFileUrl;
+
+                  return (
+                    <div className="flex justify-center flex-col items-center w-full">
+                      <iframe src={iframeSrc} title={currentDoc.name} className="w-full max-w-4xl h-[70vh] rounded-xl border border-slate-200 shadow-sm" />
+                      {displayFileUrl !== currentDoc.fileUrl && (
+                        <p className="mt-4 text-xs font-semibold text-green-600 bg-green-50 px-3 py-1.5 rounded-full border border-green-200">
+                          Viewing {viewingR?.name || viewingRecipient}'s signed version
+                        </p>
+                      )}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="flex flex-col items-center gap-3 py-12">
+                    <FileText className="h-16 w-16 text-slate-300" />
+                    <p className="text-sm font-medium text-slate-500">No document preview available.</p>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>

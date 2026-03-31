@@ -1268,71 +1268,84 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   };
 
   const { startUpload: uploadDoc, isUploading: isUploadingDoc } = useUploadThing("signedDocUploader", {
-    onClientUploadComplete: async (res) => {
-      if (res && res[0]) {
-        const file = res[0];
-        // Generate filled HTML content for viewing
-        const isDateKeyLocal = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
-        let filledHtmlContent = hasUploadedDocument ? uploadedPreviewHtml : resolvedTemplateBaseContent;
-        if (!hasUploadedDocument && resolvedTemplateBaseContent) {
-          Object.entries(formValues).forEach(([key, val]) => {
-            const displayVal = isDateKeyLocal(key) ? formatDate(val) : val;
-            filledHtmlContent = filledHtmlContent.replace(new RegExp(`\\[${key}\\]`, 'g'), displayVal);
-          });
-          // Add signature if available
-          if (savedSignature) {
-            filledHtmlContent = filledHtmlContent.replace(
-              /\[SIGNATURE\]/g,
-              `<div style="margin-top: 15px;">
-                <img src="${savedSignature}" alt="Signature" style="height: 80px; display: block; margin-bottom: -15px;" />
-                <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 8px;">Signature</div>
-              </div>`
-            );
-          } else {
-            filledHtmlContent = filledHtmlContent.replace(
-              /\[SIGNATURE\]/g,
-              `<div style="margin-top: 15px;">
-                <div style="height: 80px; margin-bottom: -15px;"></div>
-                <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 8px;">Signature</div>
-              </div>`
-            );
-          }
-        }
-
-        const newDoc = {
-          id: `tmp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          name: template.name,
-          subject: activeCategory === "Reviewer" ? `Please review: ${template.name}` : `Please sign: ${template.name}`,
-          recipients: (selectedRecipients.length > 0
-            ? selectedRecipients
-            : [{ name: "Manual", email: manualEmail, role: activeCategory === "Reviewer" ? "reviewer" : "signer" }]
-          ).map((r) => ({ ...r, role: r.role || (activeCategory === "Reviewer" ? "reviewer" : "signer"), status: "pending" })),
-          sender: { fullName: formValues.SENDER_NAME || "User", workEmail: formValues.SENDER_EMAIL || "user@example.com" },
-          sentAt: new Date().toISOString(),
-          status: activeCategory === "Reviewer" ? "reviewing" : "waiting",
-          fileUrl: file.url, // Store the cloud URL
-          fileKey: file.key, // Store the unique key for deletion
-          category: activeCategory, // Store the category for reviewer tracking
-          content: filledHtmlContent, // Store the filled HTML content for viewing
-        };
-        try {
-          setSendError(null);
-          await persistSharedDocument(newDoc);
-          setIsSent(true);
-        } catch (error) {
-          console.error("Failed to save uploaded template document:", error);
-          setSendError(error instanceof Error ? error.message : "Failed to save the document to Shared Documents.");
-        } finally {
-          setIsPersisting(false);
-        }
-      }
-    },
     onUploadError: (error) => {
       setIsPersisting(false);
       setSendError(`Cloud upload failed: ${error.message}`);
       alert(`Cloud storage failed: ${error.message}`);
     }
   });
+
+  const finalizeSend = async (fileUrl: string | null, fileKey: string | null) => {
+    // Generate filled HTML content for viewing
+    const isDateKeyLocal = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
+    let filledHtmlContent = hasUploadedDocument ? uploadedPreviewHtml : resolvedTemplateBaseContent;
+    if (!hasUploadedDocument && resolvedTemplateBaseContent) {
+      Object.entries(formValues).forEach(([key, val]) => {
+        const displayVal = isDateKeyLocal(key) ? formatDate(val) : val;
+        filledHtmlContent = filledHtmlContent.replace(new RegExp(`\\[${key}\\]`, 'g'), displayVal);
+      });
+      // Add signature if available
+      if (savedSignature) {
+        filledHtmlContent = filledHtmlContent.replace(
+          /\[SIGNATURE\]/g,
+          `<div style="margin-top: 15px;">
+            <img src="${savedSignature}" alt="Signature" style="height: 80px; display: block; margin-bottom: -15px;" />
+            <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 8px;">Signature</div>
+          </div>`
+        );
+      } else {
+        filledHtmlContent = filledHtmlContent.replace(
+          /\[SIGNATURE\]/g,
+          `<div style="margin-top: 15px;">
+            <div style="height: 80px; margin-bottom: -15px;"></div>
+            <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 8px;">Signature</div>
+          </div>`
+        );
+      }
+    }
+
+    const finalRecipients = [...selectedRecipients];
+    if (manualEmail.trim()) {
+      const normalizedManual = normalizeEmail(manualEmail);
+      const alreadyExists = finalRecipients.some(r => normalizeEmail(r.email) === normalizedManual);
+      if (!alreadyExists) {
+        finalRecipients.push({ 
+          name: "External Contact", 
+          email: manualEmail.trim(), 
+          role: activeCategory === "Reviewer" ? "reviewer" : "signer" 
+        });
+      }
+    }
+
+    const newDoc = {
+      id: `tmp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      name: template.name,
+      subject: activeCategory === "Reviewer" ? `Please review: ${template.name}` : `Please sign: ${template.name}`,
+      recipients: finalRecipients.map((r) => ({ 
+        ...r, 
+        role: r.role || (activeCategory === "Reviewer" ? "reviewer" : "signer"), 
+        status: "pending" 
+      })),
+      sender: { fullName: formValues.SENDER_NAME || "User", workEmail: formValues.SENDER_EMAIL || "user@example.com" },
+      sentAt: new Date().toISOString(),
+      status: activeCategory === "Reviewer" ? "reviewing" : (fileUrl ? "waiting" : "pending"),
+      fileUrl: fileUrl, // Store the cloud URL
+      fileKey: fileKey, // Store the unique key for deletion
+      category: activeCategory, // Store the category for reviewer tracking
+      content: filledHtmlContent, // Store the filled HTML content for viewing
+    };
+
+    try {
+      setSendError(null);
+      await persistSharedDocument(newDoc);
+      setIsSent(true);
+    } catch (error) {
+      console.error("Failed to save uploaded template document:", error);
+      setSendError(error instanceof Error ? error.message : "Failed to save the document to Shared Documents.");
+    } finally {
+      setIsPersisting(false);
+    }
+  };
 
   const formatDate = (iso: string) => {
     if (!iso) return today;
@@ -1358,7 +1371,12 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
             ? mimeType.split("/")[1] || "png"
             : (baseName.split(".").pop() || "bin");
         const file = new File([blob], `${baseName.replace(/\.[^/.]+$/, "")}.${extension}`, { type: mimeType });
-        await uploadDoc([file]);
+        const res = await uploadDoc([file]);
+        if (res && res[0]) {
+          await finalizeSend(res[0].url, res[0].key);
+        } else {
+          throw new Error("Upload failed without throwing an error");
+        }
         return;
       } catch (error) {
         console.error("Failed to reuse uploaded document:", error);
@@ -1371,7 +1389,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
 
     if (resolvedTemplateBaseContent) {
       Object.entries(formValues).forEach(([key, val]) => {
-        const displayVal = isDateKey(key) ? formatDate(val) : val;
+        const displayVal = key.endsWith("_DATE") || key === "START_DATE" ? formatDate(val) : val;
         htmlContent = htmlContent.replace(new RegExp(`\\[${key}\\]`, 'g'), displayVal);
       });
     }
@@ -1415,34 +1433,17 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
       const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), "image/png"));
       const file = new File([blob], `${template.name.replace(/\s+/g, "_")}_filled.png`, { type: "image/png" });
 
-      await uploadDoc([file]);
+      const res = await uploadDoc([file]);
+      if (res && res[0]) {
+        await finalizeSend(res[0].url, res[0].key);
+      } else {
+        throw new Error("Upload failed to return a file");
+      }
       return;
     } catch (e) {
       console.error("Template snapshot failed", e);
       // Fallback: send without file url if snapshot fails
-      const newDoc = {
-        id: `tmp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        name: template.name,
-        subject: activeCategory === "Reviewer" ? `Please review: ${template.name}` : `Please sign: ${template.name}`,
-        recipients: (selectedRecipients.length > 0
-          ? selectedRecipients
-          : [{ name: "Manual", email: manualEmail, role: activeCategory === "Reviewer" ? "reviewer" : "signer" }]
-        ).map((r) => ({ ...r, role: r.role || (activeCategory === "Reviewer" ? "reviewer" : "signer"), status: "pending" })),
-        sender: { fullName: formValues.SENDER_NAME || "User", workEmail: formValues.SENDER_EMAIL || "user@example.com" },
-        sentAt: new Date().toISOString(),
-        status: activeCategory === "Reviewer" ? "reviewing" : "pending",
-        category: activeCategory,
-        content: htmlContent,
-      };
-      try {
-        await persistSharedDocument(newDoc);
-        setIsSent(true);
-      } catch (error) {
-        console.error("Failed to save fallback template document:", error);
-        setSendError(error instanceof Error ? error.message : "Failed to save the document to Shared Documents.");
-      } finally {
-        setIsPersisting(false);
-      }
+      await finalizeSend(null, null);
       return;
     }
 
@@ -1930,7 +1931,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                   <div className="px-8 pt-8 pb-2">
                     <h3 className="text-lg font-black text-slate-900 tracking-tight leading-tight">Confirm & Send</h3>
                     <p className="text-slate-400 text-xs font-medium mt-1">
-                      Sending <span className="text-violet-600 font-bold">&ldquo;{template.name}&rdquo;</span> to {selectedRecipients.length || 1} recipient{(selectedRecipients.length > 1 || (!selectedRecipients.length && manualEmail)) ? "s" : ""}
+                      Sending <span className="text-violet-600 font-bold">&ldquo;{template.name}&rdquo;</span> to {(selectedRecipients.length + (manualEmail.trim() && !selectedRecipients.some(r => normalizeEmail(r.email) === normalizeEmail(manualEmail)) ? 1 : 0)) || 1} recipient{((selectedRecipients.length + (manualEmail.trim() && !selectedRecipients.some(r => normalizeEmail(r.email) === normalizeEmail(manualEmail)) ? 1 : 0)) > 1) ? "s" : ""}
                     </p>
                   </div>
 
@@ -1977,7 +1978,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                             </div>
                           </div>
                         ))}
-                        {selectedRecipients.length === 0 && manualEmail && (
+                        {manualEmail.trim() && !selectedRecipients.some(r => normalizeEmail(r.email) === normalizeEmail(manualEmail)) && (
                           <div className="flex items-center gap-3 p-2.5 bg-slate-50 rounded-xl">
                             <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center text-violet-600 text-xs font-black shrink-0">
                               ✉

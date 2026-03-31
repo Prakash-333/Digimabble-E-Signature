@@ -19,32 +19,45 @@ export default function SettingsPage() {
     timezone: "Asia/Kolkata (IST)",
   });
   const [banner, setBanner] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     const loadProfile = async () => {
-      const { data } = await supabase.auth.getUser();
-      const currentUser = data.user;
-      if (!currentUser) return;
-      setUserId(currentUser.id);
+      try {
+        const { data, error: authError } = await supabase.auth.getUser();
+        const currentUser = data.user;
+        if (authError || !currentUser) {
+          setBanner("Please sign in again to load your profile.");
+          return;
+        }
+        setUserId(currentUser.id);
 
-      const { data: row } = await supabase
-        .from("profiles")
-        .select("full_name, company, timezone")
-        .eq("id", currentUser.id)
-        .maybeSingle();
+        const { data: row, error: profileError } = await supabase
+          .from("profiles")
+          .select("full_name, company, timezone")
+          .eq("id", currentUser.id)
+          .maybeSingle();
 
-      if (row) {
-        setProfile((prev) => ({
-          fullName: row.full_name ?? prev.fullName,
-          workEmail: currentUser.email ?? prev.workEmail,
-          company: row.company ?? prev.company,
-          timezone: row.timezone ?? prev.timezone,
-        }));
-      } else {
-        setProfile((prev) => ({
-          ...prev,
-          workEmail: currentUser.email ?? prev.workEmail,
-        }));
+        if (profileError) {
+          setBanner("Could not load profile from Supabase.");
+          return;
+        }
+
+        if (row) {
+          setProfile((prev) => ({
+            fullName: row.full_name ?? prev.fullName,
+            workEmail: currentUser.email ?? prev.workEmail,
+            company: row.company ?? prev.company,
+            timezone: row.timezone ?? prev.timezone,
+          }));
+        } else {
+          setProfile((prev) => ({
+            ...prev,
+            workEmail: currentUser.email ?? prev.workEmail,
+          }));
+        }
+      } catch (err) {
+        setBanner("Could not connect to Supabase.");
       }
     };
 
@@ -57,19 +70,25 @@ export default function SettingsPage() {
       return;
     }
 
-    const { error } = await supabase.from("profiles").upsert({
-      id: userId,
-      full_name: profile.fullName,
-      company: profile.company,
-      timezone: profile.timezone,
-    });
+    try {
+      const { error } = await supabase.from("profiles").upsert({
+        id: userId,
+        full_name: profile.fullName,
+        company: profile.company,
+        timezone: profile.timezone,
+      });
 
-    if (error) {
-      setBanner("Could not save to Supabase.");
-      return;
+      if (error) {
+        setBanner("Could not save to Supabase.");
+        return;
+      }
+
+      setBanner("Saved to Supabase.");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (err) {
+      setBanner("Could not connect to Supabase.");
     }
-
-    setBanner("Saved to Supabase.");
   };
 
   return (
@@ -152,11 +171,20 @@ export default function SettingsPage() {
             </div>
           </div>
           <button
-            className="mt-2 inline-flex rounded-full bg-violet-600 px-6 py-2.5 text-xs font-semibold text-white shadow-md transition-all hover:bg-violet-700 active:scale-95"
+            className={`mt-2 inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-xs font-semibold text-white shadow-md transition-all active:scale-95 ${saved ? "bg-green-600 hover:bg-green-700" : "bg-violet-600 hover:bg-violet-700"}`}
             onClick={saveProfile}
             type="button"
           >
-            Save changes
+            {saved ? (
+              <>
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                </svg>
+                Saved
+              </>
+            ) : (
+              "Save changes"
+            )}
           </button>
         </section>
 
