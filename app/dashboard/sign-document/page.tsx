@@ -199,7 +199,7 @@ export default function SignDocumentPage() {
               .from("documents")
               .update({
                 ...statusPatch,
-                // We DO NOT update global file_url/file_key here, maintaining the blank template for others.
+                ...(signedHtmlContent ? { content: signedHtmlContent } : {}),
                 ...(updatedRecipients ? { recipients: updatedRecipients } : {}),
               })
               .eq("id", sourceDocumentId);
@@ -1495,7 +1495,7 @@ export default function SignDocumentPage() {
                                 .from("documents")
                                 .update({
                                   ...statusPatch,
-                                  // We DO NOT update global content here to keep it clean for others
+                                  content: signedHtmlContent,
                                   ...(updatedRecipients ? { recipients: updatedRecipients } : {}),
                                 })
                                 .eq("id", sourceDocumentId);

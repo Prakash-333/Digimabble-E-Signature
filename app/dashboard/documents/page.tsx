@@ -10,7 +10,7 @@ type SentDocument = {
   id: string;
   name: string;
   subject: string;
-  recipients: { name: string; email: string; role: string; status?: string }[];
+  recipients: { name: string; email: string; role: string; status?: string; signed_file_url?: string; signed_content?: string }[];
   sender: { fullName: string; workEmail: string };
   sentAt: string;
   status: string;
@@ -35,6 +35,8 @@ type DocumentRow = {
   file_key: string | null;
   category: string | null;
   content: string | null;
+  signed_file_url?: string | null;
+  signed_content?: string | null;
 };
 
 const mapRowToSentDocument = (row: DocumentRow, currentUserId: string, currentUserEmail: string): SentDocument[] => {
@@ -44,6 +46,8 @@ const mapRowToSentDocument = (row: DocumentRow, currentUserId: string, currentUs
         email: recipient.email || "",
         role: recipient.role || "Signer",
         status: recipient.status || "pending",
+        signed_file_url: (recipient as any).signed_file_url,
+        signed_content: (recipient as any).signed_content,
       }))
     : [];
 
@@ -165,7 +169,19 @@ export default function DocumentsPage() {
                 const oldStatus = existingR.status || "pending";
                 const statusPriority = ["pending", "reviewing", "waiting", "signed", "reviewed", "approved", "completed"];
                 if (statusPriority.indexOf(newStatus) > statusPriority.indexOf(oldStatus)) {
-                  acc[groupKey].recipients[existingRIndex].status = newStatus;
+                  acc[groupKey].recipients[existingRIndex] = {
+                    ...existingR,
+                    status: newStatus,
+                    ...(newR.signed_file_url ? { signed_file_url: newR.signed_file_url } : {}),
+                    ...(newR.signed_content ? { signed_content: newR.signed_content } : {}),
+                  };
+                } else if (newR.signed_file_url || newR.signed_content) {
+                  // Preserve signed fields even if status didn't advance
+                  acc[groupKey].recipients[existingRIndex] = {
+                    ...existingR,
+                    ...(newR.signed_file_url ? { signed_file_url: newR.signed_file_url } : {}),
+                    ...(newR.signed_content ? { signed_content: newR.signed_content } : {}),
+                  };
                 }
               }
             });
@@ -552,27 +568,33 @@ export default function DocumentsPage() {
                   {openMenuId === doc.id && (
                     <div className="absolute top-10 right-0 w-36 rounded-xl border border-slate-200 bg-white p-1 shadow-xl z-20 animate-in fade-in zoom-in duration-200">
                       {(() => {
+                        const myRecipient = currentUserEmail ? doc.recipients.find(r => normalizeEmail(r.email) === currentUserEmail) : null;
+                        const signedFileUrl = (myRecipient as any)?.signed_file_url;
+                        const signedContent = (myRecipient as any)?.signed_content;
+                        const displayFileUrl = signedFileUrl || doc.fileUrl;
+                        const displayContent = signedContent || doc.content;
+
                         const hasSigned = doc.recipients.some(r => r.status === "signed" || r.status === "reviewed");
-                        if (hasSigned && doc.fileUrl) {
+                        if (hasSigned && displayFileUrl) {
                           return (
                             <a
-                              href={doc.fileUrl}
+                              href={displayFileUrl}
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={() => setOpenMenuId(null)}
                               className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
                             >
                               <Eye className="h-3 w-3" />
-                              View
+                              View Signed
                             </a>
                           );
                         }
-                        if (doc.content) {
+                        if (displayContent) {
                           return (
                             <button
                               onClick={() => {
                                 setOpenMenuId(null);
-                                setViewingDoc(doc);
+                                setViewingDoc({ ...doc, content: displayContent });
                               }}
                               className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
                             >
@@ -581,10 +603,10 @@ export default function DocumentsPage() {
                             </button>
                           );
                         }
-                        if (doc.fileUrl) {
+                        if (displayFileUrl) {
                           return (
                             <a
-                              href={doc.fileUrl}
+                              href={displayFileUrl}
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={() => setOpenMenuId(null)}
@@ -728,24 +750,30 @@ export default function DocumentsPage() {
                 {openMenuId === doc.id && (
                   <div className="absolute right-4 mt-40 w-36 rounded-xl border border-slate-200 bg-white p-1 shadow-xl z-20">
                     {(() => {
+                      const myRecipient = currentUserEmail ? doc.recipients.find(r => normalizeEmail(r.email) === currentUserEmail) : null;
+                      const signedFileUrl = (myRecipient as any)?.signed_file_url;
+                      const signedContent = (myRecipient as any)?.signed_content;
+                      const displayFileUrl = signedFileUrl || doc.fileUrl;
+                      const displayContent = signedContent || doc.content;
+
                       const hasSigned = doc.recipients.some(r => r.status === "signed" || r.status === "reviewed");
-                      if (hasSigned && doc.fileUrl) {
+                      if (hasSigned && displayFileUrl) {
                         return (
-                          <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" onClick={() => setOpenMenuId(null)} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2">
-                            <Eye className="h-3 w-3" />View
+                          <a href={displayFileUrl} target="_blank" rel="noopener noreferrer" onClick={() => setOpenMenuId(null)} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2">
+                            <Eye className="h-3 w-3" />View Signed
                           </a>
                         );
                       }
-                      if (doc.content) {
+                      if (displayContent) {
                         return (
-                          <button onClick={() => { setOpenMenuId(null); setViewingDoc(doc); }} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2">
+                          <button onClick={() => { setOpenMenuId(null); setViewingDoc({ ...doc, content: displayContent }); }} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2">
                             <Eye className="h-3 w-3" />View
                           </button>
                         );
                       }
-                      if (doc.fileUrl) {
+                      if (displayFileUrl) {
                         return (
-                          <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" onClick={() => setOpenMenuId(null)} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2">
+                          <a href={displayFileUrl} target="_blank" rel="noopener noreferrer" onClick={() => setOpenMenuId(null)} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2">
                             <Eye className="h-3 w-3" />View
                           </a>
                         );
@@ -863,12 +891,14 @@ function DocumentDetailModal({
 
         if (freshDoc) {
           const typedSender = (freshDoc.sender ?? {}) as { fullName?: string; workEmail?: string };
-          const rawRecipients = freshDoc.recipients as Array<{ name: string; email: string; role: string; status?: string }> | null;
+          const rawRecipients = freshDoc.recipients as Array<{ name: string; email: string; role: string; status?: string; signed_file_url?: string; signed_content?: string }> | null;
           const mappedRecipients = (rawRecipients ?? []).map((r) => ({
             name: r.name || "",
             email: r.email || "",
             role: r.role || "",
             status: r.status,
+            signed_file_url: r.signed_file_url,
+            signed_content: r.signed_content,
           }));
 
           setRefreshedDoc({
@@ -1388,19 +1418,24 @@ function DocumentDetailModal({
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {currentDoc.fileUrl && (
-                  <a
-                    href={currentDoc.name?.toLowerCase().endsWith(".doc") || currentDoc.name?.toLowerCase().endsWith(".docx")
-                      ? `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(currentDoc.fileUrl)}`
-                      : currentDoc.fileUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200 px-3 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-100 transition-colors"
-                  >
-                    <ArrowUpRight className="h-3 w-3" />
-                    Open
-                  </a>
-                )}
+                {(() => {
+                  const viewingR = currentDoc.recipients.find(r => r.email === viewingRecipient);
+                  const openUrl = (viewingR as any)?.signed_file_url || currentDoc.fileUrl;
+                  if (!openUrl) return null;
+                  return (
+                    <a
+                      href={currentDoc.name?.toLowerCase().endsWith(".doc") || currentDoc.name?.toLowerCase().endsWith(".docx")
+                        ? `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(openUrl)}`
+                        : openUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200 px-3 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-100 transition-colors"
+                    >
+                      <ArrowUpRight className="h-3 w-3" />
+                      Open
+                    </a>
+                  );
+                })()}
                 {currentDoc.fileUrl && (
                   <button
                     onClick={() => handleDownload(currentDoc.recipients.find(r => r.email === viewingRecipient)?.name || "document")}
