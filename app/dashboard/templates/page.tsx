@@ -1062,6 +1062,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   const [newRecipientName, setNewRecipientName] = useState("");
   const [newRecipientEmail, setNewRecipientEmail] = useState("");
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [showCategoryDialog, setShowCategoryDialog] = useState(false);
   const [savedSignature, setSavedSignature] = useState<string | null>(null);
 
   // Categories for the sidebar
@@ -1693,11 +1694,25 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
 
         {/* ── STEP 2: Select Recipients ── */}
         {step === "recipients" && (
+          <>
           <div className="flex-1 flex min-h-[calc(100vh-73px)] bg-slate-50">
             {/* Left Sidebar: Categories */}
             <div className="w-80 bg-white border-r border-slate-200 flex flex-col">
               <div className="p-6 border-b border-slate-100">
-                <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">Select Recipients</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">Select Recipients</h3>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewCategoryName("");
+                      setShowCategoryDialog(true);
+                    }}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-violet-100 text-violet-600 transition-colors hover:bg-violet-200"
+                    aria-label="Add category"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </div>
                 <p className="text-xs text-slate-500 font-medium mt-1">Choose a category below</p>
               </div>
 
@@ -1728,29 +1743,6 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
               </div>
               
               <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-                <div className="mb-4 flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="New category"
-                    value={newCategoryName}
-                    onChange={(e) => setNewCategoryName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        addCategory();
-                      }
-                    }}
-                    className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-700 outline-none transition-all focus:border-violet-400 focus:bg-white"
-                  />
-                  <button
-                    type="button"
-                    onClick={addCategory}
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100 text-violet-600 transition-colors hover:bg-violet-200"
-                    aria-label="Add category"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </button>
-                </div>
                 <div className="space-y-1">
                   {categories.map(cat => {
                     const count = recipientsByCategory[cat]?.length ?? 0;
@@ -1933,6 +1925,50 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                   )}
                 </div>
               </div>
+
+              {/* Create Category Dialog */}
+              {showCategoryDialog && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+                  <div className="w-full max-w-sm mx-4 bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
+                    <div className="px-6 pt-6 pb-4 border-b border-slate-100">
+                      <h3 className="text-base font-bold text-slate-900">Create Category</h3>
+                      <p className="text-xs text-slate-500 mt-1">Add a new recipient category.</p>
+                    </div>
+                    <div className="px-6 py-5">
+                      <input
+                        type="text"
+                        placeholder="Category name"
+                        value={newCategoryName}
+                        onChange={(e) => setNewCategoryName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            addCategory();
+                            setShowCategoryDialog(false);
+                          }
+                        }}
+                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition-all focus:border-violet-400 focus:bg-white focus:ring-4 focus:ring-violet-50"
+                        autoFocus
+                      />
+                    </div>
+                    <div className="px-6 pb-6 flex gap-3">
+                      <button
+                        onClick={() => { setShowCategoryDialog(false); setNewCategoryName(""); }}
+                        className="flex-1 py-2.5 rounded-2xl text-slate-600 font-bold text-sm border border-slate-200 hover:bg-slate-50 transition-all"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => { addCategory(); setShowCategoryDialog(false); }}
+                        className="flex-[2] py-2.5 rounded-2xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700 transition-all flex items-center justify-center gap-2"
+                      >
+                        Create Category
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+          </>
         )}
         {step === "send" && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-300">

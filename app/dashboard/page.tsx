@@ -23,6 +23,7 @@ export default function DashboardPage() {
   const [documentsSent, setDocumentsSent] = useState(0);
   const [pendingCount, setPendingCount] = useState(0);
   const [approvedCount, setApprovedCount] = useState(0);
+  const [rejectedCount, setRejectedCount] = useState(0);
   const [userLabel, setUserLabel] = useState("User");
   const [notificationCount, setNotificationCount] = useState(0);
 
@@ -42,7 +43,7 @@ export default function DashboardPage() {
           .eq("owner_id", user.id),
         supabase
           .from("documents")
-          .select("id, status")
+          .select("id, status, recipients")
           .eq("owner_id", user.id),
         supabase
           .from("documents")
@@ -72,6 +73,12 @@ export default function DashboardPage() {
       setDocumentsSent(sent.length);
       setPendingCount(sent.filter((d) => d.status === "waiting" || d.status === "reviewing").length);
       setApprovedCount(sent.filter((d) => d.status === "approved" || d.status === "reviewed" || d.status === "signed" || d.status === "completed").length);
+      setRejectedCount(sent.filter((d) => {
+        if (d.status === "rejected") return true;
+        const recipients = (d as any).recipients;
+        if (Array.isArray(recipients)) return recipients.some((r: any) => r.status === "rejected");
+        return false;
+      }).length);
       const hiddenIds = getHiddenNotificationIds(user.id);
       const seenIds = getSeenNotificationIds(user.id);
       setNotificationCount(
@@ -92,6 +99,7 @@ export default function DashboardPage() {
     { label: "Documents sent", value: documentsSent, href: "/dashboard/documents" },
     { label: "Approved", value: approvedCount, href: "/dashboard/documents?filter=approved" },
     { label: "Pending", value: pendingCount, href: "/dashboard/documents?filter=pending" },
+    { label: "Rejected", value: rejectedCount, href: "/dashboard/documents?filter=rejected" },
     { label: "Company documents", value: companyCount, href: "/dashboard/my-documents?filter=company" },
     { label: "Personal documents", value: personalCount, href: "/dashboard/my-documents?filter=personal" },
   ];

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye } from "lucide-react";
+import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye } from "lucide-react";
 import { deleteCloudFiles } from "../../actions/uploadthing";
 import { supabase } from "../../lib/supabase/browser";
 import { getMatchingRecipient, normalizeEmail } from "../../lib/documents";
@@ -10,7 +10,7 @@ type SentDocument = {
   id: string;
   name: string;
   subject: string;
-  recipients: { name: string; email: string; role: string; status?: string; signed_file_url?: string; signed_content?: string }[];
+  recipients: { name: string; email: string; role: string; status?: string; signed_file_url?: string; signed_content?: string; reject_reason?: string | null; sign_message?: string | null }[];
   sender: { fullName: string; workEmail: string };
   sentAt: string;
   status: string;
@@ -41,14 +41,19 @@ type DocumentRow = {
 
 const mapRowToSentDocument = (row: DocumentRow, currentUserId: string, currentUserEmail: string): SentDocument[] => {
   const recipients = Array.isArray(row.recipients)
-    ? row.recipients.map((recipient) => ({
-        name: recipient.name || "",
-        email: recipient.email || "",
-        role: recipient.role || "Signer",
-        status: recipient.status || "pending",
-        signed_file_url: (recipient as any).signed_file_url,
-        signed_content: (recipient as any).signed_content,
-      }))
+    ? row.recipients.map((recipient: any) => {
+        const mapped: any = {
+          name: recipient.name || "",
+          email: recipient.email || "",
+          role: recipient.role || "Signer",
+          status: recipient.status || "pending",
+        };
+        if (recipient.signed_file_url) mapped.signed_file_url = recipient.signed_file_url;
+        if (recipient.signed_content) mapped.signed_content = recipient.signed_content;
+        if (typeof recipient.reject_reason === "string") mapped.reject_reason = recipient.reject_reason;
+        if (typeof recipient.sign_message === "string") mapped.sign_message = recipient.sign_message;
+        return mapped;
+      })
     : [];
 
   const isOwner = row.owner_id === currentUserId;
@@ -167,25 +172,37 @@ export default function DocumentsPage() {
                 const existingR = acc[groupKey].recipients[existingRIndex];
                 const newStatus = newR.status || "pending";
                 const oldStatus = existingR.status || "pending";
-                const statusPriority = ["pending", "reviewing", "waiting", "signed", "reviewed", "approved", "completed"];
+                const statusPriority = ["pending", "reviewing", "waiting", "signed", "reviewed", "approved", "completed", "rejected"];
                 if (statusPriority.indexOf(newStatus) > statusPriority.indexOf(oldStatus)) {
                   acc[groupKey].recipients[existingRIndex] = {
                     ...existingR,
                     status: newStatus,
                     ...(newR.signed_file_url ? { signed_file_url: newR.signed_file_url } : {}),
                     ...(newR.signed_content ? { signed_content: newR.signed_content } : {}),
+                    reject_reason: typeof (newR as any).reject_reason === "string"
+                      ? (newR as any).reject_reason
+                      : (existingR as any).reject_reason,
+                    sign_message: typeof (newR as any).sign_message === "string"
+                      ? (newR as any).sign_message
+                      : (existingR as any).sign_message,
                   };
-                } else if (newR.signed_file_url || newR.signed_content) {
-                  // Preserve signed fields even if status didn't advance
+                } else if (newStatus === oldStatus || newR.signed_file_url || newR.signed_content || typeof (newR as any).reject_reason === "string" || typeof (newR as any).sign_message === "string") {
+                  // Preserve signed/rejected fields even if status didn't advance or stayed the same
                   acc[groupKey].recipients[existingRIndex] = {
                     ...existingR,
                     ...(newR.signed_file_url ? { signed_file_url: newR.signed_file_url } : {}),
                     ...(newR.signed_content ? { signed_content: newR.signed_content } : {}),
+                    reject_reason: typeof (newR as any).reject_reason === "string"
+                      ? (newR as any).reject_reason
+                      : (existingR as any).reject_reason,
+                    sign_message: typeof (newR as any).sign_message === "string"
+                      ? (newR as any).sign_message
+                      : (existingR as any).sign_message,
                   };
                 }
               }
             });
-            const advancedStatuses = ["pending", "signed", "reviewed", "approved", "completed"];
+            const advancedStatuses = ["pending", "signed", "reviewed", "approved", "completed", "rejected"];
             const currentStatusIndex = advancedStatuses.indexOf(acc[groupKey].status || "pending");
             const newStatusIndex = advancedStatuses.indexOf(doc.status || "pending");
             
@@ -278,15 +295,7 @@ export default function DocumentsPage() {
        nameSuffix = `_${r.name}`;
     }
     
-    if (targetUrl) {
-      const link = document.createElement('a');
-      link.href = targetUrl;
-      link.download = `${doc.name}${nameSuffix}`;
-      link.target = "_blank";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } else if (targetContent) {
+    if (targetContent) {
       const blob = new Blob([targetContent], { type: 'text/html' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -296,6 +305,14 @@ export default function DocumentsPage() {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
+    } else if (targetUrl) {
+      const link = document.createElement('a');
+      link.href = targetUrl;
+      link.download = `${doc.name}${nameSuffix}`;
+      link.target = "_blank";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     }
     setOpenMenuId(null);
   };
@@ -358,11 +375,22 @@ export default function DocumentsPage() {
     if (isSender) {
       // Sender sees overall status across all recipients
       const totalCount = recipients.length;
+      const rejectedCount = recipients.filter(
+        (r) => (r as { status?: string }).status === "rejected"
+      ).length;
       const completedCount = recipients.filter(
         (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
       ).length;
 
       if (totalCount > 0) {
+        if (rejectedCount > 0) {
+          return (
+            <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-[10px] font-semibold text-red-700">
+              <XCircle className="mr-1 h-3 w-3" />
+              {rejectedCount === totalCount ? "Changes Required" : `${rejectedCount} Changes Required`}
+            </span>
+          );
+        }
         if (completedCount === totalCount) {
           const label = totalCount === 1
             ? (recipients[0]?.status === "reviewed" ? "Reviewed" : "Signed")
@@ -448,8 +476,9 @@ export default function DocumentsPage() {
       );
     }
     return (
-      <span className="inline-flex items-center rounded-full bg-orange-100 px-2.5 py-0.5 text-[10px] font-semibold text-orange-700">
-        Awaiting Recipient
+      <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-[10px] font-semibold text-blue-700">
+        <Clock className="mr-1 h-3 w-3" />
+        Pending
       </span>
     );
   };
@@ -534,16 +563,16 @@ export default function DocumentsPage() {
       </div>
 
       <div className="mt-8 flex flex-wrap gap-2">
-        {["all", "pending", "approved", "rejected"].map((tag) => (
+        {[{ value: "all", label: "All" }, { value: "pending", label: "Pending" }, { value: "approved", label: "Completed" }, { value: "rejected", label: "Changes Required" }].map((tag) => (
           <button
-            key={tag}
-            onClick={() => setActiveFilter(tag)}
-            className={`rounded-full px-5 py-1.5 text-xs font-semibold capitalize transition-all ${activeFilter === tag
+            key={tag.value}
+            onClick={() => setActiveFilter(tag.value)}
+            className={`rounded-full px-5 py-1.5 text-xs font-semibold transition-all ${activeFilter === tag.value
               ? "bg-violet-600 text-white shadow-md shadow-violet-200"
               : "bg-white border border-slate-200 text-slate-500 hover:border-violet-300 hover:text-violet-600 shadow-sm"
               }`}
           >
-            {tag}
+            {tag.label}
           </button>
         ))}
         <div className="ml-auto inline-flex items-center rounded-full border border-slate-200 bg-white p-1 shadow-sm">
@@ -751,7 +780,7 @@ export default function DocumentsPage() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setDetailDoc(doc)}
-                    className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 transition-all flex items-center gap-1 bg-blue-50 px-2 py-0.5 rounded-md"
+                    className="text-[11px] font-semibold text-slate-700 hover:text-violet-600 transition-all flex items-center gap-1 border border-slate-300 px-2.5 py-1 rounded-full hover:border-violet-300"
                   >
                     <ArrowUpRight className="h-3 w-3" />
                     View More
@@ -780,7 +809,7 @@ export default function DocumentsPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => setDetailDoc(doc)} className="rounded-full bg-blue-50 px-3 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-100">
+                <button onClick={() => setDetailDoc(doc)} className="rounded-full border border-slate-300 px-3.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:border-violet-300 hover:text-violet-600">
                   View More
                 </button>
                 <button
@@ -936,7 +965,7 @@ function DocumentDetailModal({
 
         if (freshDoc) {
           const typedSender = (freshDoc.sender ?? {}) as { fullName?: string; workEmail?: string };
-          const rawRecipients = freshDoc.recipients as Array<{ name: string; email: string; role: string; status?: string; signed_file_url?: string; signed_content?: string }> | null;
+          const rawRecipients = freshDoc.recipients as Array<{ name: string; email: string; role: string; status?: string; signed_file_url?: string; signed_content?: string; reject_reason?: string | null; sign_message?: string | null }> | null;
           const mappedRecipients = (rawRecipients ?? []).map((r) => ({
             name: r.name || "",
             email: r.email || "",
@@ -944,6 +973,8 @@ function DocumentDetailModal({
             status: r.status,
             signed_file_url: r.signed_file_url,
             signed_content: r.signed_content,
+            reject_reason: r.reject_reason,
+            sign_message: r.sign_message,
           }));
 
           setRefreshedDoc({
@@ -984,21 +1015,23 @@ function DocumentDetailModal({
   const getRecipientStatusLabel = (r: { name: string; email: string; role: string; status?: string }) => {
     const s = (r as { status?: string }).status;
     const role = r.role?.toLowerCase();
+    if (s === "rejected") return "Changes Required";
     if (s === "signed") return "Signed";
     if (s === "reviewed") return "Reviewed";
     if (s === "approved") return "Approved";
-    if (role === "reviewer") return "Yet to Review";
-    return "Yet to Sign";
+    return "Pending";
   };
 
   const getRecipientStatusColor = (r: { name: string; email: string; role: string; status?: string }) => {
     const s = (r as { status?: string }).status;
+    if (s === "rejected") return "bg-red-100 text-red-700";
     if (s === "signed" || s === "reviewed" || s === "approved") return "bg-green-100 text-green-700";
     return "bg-amber-100 text-amber-700";
   };
 
   const getRecipientIcon = (r: { name: string; email: string; role: string; status?: string }) => {
     const s = (r as { status?: string }).status;
+    if (s === "rejected") return <XCircle className="h-3.5 w-3.5" />;
     if (s === "signed" || s === "reviewed" || s === "approved") return <CheckCircle2 className="h-3.5 w-3.5" />;
     return <Clock className="h-3.5 w-3.5" />;
   };
@@ -1012,19 +1045,25 @@ function DocumentDetailModal({
         ? currentDoc.recipients.find(r => normalizeEmail(r.email) === currentUserEmail)
         : currentDoc.recipients[0];
       const s = myRecipient?.status;
+      if (s === "rejected") return "Changes Required";
       if (s === "signed") return "Signed";
       if (s === "reviewed") return "Reviewed";
       if (s === "approved") return "Approved";
-      return myRecipient?.role?.toLowerCase() === "reviewer" ? "Yet to Review" : "Yet to Sign";
+      return "Pending";
     }
 
     const totalCount = currentDoc.recipients.length;
+    const rejectedCount = currentDoc.recipients.filter(
+      (r) => (r as { status?: string }).status === "rejected"
+    ).length;
     const completedCount = currentDoc.recipients.filter(
       (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
     ).length;
 
     // Multi-recipient logic: only show "Reviewed" when ALL recipients have reviewed
     if (totalCount > 0) {
+      if (rejectedCount > 0 && rejectedCount === totalCount) return "Changes Required";
+      if (rejectedCount > 0) return `${rejectedCount} Changes Required`;
       if (completedCount === totalCount) {
         return totalCount === 1 
           ? (currentDoc.recipients[0]?.status === "reviewed" ? "Reviewed" : "Signed")
@@ -1034,12 +1073,13 @@ function DocumentDetailModal({
     }
 
     // Check document-level status for documents with no recipients
+    if (currentDoc.status === "rejected") return "Changes Required";
     if (currentDoc.status === "reviewed") return "Reviewed";
     if (currentDoc.status === "approved") return "Approved";
     if (currentDoc.status === "signed" || currentDoc.status === "completed") return "Signed";
     if (currentDoc.status === "reviewing") return "Under Review";
     if (currentDoc.status === "waiting") return "Awaiting Signer";
-    return currentDoc.category === "Reviewer" ? "Yet to Review" : "Yet to Sign";
+    return "Pending";
   };
 
   const getOverallStatusColor = () => {
@@ -1048,22 +1088,28 @@ function DocumentDetailModal({
         ? currentDoc.recipients.find(r => normalizeEmail(r.email) === currentUserEmail)
         : currentDoc.recipients[0];
       const s = myRecipient?.status;
+      if (s === "rejected") return "bg-red-100 text-red-700 border-red-200";
       if (s === "signed" || s === "reviewed" || s === "approved") return "bg-green-100 text-green-700 border-green-200";
       return "bg-amber-100 text-amber-700 border-amber-200";
     }
 
     const totalCount = currentDoc.recipients.length;
+    const rejectedCount = currentDoc.recipients.filter(
+      (r) => (r as { status?: string }).status === "rejected"
+    ).length;
     const completedCount = currentDoc.recipients.filter(
       (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
     ).length;
 
     // Multi-recipient logic first
     if (totalCount > 0) {
+      if (rejectedCount > 0) return "bg-red-100 text-red-700 border-red-200";
       if (completedCount === totalCount) return "bg-green-100 text-green-700 border-green-200";
       return "bg-blue-100 text-blue-700 border-blue-200";
     }
 
     // Check document-level status for documents with no recipients
+    if (currentDoc.status === "rejected") return "bg-red-100 text-red-700 border-red-200";
     if (["signed", "completed", "reviewed", "approved"].includes(currentDoc.status)) return "bg-green-100 text-green-700 border-green-200";
     if (currentDoc.status === "reviewing") return "bg-yellow-100 text-yellow-700 border-yellow-200";
     if (currentDoc.status === "waiting") return "bg-orange-100 text-orange-700 border-orange-200";
@@ -1076,22 +1122,28 @@ function DocumentDetailModal({
         ? currentDoc.recipients.find(r => normalizeEmail(r.email) === currentUserEmail)
         : currentDoc.recipients[0];
       const s = myRecipient?.status;
+      if (s === "rejected") return <XCircle className="h-5 w-5" />;
       if (s === "signed" || s === "reviewed" || s === "approved") return <CheckCircle2 className="h-5 w-5" />;
       return <Clock className="h-5 w-5" />;
     }
 
     const totalCount = currentDoc.recipients.length;
+    const rejectedCount = currentDoc.recipients.filter(
+      (r) => (r as { status?: string }).status === "rejected"
+    ).length;
     const completedCount = currentDoc.recipients.filter(
       (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
     ).length;
 
     // Multi-recipient logic first
     if (totalCount > 0) {
+      if (rejectedCount > 0) return <XCircle className="h-5 w-5" />;
       if (completedCount === totalCount) return <CheckCircle2 className="h-5 w-5" />;
       return <Clock className="h-5 w-5" />;
     }
 
     // Check document-level status for documents with no recipients
+    if (currentDoc.status === "rejected") return <XCircle className="h-5 w-5" />;
     if (["signed", "completed", "reviewed", "approved"].includes(currentDoc.status)) return <CheckCircle2 className="h-5 w-5" />;
     return <Clock className="h-5 w-5" />;
   };
@@ -1108,7 +1160,8 @@ function DocumentDetailModal({
     let recipientName = "document";
 
     if (recipientEmail) {
-      const recipient = currentDoc.recipients.find(r => r.email === recipientEmail);
+      const normalizedEmail = normalizeEmail(recipientEmail);
+      const recipient = currentDoc.recipients.find(r => normalizeEmail(r.email) === normalizedEmail);
       if (recipient) {
         recipientName = recipient.name;
         if ((recipient as any).signed_file_url) targetFileUrl = (recipient as any).signed_file_url;
@@ -1121,15 +1174,7 @@ function DocumentDetailModal({
       if ((recipient as any).signed_content) targetContent = (recipient as any).signed_content;
     }
 
-    if (targetFileUrl) {
-      const link = document.createElement("a");
-      link.href = targetFileUrl;
-      link.download = `${currentDoc.name}_${recipientName}`;
-      link.target = "_blank";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } else if (targetContent) {
+    if (targetContent) {
       const blob = new Blob([targetContent], { type: 'text/html' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -1139,6 +1184,14 @@ function DocumentDetailModal({
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
+    } else if (targetFileUrl) {
+      const link = document.createElement("a");
+      link.href = targetFileUrl;
+      link.download = `${currentDoc.name}_${recipientName}`;
+      link.target = "_blank";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     }
   };
 
@@ -1197,254 +1250,130 @@ function DocumentDetailModal({
             </div>
           </div>
 
-          {/* Overall Status Card (single recipient - sender view) */}
-          {isSingleRecipient && isSender && (
-            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-              <div className="px-6 py-5 border-b border-slate-100">
-                <h3 className="text-sm font-bold text-slate-900">Status</h3>
-              </div>
-              <div className="px-6 py-6 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${getOverallStatusColor()}`}>
-                    {getOverallIcon()}
-                  </div>
-                  <div>
-                    <p className="text-lg font-bold text-slate-900">{getOverallStatusLabel()}</p>
-                    {currentDoc.recipients[0] && (
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Recipient: {currentDoc.recipients[0].name || currentDoc.recipients[0].email}
-                        <span className="capitalize"> ({getRoleLabel(currentDoc.recipients[0])})</span>
-                      </p>
-                    )}
-                  </div>
-                </div>
-                {/* Single recipient actions */}
-                <div className="flex items-center gap-2">
-                  {(currentDoc.content || currentDoc.fileUrl) && (
-                    <button
-                      onClick={() => setViewingRecipient(currentDoc.recipients[0]?.email || "__single__")}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200 px-3 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-100 transition-colors"
-                    >
-                      <Eye className="h-3 w-3" />
-                      View
-                    </button>
-                  )}
-                  {(currentDoc.fileUrl || currentDoc.content) && (
-                    <button
-                      onClick={() => handleDownload(currentDoc.recipients[0]?.email)}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
-                    >
-                      <Download className="h-3 w-3" />
-                      Download
-                    </button>
-                  )}
-                  {isSender && currentDoc.category === "Reviewer" && (getOverallStatusLabel() === "Reviewed" || getOverallStatusLabel() === "Finished") && (
-                    <button
-                      onClick={() => {
-                        window.location.href = `/dashboard/templates?step=recipients&documentId=${currentDoc.id}`;
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-green-600 border border-green-700 px-4 py-1.5 text-[11px] font-bold text-white hover:bg-green-700 transition-colors shadow-sm"
-                    >
-                      <ArrowUpRight className="h-3 w-3" />
-                      Send
-                    </button>
-                  )}
-                </div>
-              </div>
+          {/* Status Card - always same table layout */}
+          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-900">Status</h3>
+              {isSender && currentDoc.category === "Reviewer" && (getOverallStatusLabel() === "Reviewed" || getOverallStatusLabel() === "Finished") && (
+                <button
+                  onClick={() => {
+                    window.location.href = `/dashboard/templates?step=recipients&documentId=${currentDoc.id}`;
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-green-600 border border-green-700 px-4 py-1.5 text-[11px] font-bold text-white hover:bg-green-700 transition-colors shadow-sm"
+                >
+                  <ArrowUpRight className="h-3 w-3" />
+                  Send
+                </button>
+              )}
             </div>
-          )}
-
-          {/* Recipient's Own Status Card (single recipient - recipient view) */}
-          {isSingleRecipient && !isSender && (
-            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-              <div className="px-6 py-5 border-b border-slate-100">
-                <h3 className="text-sm font-bold text-slate-900">Your Status</h3>
-              </div>
-              <div className="px-6 py-6 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${getOverallStatusColor()}`}>
-                    {getOverallIcon()}
-                  </div>
-                  <div>
-                    <p className="text-lg font-bold text-slate-900">{getOverallStatusLabel()}</p>
-                    {currentDoc.recipients[0] && (
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Role: <span className="capitalize">{getRoleLabel(currentDoc.recipients[0])}</span>
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {(currentDoc.content || currentDoc.fileUrl) && (
-                    <button
-                      onClick={() => setViewingRecipient(currentDoc.recipients[0]?.email || "__single__")}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200 px-3 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-100 transition-colors"
-                    >
-                      <Eye className="h-3 w-3" />
-                      View
-                    </button>
-                  )}
-                  {(currentDoc.fileUrl || currentDoc.content) && (
-                    <button
-                      onClick={() => handleDownload(currentDoc.recipients[0]?.email)}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
-                    >
-                      <Download className="h-3 w-3" />
-                      Download
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Multi-Recipient Status Table (sender view - all recipients) */}
-          {!isSingleRecipient && isSender && (
-            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-              <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
-                <h3 className="text-sm font-bold text-slate-900">Recipient Status</h3>
-                <div className="flex items-center gap-3 text-xs">
-                  {isSender && currentDoc.category === "Reviewer" && (getOverallStatusLabel() === "Reviewed" || getOverallStatusLabel() === "Finished") && (
-                    <button
-                      onClick={() => {
-                        window.location.href = `/dashboard/templates?step=recipients&documentId=${currentDoc.id}`;
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-green-600 border border-green-700 px-3 py-1.5 font-bold text-white hover:bg-green-700 transition-colors shadow-sm mr-2"
-                    >
-                      <ArrowUpRight className="h-3 w-3" />
-                      Send document
-                    </button>
-                  )}
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-green-50 border border-green-200 px-2.5 py-1 font-semibold text-green-700">
-                    <CheckCircle2 className="h-3 w-3" />
-                    {completedCount} Completed
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 border border-amber-200 px-2.5 py-1 font-semibold text-amber-700">
-                    <Clock className="h-3 w-3" />
-                    {pendingCount} Pending
-                  </span>
-                </div>
-              </div>
-
-              {/* Progress bar */}
-              <div className="px-6 pt-4 pb-2">
-                <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-green-400 to-emerald-500 transition-all duration-500"
-                    style={{ width: `${currentDoc.recipients.length > 0 ? (completedCount / currentDoc.recipients.length) * 100 : 0}%` }}
-                  />
-                </div>
-                <p className="text-[10px] text-slate-400 mt-1 font-medium">
-                  {completedCount} of {currentDoc.recipients.length} completed
-                </p>
-              </div>
-
-              {/* Table */}
-              <div className="px-6 pb-4">
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="border-b border-slate-100">
-                      <th className="py-3 pr-4 text-[10px] font-bold uppercase tracking-wider text-slate-400">Recipient</th>
-                      <th className="py-3 pr-4 text-[10px] font-bold uppercase tracking-wider text-slate-400">Email</th>
-                      <th className="py-3 pr-4 text-[10px] font-bold uppercase tracking-wider text-slate-400">Role</th>
-                      <th className="py-3 pr-4 text-[10px] font-bold uppercase tracking-wider text-slate-400">Status</th>
-                      <th className="py-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {currentDoc.recipients.map((r, i) => (
-                      <tr key={`${r.email}-${i}`} className="border-b border-slate-50 last:border-b-0 hover:bg-slate-50/50 transition-colors">
-                        <td className="py-3 pr-4">
-                          <div className="flex items-center gap-2.5">
-                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-600">
-                              {(r.name || r.email || "?").charAt(0).toUpperCase()}
-                            </div>
-                            <span className="text-sm font-semibold text-slate-800">{r.name || "—"}</span>
+            <div className="px-6 pb-4">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-slate-100">
+                    <th className="py-3 pr-4 text-[10px] font-bold uppercase tracking-wider text-slate-400">Recipient</th>
+                    <th className="py-3 pr-4 text-[10px] font-bold uppercase tracking-wider text-slate-400">Email</th>
+                    <th className="py-3 pr-4 text-[10px] font-bold uppercase tracking-wider text-slate-400">Role</th>
+                    <th className="py-3 pr-4 text-[10px] font-bold uppercase tracking-wider text-slate-400">Status</th>
+                    <th className="py-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {currentDoc.recipients.map((r, i) => (
+                    <tr key={`${r.email}-${i}`} className="border-b border-slate-50 last:border-b-0 hover:bg-slate-50/50 transition-colors">
+                      <td className="py-3 pr-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-600">
+                            {(r.name || r.email || "?").charAt(0).toUpperCase()}
                           </div>
-                        </td>
-                        <td className="py-3 pr-4 text-xs text-slate-500">{r.email}</td>
-                        <td className="py-3 pr-4">
-                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${getRoleLabel(r) === "Reviewer" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
-                            {getRoleLabel(r)}
-                          </span>
-                        </td>
-                        <td className="py-3 pr-4">
+                          <span className="text-sm font-semibold text-slate-800">{r.name || "—"}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 pr-4 text-xs text-slate-500">{r.email}</td>
+                      <td className="py-3 pr-4">
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${getRoleLabel(r) === "Reviewer" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}>
+                          {getRoleLabel(r)}
+                        </span>
+                      </td>
+                      <td className="py-3 pr-4">
+                        <div className="flex flex-col gap-1">
                           <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ${getRecipientStatusColor(r)}`}>
                             {getRecipientIcon(r)}
                             {getRecipientStatusLabel(r)}
                           </span>
-                        </td>
-                        <td className="py-3">
-                          <div className="flex items-center gap-1.5">
-                            {(doc.content || doc.fileUrl) && (
-                              <button
-                                onClick={() => setViewingRecipient(r.email)}
-                                className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2.5 py-1.5 text-[10px] font-bold text-blue-600 hover:bg-blue-100 transition-colors"
-                              >
-                                <Eye className="h-3 w-3" />
-                                View
-                              </button>
-                            )}
-                            {(currentDoc.fileUrl || currentDoc.content) && (
-                              <button
-                                onClick={() => handleDownload(r.email)}
-                                className="inline-flex items-center gap-1 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[10px] font-bold text-slate-600 hover:bg-slate-100 transition-colors"
-                              >
-                                <Download className="h-3 w-3" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                          {(r as any).status === "rejected" && (
+                            <p className="text-[10px] text-slate-500 pl-1">
+                              <span className="font-semibold text-red-500">Msg: </span>
+                              {(r as any).reject_reason?.trim() || "No message"}
+                            </p>
+                          )}
+                          {["signed", "reviewed", "approved"].includes((r as any).status || "") && (r as any).sign_message?.trim() && (
+                            <p className="text-[10px] text-slate-500 pl-1">
+                              <span className="font-semibold text-green-500">Msg: </span>
+                              {(r as any).sign_message?.trim()}
+                            </p>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3">
+                        <div className="flex items-center gap-1.5">
+                          {(currentDoc.content || currentDoc.fileUrl) && (
+                            <button
+                              onClick={() => setViewingRecipient(r.email)}
+                              className="inline-flex items-center gap-1 rounded-full border border-slate-300 px-2.5 py-1 text-[10px] font-semibold text-slate-700 hover:border-violet-300 hover:text-violet-600 transition-all"
+                            >
+                              <Eye className="h-3 w-3" />
+                              View
+                            </button>
+                          )}
+                          {(currentDoc.fileUrl || currentDoc.content) && (
+                            <button
+                              onClick={() => handleDownload(r.email)}
+                              className="inline-flex items-center gap-1 rounded-full border border-slate-300 px-2.5 py-1 text-[10px] font-semibold text-slate-700 hover:border-violet-300 hover:text-violet-600 transition-all"
+                            >
+                              <Download className="h-3 w-3" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          )}
+          </div>
 
-          {/* Multi-Recipient Status Card (recipient view - only own status) */}
-          {!isSingleRecipient && !isSender && (() => {
-            const myRecipient = currentUserEmail
-              ? currentDoc.recipients.find(r => normalizeEmail(r.email) === currentUserEmail)
-              : currentDoc.recipients[0];
-            const matchedRecipient = myRecipient || currentDoc.recipients[0];
+          {/* Reject Message Card */}
+          {(() => {
+            const rejectRecipient = currentDoc.recipients.find(r => r.status === "rejected");
+            if (!rejectRecipient) return null;
             return (
-              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                <div className="px-6 py-5 border-b border-slate-100">
-                  <h3 className="text-sm font-bold text-slate-900">Your Status</h3>
-                </div>
-                <div className="px-6 py-6 flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${getRecipientStatusColor(matchedRecipient)}`}>
-                      {getRecipientIcon(matchedRecipient)}
-                    </div>
-                    <div>
-                      <p className="text-lg font-bold text-slate-900">{getRecipientStatusLabel(matchedRecipient)}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Role: <span className="capitalize">{getRoleLabel(matchedRecipient)}</span>
-                      </p>
-                    </div>
+              <div className="rounded-2xl border border-red-200 bg-red-50 shadow-sm overflow-hidden">
+                <div className="px-6 py-4 flex items-start gap-3">
+                  <XCircle className="h-5 w-5 text-red-500 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-sm font-bold text-red-700">Changes Required</p>
+                    <p className="text-sm text-red-600 mt-1 whitespace-pre-wrap">
+                      {(rejectRecipient as any).reject_reason?.trim() || "No message provided"}
+                    </p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {(currentDoc.content || currentDoc.fileUrl) && (
-                      <button
-                        onClick={() => setViewingRecipient(matchedRecipient.email)}
-                        className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200 px-3 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-100 transition-colors"
-                      >
-                        <Eye className="h-3 w-3" />
-                        View
-                      </button>
-                    )}
-                    {(currentDoc.fileUrl || currentDoc.content) && (
-                      <button
-                        onClick={() => handleDownload(matchedRecipient.email)}
-                        className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
-                      >
-                        <Download className="h-3 w-3" />
-                        Download
-                      </button>
-                    )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Sign Message Card */}
+          {(() => {
+            const signRecipient = currentDoc.recipients.find(r => ["signed", "reviewed", "approved"].includes(r.status || ""));
+            if (!signRecipient || !(signRecipient as any).sign_message?.trim()) return null;
+            return (
+              <div className="rounded-2xl border border-green-200 bg-green-50 shadow-sm overflow-hidden">
+                <div className="px-6 py-4 flex items-start gap-3">
+                  <CheckCircle2 className="h-5 w-5 text-green-500 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-sm font-bold text-green-700">Message from Signer</p>
+                    <p className="text-sm text-green-600 mt-1 whitespace-pre-wrap">
+                      {(signRecipient as any).sign_message?.trim()}
+                    </p>
                   </div>
                 </div>
               </div>
