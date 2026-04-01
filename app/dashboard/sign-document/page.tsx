@@ -185,13 +185,25 @@ export default function SignDocumentPage() {
               updatedRecipients = updatedRecipients.map((r: { name?: string; email?: string; role?: string; status?: string }) => {
                 if (!matched && normalizeEmail(r.email) === senderEmail) {
                   matched = true;
-                  return { ...r, status: recipientStatus, signed_file_url: newDoc.fileUrl, signed_file_key: newDoc.fileKey };
+                  return {
+                    ...r,
+                    status: recipientStatus,
+                    signed_file_url: newDoc.fileUrl,
+                    signed_file_key: newDoc.fileKey,
+                    ...(signedHtmlContent ? { signed_content: signedHtmlContent } : {})
+                  };
                 }
                 return r;
               });
               // If no email match and only one recipient, update that one
               if (!matched && updatedRecipients.length === 1) {
-                updatedRecipients = [{ ...updatedRecipients[0], status: recipientStatus, signed_file_url: newDoc.fileUrl, signed_file_key: newDoc.fileKey }];
+                updatedRecipients = [{
+                  ...updatedRecipients[0],
+                  status: recipientStatus,
+                  signed_file_url: newDoc.fileUrl,
+                  signed_file_key: newDoc.fileKey,
+                  ...(signedHtmlContent ? { signed_content: signedHtmlContent } : {})
+                }];
               }
             }
 
@@ -199,7 +211,6 @@ export default function SignDocumentPage() {
               .from("documents")
               .update({
                 ...statusPatch,
-                ...(signedHtmlContent ? { content: signedHtmlContent } : {}),
                 ...(updatedRecipients ? { recipients: updatedRecipients } : {}),
               })
               .eq("id", sourceDocumentId);
@@ -1495,7 +1506,9 @@ export default function SignDocumentPage() {
                                 .from("documents")
                                 .update({
                                   ...statusPatch,
-                                  content: signedHtmlContent,
+                                  // Do NOT overwrite `content` with the signed HTML — it is the shared
+                                  // original that every recipient loads. Each signer's copy is stored
+                                  // per-recipient inside the `recipients` JSONB array via `signed_content`.
                                   ...(updatedRecipients ? { recipients: updatedRecipients } : {}),
                                 })
                                 .eq("id", sourceDocumentId);

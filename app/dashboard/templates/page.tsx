@@ -56,6 +56,7 @@ type ReviewedDocumentRow = {
   name: string;
   category: string | null;
   file_url: string | null;
+  content: string | null;
 };
 
 type ProfileRow = {
@@ -190,6 +191,7 @@ function TemplatesContent() {
   const [appTemplates, setAppTemplates] = useState<AppTemplate[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null | undefined>(undefined);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const loadedDocumentIdRef = useRef<string | null>(null);
   const pendingTemplateAnalysisRef = useRef<Array<{
     fileName: string;
     mimeType: string;
@@ -363,11 +365,12 @@ function TemplatesContent() {
     const stepParam = searchParams.get("step");
     const documentId = searchParams.get("documentId");
     if (stepParam !== "recipients" || !documentId || !currentUserId) return;
+    if (loadedDocumentIdRef.current === documentId) return;
 
     const loadReviewedDocument = async () => {
       const { data: docData, error } = await supabase
         .from("documents")
-        .select("id, name, category, file_url")
+        .select("id, name, category, file_url, content")
         .eq("id", documentId)
         .eq("owner_id", currentUserId)
         .maybeSingle<ReviewedDocumentRow>();
@@ -377,8 +380,16 @@ function TemplatesContent() {
         return;
       }
 
+      loadedDocumentIdRef.current = documentId;
+
       const existingTemplate = appTemplates.find((template) => template.name === docData.name);
       if (existingTemplate) {
+        // Update the existing template to carry the content from this document
+        setAppTemplates((prev) => prev.map((t) =>
+          t.name === docData.name
+            ? { ...t, detectedText: docData.content ?? t.detectedText, fileDataUrl: docData.file_url ?? t.fileDataUrl }
+            : t
+        ));
         setSelectedForUse(existingTemplate.id);
       } else {
         const tempTemplate: AppTemplate = {
@@ -390,6 +401,8 @@ function TemplatesContent() {
           uses: "0 uses",
           color: "bg-violet-50 text-violet-600",
           fileDataUrl: docData.file_url ?? undefined,
+          // Pass the HTML content as detectedText so handleSend can forward it
+          detectedText: docData.content ?? undefined,
           preview: {
             headline: docData.name,
             sections: [{ title: "Document", lines: ["Reviewed document ready to send"] }],
@@ -997,7 +1010,13 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   }, [detectedPlaceholders, placeholderValues, template.detectedText]);
   const uploadedPreviewHtml = useMemo(() => {
     if (template.detectedText?.trim()) {
-      return `<div>${escapeHtml(liveUploadedPreviewText || template.detectedText).replace(/\n/g, "<br/>")}</div>`;
+      const rawContent = liveUploadedPreviewText || template.detectedText;
+      // If content already contains HTML tags, use it directly without escaping
+      const isHtml = /<[a-z][\s\S]*>/i.test(rawContent);
+      if (isHtml) {
+        return rawContent;
+      }
+      return `<div>${escapeHtml(rawContent).replace(/\n/g, "<br/>")}</div>`;
     }
 
     if (detectedPlaceholders.length > 0) {
@@ -1278,8 +1297,10 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   const finalizeSend = async (fileUrl: string | null, fileKey: string | null) => {
     // Generate filled HTML content for viewing
     const isDateKeyLocal = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
-    let filledHtmlContent = hasUploadedDocument ? uploadedPreviewHtml : resolvedTemplateBaseContent;
-    if (!hasUploadedDocument && resolvedTemplateBaseContent) {
+    // Use uploadedPreviewHtml when we have an uploaded file OR when we have detectedText (HTML content doc forwarding)
+    const hasTextContent = Boolean(template.detectedText);
+    let filledHtmlContent = (hasUploadedDocument || hasTextContent) ? uploadedPreviewHtml : resolvedTemplateBaseContent;
+    if (!hasUploadedDocument && !hasTextContent && resolvedTemplateBaseContent) {
       Object.entries(formValues).forEach(([key, val]) => {
         const displayVal = isDateKeyLocal(key) ? formatDate(val) : val;
         filledHtmlContent = filledHtmlContent.replace(new RegExp(`\\[${key}\\]`, 'g'), displayVal);
@@ -1382,6 +1403,12 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
         console.error("Failed to reuse uploaded document:", error);
         setSendError("Could not prepare the uploaded document for sending.");
       }
+    }
+
+    // For HTML content documents (no file, just detectedText), skip canvas and send directly
+    if (!hasUploadedDocument && template.detectedText) {
+      await finalizeSend(null, null);
+      return;
     }
 
     // Generate a simple snapshot of the document content

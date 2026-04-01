@@ -266,14 +266,37 @@ export default function DocumentsPage() {
     void rename();
   };
 
-  const handleDownload = (url: string, name: string) => {
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = name;
-    link.target = "_blank";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleDownload = (doc: SentDocument) => {
+    let targetUrl = doc.fileUrl;
+    let targetContent = doc.content;
+    let nameSuffix = "";
+    
+    if (doc.recipients.length === 1) {
+       const r = doc.recipients[0];
+       if ((r as any).signed_file_url) targetUrl = (r as any).signed_file_url;
+       if ((r as any).signed_content) targetContent = (r as any).signed_content;
+       nameSuffix = `_${r.name}`;
+    }
+    
+    if (targetUrl) {
+      const link = document.createElement('a');
+      link.href = targetUrl;
+      link.download = `${doc.name}${nameSuffix}`;
+      link.target = "_blank";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else if (targetContent) {
+      const blob = new Blob([targetContent], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${doc.name}${nameSuffix}.html`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
     setOpenMenuId(null);
   };
 
@@ -287,21 +310,43 @@ export default function DocumentsPage() {
 
   const getPreview = (doc: SentDocument) => {
     const kind = getDocKind(doc);
+
+    // HTML content preview (scaled down)
+    if (doc.content) {
+      return (
+        <div className="relative h-full w-full overflow-hidden bg-white">
+          <div
+            style={{ transform: "scale(0.35)", transformOrigin: "top left", width: "286%", height: "286%", pointerEvents: "none" }}
+            dangerouslySetInnerHTML={{ __html: doc.content }}
+          />
+        </div>
+      );
+    }
+
     if (kind === "image" && doc.fileUrl) {
       return <img src={doc.fileUrl} alt={doc.name} className="h-full w-full object-cover" />;
     }
 
     if (kind === "pdf" && doc.fileUrl) {
-      return <iframe src={doc.fileUrl} title={doc.name} className="h-full w-full" />;
+      return <iframe src={`${doc.fileUrl}#toolbar=0&navpanes=0&scrollbar=0`} title={doc.name} className="h-full w-full border-0" />;
     }
 
+    if (kind === "doc" && doc.fileUrl) {
+      const viewerUrl = `https://docs.google.com/gview?url=${encodeURIComponent(doc.fileUrl)}&embedded=true`;
+      return <iframe src={viewerUrl} title={doc.name} className="h-full w-full border-0" />;
+    }
+
+    // Fallback: clean document icon placeholder (no subject/sign text)
     return (
-      <div className="flex h-full w-full flex-col justify-center bg-gradient-to-br from-slate-50 via-white to-slate-100 p-4">
-        <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
-          <p className="line-clamp-3 text-xs font-semibold leading-5 text-slate-700">
-            {doc.subject || doc.name}
-          </p>
+      <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-slate-50 via-white to-slate-100">
+        <div className="flex h-12 w-10 flex-col items-end justify-start rounded-sm border border-slate-200 bg-white shadow-sm">
+          <div className="mt-1.5 mr-1 h-1 w-5 rounded-full bg-slate-200" />
+          <div className="mt-1 mr-1 h-1 w-6 rounded-full bg-slate-200" />
+          <div className="mt-1 mr-1 h-1 w-4 rounded-full bg-slate-200" />
+          <div className="mt-1 mr-1 h-1 w-6 rounded-full bg-slate-200" />
+          <div className="mt-1 mr-1 h-1 w-3 rounded-full bg-slate-200" />
         </div>
+        <p className="text-[10px] font-medium text-slate-400 truncate max-w-[80%]">{doc.name}</p>
       </div>
     );
   };
@@ -620,7 +665,7 @@ export default function DocumentsPage() {
                         return null;
                       })()}
                       <button
-                        onClick={() => handleDownload(doc.fileUrl || "", doc.name)}
+                        onClick={() => handleDownload(doc)}
                         className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
                       >
                         <Download className="h-3 w-3" />
@@ -780,7 +825,7 @@ export default function DocumentsPage() {
                       }
                       return null;
                     })()}
-                    <button onClick={() => handleDownload(doc.fileUrl || "", doc.name)} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">Download</button>
+                    <button onClick={() => handleDownload(doc)} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">Download</button>
                     <button onClick={() => { setOpenMenuId(null); setIsRenaming(doc.id); setNewName(doc.name); }} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">Rename</button>
                     <button onClick={() => { setOpenMenuId(null); setDetailDoc(doc); }} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">More</button>
                     <div className="h-px bg-slate-100 my-1" />
@@ -1057,15 +1102,44 @@ function DocumentDetailModal({
   ).length;
   const pendingCount = currentDoc.recipients.length - completedCount;
 
-  const handleDownload = (recipientName: string) => {
-    if (!currentDoc.fileUrl) return;
-    const link = document.createElement("a");
-    link.href = currentDoc.fileUrl;
-    link.download = `${currentDoc.name}_${recipientName || "document"}`;
-    link.target = "_blank";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleDownload = (recipientEmail?: string) => {
+    let targetFileUrl = currentDoc.fileUrl;
+    let targetContent = currentDoc.content;
+    let recipientName = "document";
+
+    if (recipientEmail) {
+      const recipient = currentDoc.recipients.find(r => r.email === recipientEmail);
+      if (recipient) {
+        recipientName = recipient.name;
+        if ((recipient as any).signed_file_url) targetFileUrl = (recipient as any).signed_file_url;
+        if ((recipient as any).signed_content) targetContent = (recipient as any).signed_content;
+      }
+    } else if (currentDoc.recipients.length === 1) {
+      const recipient = currentDoc.recipients[0];
+      recipientName = recipient.name;
+      if ((recipient as any).signed_file_url) targetFileUrl = (recipient as any).signed_file_url;
+      if ((recipient as any).signed_content) targetContent = (recipient as any).signed_content;
+    }
+
+    if (targetFileUrl) {
+      const link = document.createElement("a");
+      link.href = targetFileUrl;
+      link.download = `${currentDoc.name}_${recipientName}`;
+      link.target = "_blank";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else if (targetContent) {
+      const blob = new Blob([targetContent], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${currentDoc.name}_${recipientName}.html`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
   };
 
   return (
@@ -1155,9 +1229,9 @@ function DocumentDetailModal({
                       View
                     </button>
                   )}
-                  {currentDoc.fileUrl && (
+                  {(currentDoc.fileUrl || currentDoc.content) && (
                     <button
-                      onClick={() => handleDownload(currentDoc.recipients[0]?.name || "document")}
+                      onClick={() => handleDownload(currentDoc.recipients[0]?.email)}
                       className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
                     >
                       <Download className="h-3 w-3" />
@@ -1210,9 +1284,9 @@ function DocumentDetailModal({
                       View
                     </button>
                   )}
-                  {currentDoc.fileUrl && (
+                  {(currentDoc.fileUrl || currentDoc.content) && (
                     <button
-                      onClick={() => handleDownload(currentDoc.recipients[0]?.name || "document")}
+                      onClick={() => handleDownload(currentDoc.recipients[0]?.email)}
                       className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
                     >
                       <Download className="h-3 w-3" />
@@ -1311,20 +1385,9 @@ function DocumentDetailModal({
                                 View
                               </button>
                             )}
-                            {isSender && getRoleLabel(r) === "Reviewer" && r.status === "reviewed" && (
+                            {(currentDoc.fileUrl || currentDoc.content) && (
                               <button
-                                onClick={() => {
-                                  window.location.href = `/dashboard/templates?step=recipients&documentId=${currentDoc.id}`;
-                                }}
-                                className="inline-flex items-center gap-1 rounded-lg bg-green-50 px-2.5 py-1.5 text-[10px] font-bold text-green-600 hover:bg-green-100 transition-colors"
-                              >
-                                <ArrowUpRight className="h-3 w-3" />
-                                Send
-                              </button>
-                            )}
-                            {currentDoc.fileUrl && (
-                              <button
-                                onClick={() => handleDownload(r.name)}
+                                onClick={() => handleDownload(r.email)}
                                 className="inline-flex items-center gap-1 rounded-lg bg-slate-50 px-2.5 py-1.5 text-[10px] font-bold text-slate-600 hover:bg-slate-100 transition-colors"
                               >
                                 <Download className="h-3 w-3" />
@@ -1373,9 +1436,9 @@ function DocumentDetailModal({
                         View
                       </button>
                     )}
-                    {currentDoc.fileUrl && (
+                    {(currentDoc.fileUrl || currentDoc.content) && (
                       <button
-                        onClick={() => handleDownload(matchedRecipient.name || "document")}
+                        onClick={() => handleDownload(matchedRecipient.email)}
                         className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
                       >
                         <Download className="h-3 w-3" />
@@ -1436,9 +1499,9 @@ function DocumentDetailModal({
                     </a>
                   );
                 })()}
-                {currentDoc.fileUrl && (
+                {(currentDoc.fileUrl || currentDoc.content) && (
                   <button
-                    onClick={() => handleDownload(currentDoc.recipients.find(r => r.email === viewingRecipient)?.name || "document")}
+                    onClick={() => handleDownload(viewingRecipient || "")}
                     className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
                   >
                     <Download className="h-3 w-3" />
