@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye } from "lucide-react";
+import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye, Search } from "lucide-react";
 import { deleteCloudFiles } from "../../actions/uploadthing";
 import { supabase } from "../../lib/supabase/browser";
 import { getMatchingRecipient, normalizeEmail } from "../../lib/documents";
@@ -84,6 +84,8 @@ export default function DocumentsPage() {
   const [documents, setDocuments] = useState<SentDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState("all");
+  const [dateFilter, setDateFilter] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState<string | null>(null);
@@ -394,7 +396,7 @@ export default function DocumentsPage() {
         if (completedCount === totalCount) {
           const label = totalCount === 1
             ? (recipients[0]?.status === "reviewed" ? "Reviewed" : "Signed")
-            : "Finished";
+          : "Signed";
           return (
             <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
               <CheckCircle2 className="mr-1 h-3 w-3" />
@@ -416,6 +418,14 @@ export default function DocumentsPage() {
         : null;
       const myStatus = myRecipient?.status || recipients.find(r => r.email)?.status;
 
+      if (myStatus === "rejected") {
+        return (
+          <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-[10px] font-semibold text-red-700">
+            <XCircle className="mr-1 h-3 w-3" />
+            Changes Required
+          </span>
+        );
+      }
       if (myStatus === "signed") {
         return (
           <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
@@ -484,10 +494,29 @@ export default function DocumentsPage() {
   };
 
   const filteredDocuments = documents.filter((doc) => {
-    if (activeFilter === "all") return true;
-    if (activeFilter === "pending") return doc.status !== "approved" && doc.status !== "reviewed" && doc.status !== "signed" && doc.status !== "completed";
-    if (activeFilter === "approved") return doc.status === "approved" || doc.status === "reviewed" || doc.status === "signed" || doc.status === "completed";
-    if (activeFilter === "rejected") return doc.status === "rejected";
+    if (activeFilter === "all") {/* noop */}
+    else if (activeFilter === "pending") { if (!(doc.status !== "approved" && doc.status !== "reviewed" && doc.status !== "signed" && doc.status !== "completed")) return false; }
+    else if (activeFilter === "approved") { const hasRejection = doc.recipients.some(r => r.status === "rejected"); if (hasRejection || doc.status !== "signed") return false; }
+    else if (activeFilter === "rejected") { if (!(doc.status === "rejected" || doc.recipients.some(r => r.status === "rejected"))) return false; }
+    else if (activeFilter === "received") { const hasRejection = doc.recipients.some(r => r.status === "rejected"); if (hasRejection || !(doc.direction === "sent" && doc.recipients.some(r => r.status === "signed" || r.status === "reviewed" || r.status === "approved" || r.status === "completed"))) return false; }
+
+    if (dateFilter !== "all") {
+      const docDate = new Date(doc.sentAt);
+      const now = new Date();
+      const days = dateFilter === "7" ? 7 : dateFilter === "14" ? 14 : dateFilter === "30" ? 30 : 90;
+      const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+      if (docDate < cutoff) return false;
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      const matchesName = doc.name.toLowerCase().includes(q);
+      const matchesSubject = doc.subject.toLowerCase().includes(q);
+      const matchesSender = doc.sender.fullName.toLowerCase().includes(q) || doc.sender.workEmail.toLowerCase().includes(q);
+      const matchesRecipient = doc.recipients.some(r => r.name.toLowerCase().includes(q) || r.email.toLowerCase().includes(q));
+      if (!matchesName && !matchesSubject && !matchesSender && !matchesRecipient) return false;
+    }
+
     return true;
   });
 
@@ -550,20 +579,28 @@ export default function DocumentsPage() {
   return (
     <div className="px-4 py-6 md:px-10 md:py-10">
       <div className="flex items-center justify-between">
-        <div>
+        <div className="flex items-center gap-4">
           <h1 className="text-xl font-semibold tracking-tight text-slate-900">
             Shared Documents
           </h1>
-          <p className="mt-2 text-sm text-slate-600">
-            Documents sent and received will appear here.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
+          <div className="relative w-[28rem]">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search by name, company, email..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-12 pr-4 py-3 text-sm rounded-full border border-slate-200 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-400 text-slate-700 placeholder:text-slate-400"
+            />
+          </div>
         </div>
       </div>
+      <p className="mt-2 text-sm text-slate-600">
+        Documents sent and received will appear here.
+      </p>
 
       <div className="mt-8 flex flex-wrap gap-2">
-        {[{ value: "all", label: "All" }, { value: "pending", label: "Pending" }, { value: "approved", label: "Completed" }, { value: "rejected", label: "Changes Required" }].map((tag) => (
+        {[{ value: "all", label: "All" }, { value: "pending", label: "Pending" }, { value: "approved", label: "Signed" }, { value: "rejected", label: "Changes Required" }, { value: "received", label: "Received" }].map((tag) => (
           <button
             key={tag.value}
             onClick={() => setActiveFilter(tag.value)}
@@ -575,23 +612,38 @@ export default function DocumentsPage() {
             {tag.label}
           </button>
         ))}
-        <div className="ml-auto inline-flex items-center rounded-full border border-slate-200 bg-white p-1 shadow-sm">
-          <button
-            type="button"
-            onClick={() => setViewMode("list")}
-            className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "list" ? "bg-violet-600 text-white" : "text-slate-500 hover:bg-slate-100"}`}
-            aria-label="List view"
+
+        <div className="ml-auto inline-flex items-center gap-2">
+          <select
+            value={dateFilter}
+            onChange={(e) => setDateFilter(e.target.value)}
+            className="rounded-full px-4 py-2 text-xs font-semibold bg-white border border-slate-200 text-slate-600 shadow-sm hover:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-200 cursor-pointer"
           >
-            <List className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode("grid")}
-            className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "grid" ? "bg-violet-600 text-white" : "text-slate-500 hover:bg-slate-100"}`}
-            aria-label="Grid view"
-          >
-            <LayoutGrid className="h-4 w-4" />
-          </button>
+            <option value="all">All Time</option>
+            <option value="7">Last 7 Days</option>
+            <option value="14">Last 14 Days</option>
+            <option value="30">Last 30 Days</option>
+            <option value="90">Last 90 Days</option>
+          </select>
+
+          <div className="inline-flex items-center rounded-full border border-slate-200 bg-white p-1 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "list" ? "bg-violet-600 text-white" : "text-slate-500 hover:bg-slate-100"}`}
+              aria-label="List view"
+            >
+              <List className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("grid")}
+              className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "grid" ? "bg-violet-600 text-white" : "text-slate-500 hover:bg-slate-100"}`}
+              aria-label="Grid view"
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
 
