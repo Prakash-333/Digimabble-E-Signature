@@ -2,6 +2,11 @@ export type DocumentRecipient = {
   name: string;
   email: string;
   role?: string;
+  status?: string;
+  signed_file_url?: string;
+  signed_content?: string;
+  reject_reason?: string | null;
+  sign_message?: string | null;
 };
 
 export type DocumentSender = {

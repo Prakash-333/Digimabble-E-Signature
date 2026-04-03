@@ -86,7 +86,7 @@ export default function NotificationsPage() {
           return {
             ...row,
             recipientRole: recipient.role ?? null,
-            recipientStatus: (recipient as any).status ?? null,
+            recipientStatus: recipient.status ?? null,
           };
         })
         .filter((row): row is NotificationItem => Boolean(row));
@@ -123,12 +123,12 @@ export default function NotificationsPage() {
       .eq("id", item.id)
       .single();
 
-    let finalPatch = { ...patch };
+    let finalPatch: Record<string, unknown> = { ...patch };
     if (docRow?.recipients && Array.isArray(docRow.recipients)) {
-      const updatedRecipients = docRow.recipients.map((r: any) => 
+      const updatedRecipients = docRow.recipients.map((r) => 
         normalizeEmail(r.email) === currentEmail ? { ...r, status: nextStatus } : r
       );
-      finalPatch = { ...finalPatch, recipients: updatedRecipients } as any;
+      finalPatch = { ...finalPatch, recipients: updatedRecipients };
     }
 
     const { error } = await supabase.from("documents").update(finalPatch).eq("id", item.id);
@@ -161,14 +161,14 @@ export default function NotificationsPage() {
       .eq("id", rejectingItem.id)
       .single();
 
-    let patch: Record<string, any> = { status: "rejected" };
+    const recipientsPatch: Record<string, unknown> = { status: "rejected" };
     if (docRow?.recipients && Array.isArray(docRow.recipients)) {
-      const updatedRecipients = docRow.recipients.map((r: any) =>
+      const updatedRecipients = docRow.recipients.map((r) =>
         normalizeEmail(r.email) === currentEmail
           ? { ...r, status: "rejected", reject_reason: rejectReason.trim() || null }
           : r
       );
-      patch.recipients = updatedRecipients;
+      recipientsPatch.recipients = updatedRecipients;
     }
 
     if (currentUserId) {
@@ -176,7 +176,7 @@ export default function NotificationsPage() {
       setSeenIds((prev) => new Set(prev).add(rejectingItem.id));
     }
 
-    const { error } = await supabase.from("documents").update(patch).eq("id", rejectingItem.id);
+    const { error } = await supabase.from("documents").update(recipientsPatch).eq("id", rejectingItem.id);
     setProcessingId(null);
     setRejectingItem(null);
     setRejectReason("");

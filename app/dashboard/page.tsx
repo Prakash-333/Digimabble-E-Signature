@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../lib/supabase/browser";
 import { isMissingSupabaseTable } from "../lib/supabase/errors";
 import { getMatchingRecipient, isCompletedForRecipient, normalizeEmail, type SharedDocumentRecord } from "../lib/documents";
@@ -17,7 +17,7 @@ type DocumentStatusRow = {
   id: string;
   status: "draft" | "waiting" | "reviewing" | "reviewed" | "approved" | "signed" | "completed" | "rejected";
   sent_at?: string | null;
-  recipients?: any;
+  recipients?: { status?: string; email?: string; name?: string; role?: string }[];
 };
 
 type DateRange = "7" | "30" | "90" | "all";
@@ -52,10 +52,6 @@ function filterByDateRange(docs: DocumentStatusRow[], range: DateRange): Documen
 export default function DashboardPage() {
   const [personalCount, setPersonalCount] = useState(0);
   const [companyCount, setCompanyCount] = useState(0);
-  const [documentsSent, setDocumentsSent] = useState(0);
-  const [pendingCount, setPendingCount] = useState(0);
-  const [approvedCount, setApprovedCount] = useState(0);
-  const [rejectedCount, setRejectedCount] = useState(0);
   const [userLabel, setUserLabel] = useState("User");
   const [notificationCount, setNotificationCount] = useState(0);
   const [dateRange, setDateRange] = useState<DateRange>("all");
@@ -116,11 +112,11 @@ export default function DashboardPage() {
       setCompanyCount(companyDocs);
       setAllSentDocs(sent);
 
-      const recent = (recentRows ?? []).map((row: any) => ({
+      const recent = (recentRows ?? []).map((row: DocumentStatusRow & { name?: string; owner_id: string }) => ({
         id: row.id,
         name: row.name || "Untitled Document",
         status: row.status,
-        sent_at: row.sent_at,
+        sent_at: row.sent_at || new Date().toISOString(),
         recipients: Array.isArray(row.recipients) ? row.recipients : [],
         direction: row.owner_id === user.id ? "sent" as const : "received" as const,
       }));
@@ -142,16 +138,18 @@ export default function DashboardPage() {
     loadCounts();
   }, []);
 
-  useEffect(() => {
+  const { documentsSent, pendingCount, approvedCount, rejectedCount } = useMemo(() => {
     const filtered = filterByDateRange(allSentDocs, dateRange);
-    setDocumentsSent(filtered.length);
-    setPendingCount(filtered.filter((d) => d.status === "waiting" || d.status === "reviewing").length);
-    setApprovedCount(filtered.filter((d) => d.status === "approved" || d.status === "reviewed" || d.status === "signed" || d.status === "completed").length);
-    setRejectedCount(filtered.filter((d) => {
-      if (d.status === "rejected") return true;
-      if (Array.isArray(d.recipients)) return d.recipients.some((r: any) => r.status === "rejected");
-      return false;
-    }).length);
+    return {
+      documentsSent: filtered.length,
+      pendingCount: filtered.filter((d) => d.status === "waiting" || d.status === "reviewing").length,
+      approvedCount: filtered.filter((d) => d.status === "approved" || d.status === "reviewed" || d.status === "signed" || d.status === "completed").length,
+      rejectedCount: filtered.filter((d) => {
+        if (d.status === "rejected") return true;
+        if (Array.isArray(d.recipients)) return d.recipients.some((r) => r.status === "rejected");
+        return false;
+      }).length,
+    };
   }, [allSentDocs, dateRange]);
 
   const overview = [

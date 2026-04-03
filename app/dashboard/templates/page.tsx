@@ -126,10 +126,10 @@ const persistSharedDocument = async (record: {
   sender: { fullName: string; workEmail: string };
   sentAt: string;
   status: string;
-  fileUrl?: string;
-  fileKey?: string;
-  category?: string;
-  content?: string;
+  fileUrl?: string | null;
+  fileKey?: string | null;
+  category?: string | null;
+  content?: string | null;
 }) => {
   const { data } = await supabase.auth.getUser();
   const currentUser = data.user;

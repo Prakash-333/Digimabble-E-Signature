@@ -6,11 +6,22 @@ import { deleteCloudFiles } from "../../actions/uploadthing";
 import { supabase } from "../../lib/supabase/browser";
 import { getMatchingRecipient, normalizeEmail } from "../../lib/documents";
 
+type Recipient = { 
+  name: string; 
+  email: string; 
+  role: string; 
+  status?: string; 
+  signed_file_url?: string; 
+  signed_content?: string; 
+  reject_reason?: string | null; 
+  sign_message?: string | null 
+};
+
 type SentDocument = {
   id: string;
   name: string;
   subject: string;
-  recipients: { name: string; email: string; role: string; status?: string; signed_file_url?: string; signed_content?: string; reject_reason?: string | null; sign_message?: string | null }[];
+  recipients: Recipient[];
   sender: { fullName: string; workEmail: string };
   sentAt: string;
   status: string;
@@ -41,8 +52,8 @@ type DocumentRow = {
 
 const mapRowToSentDocument = (row: DocumentRow, currentUserId: string, currentUserEmail: string): SentDocument[] => {
   const recipients = Array.isArray(row.recipients)
-    ? row.recipients.map((recipient: any) => {
-        const mapped: any = {
+    ? row.recipients.map((recipient: Recipient) => {
+        const mapped: Recipient = {
           name: recipient.name || "",
           email: recipient.email || "",
           role: recipient.role || "Signer",
@@ -104,7 +115,7 @@ export default function DocumentsPage() {
         
         // Use getSession first to avoid lock contention
         const { data: { session } } = await supabase.auth.getSession();
-        let user = (session?.user ?? undefined) as any;
+        let user = session?.user;
         
         if (!user) {
           const { data: { user: freshUser }, error: authError } = await supabase.auth.getUser();
@@ -113,7 +124,7 @@ export default function DocumentsPage() {
             if (authError.message?.includes("stole it")) return;
             throw authError;
           }
-          user = freshUser;
+          user = freshUser ?? undefined;
         }
 
         if (urlParams.get("clear") === "true") {
@@ -181,25 +192,25 @@ export default function DocumentsPage() {
                     status: newStatus,
                     ...(newR.signed_file_url ? { signed_file_url: newR.signed_file_url } : {}),
                     ...(newR.signed_content ? { signed_content: newR.signed_content } : {}),
-                    reject_reason: typeof (newR as any).reject_reason === "string"
-                      ? (newR as any).reject_reason
-                      : (existingR as any).reject_reason,
-                    sign_message: typeof (newR as any).sign_message === "string"
-                      ? (newR as any).sign_message
-                      : (existingR as any).sign_message,
+                    reject_reason: typeof newR.reject_reason === "string"
+                      ? newR.reject_reason
+                      : existingR.reject_reason,
+                    sign_message: typeof newR.sign_message === "string"
+                      ? newR.sign_message
+                      : existingR.sign_message,
                   };
-                } else if (newStatus === oldStatus || newR.signed_file_url || newR.signed_content || typeof (newR as any).reject_reason === "string" || typeof (newR as any).sign_message === "string") {
+                } else if (newStatus === oldStatus || newR.signed_file_url || newR.signed_content || typeof newR.reject_reason === "string" || typeof newR.sign_message === "string") {
                   // Preserve signed/rejected fields even if status didn't advance or stayed the same
                   acc[groupKey].recipients[existingRIndex] = {
                     ...existingR,
                     ...(newR.signed_file_url ? { signed_file_url: newR.signed_file_url } : {}),
                     ...(newR.signed_content ? { signed_content: newR.signed_content } : {}),
-                    reject_reason: typeof (newR as any).reject_reason === "string"
-                      ? (newR as any).reject_reason
-                      : (existingR as any).reject_reason,
-                    sign_message: typeof (newR as any).sign_message === "string"
-                      ? (newR as any).sign_message
-                      : (existingR as any).sign_message,
+                    reject_reason: typeof newR.reject_reason === "string"
+                      ? newR.reject_reason
+                      : existingR.reject_reason,
+                    sign_message: typeof newR.sign_message === "string"
+                      ? newR.sign_message
+                      : existingR.sign_message,
                   };
                 }
               }
@@ -292,8 +303,8 @@ export default function DocumentsPage() {
     
     if (doc.recipients.length === 1) {
        const r = doc.recipients[0];
-       if ((r as any).signed_file_url) targetUrl = (r as any).signed_file_url;
-       if ((r as any).signed_content) targetContent = (r as any).signed_content;
+       if (r.signed_file_url) targetUrl = r.signed_file_url;
+       if (r.signed_content) targetContent = r.signed_content;
        nameSuffix = `_${r.name}`;
     }
     
@@ -695,8 +706,8 @@ export default function DocumentsPage() {
                     <div className="absolute top-10 right-0 w-36 rounded-xl border border-slate-200 bg-white p-1 shadow-xl z-20 animate-in fade-in zoom-in duration-200">
                       {(() => {
                         const myRecipient = currentUserEmail ? doc.recipients.find(r => normalizeEmail(r.email) === currentUserEmail) : null;
-                        const signedFileUrl = (myRecipient as any)?.signed_file_url;
-                        const signedContent = (myRecipient as any)?.signed_content;
+                        const signedFileUrl = myRecipient?.signed_file_url;
+                        const signedContent = myRecipient?.signed_content;
                         const displayFileUrl = signedFileUrl || doc.fileUrl;
                         const displayContent = signedContent || doc.content;
 
@@ -877,8 +888,8 @@ export default function DocumentsPage() {
                   <div className="absolute right-4 mt-40 w-36 rounded-xl border border-slate-200 bg-white p-1 shadow-xl z-20">
                     {(() => {
                       const myRecipient = currentUserEmail ? doc.recipients.find(r => normalizeEmail(r.email) === currentUserEmail) : null;
-                      const signedFileUrl = (myRecipient as any)?.signed_file_url;
-                      const signedContent = (myRecipient as any)?.signed_content;
+                      const signedFileUrl = myRecipient?.signed_file_url;
+                      const signedContent = myRecipient?.signed_content;
                       const displayFileUrl = signedFileUrl || doc.fileUrl;
                       const displayContent = signedContent || doc.content;
 
@@ -1216,14 +1227,14 @@ function DocumentDetailModal({
       const recipient = currentDoc.recipients.find(r => normalizeEmail(r.email) === normalizedEmail);
       if (recipient) {
         recipientName = recipient.name;
-        if ((recipient as any).signed_file_url) targetFileUrl = (recipient as any).signed_file_url;
-        if ((recipient as any).signed_content) targetContent = (recipient as any).signed_content;
+        if (recipient.signed_file_url) targetFileUrl = recipient.signed_file_url;
+        if (recipient.signed_content) targetContent = recipient.signed_content;
       }
     } else if (currentDoc.recipients.length === 1) {
       const recipient = currentDoc.recipients[0];
       recipientName = recipient.name;
-      if ((recipient as any).signed_file_url) targetFileUrl = (recipient as any).signed_file_url;
-      if ((recipient as any).signed_content) targetContent = (recipient as any).signed_content;
+      if (recipient.signed_file_url) targetFileUrl = recipient.signed_file_url;
+      if (recipient.signed_content) targetContent = recipient.signed_content;
     }
 
     if (targetContent) {
@@ -1352,16 +1363,16 @@ function DocumentDetailModal({
                             {getRecipientIcon(r)}
                             {getRecipientStatusLabel(r)}
                           </span>
-                          {(r as any).status === "rejected" && (
+                          {r.status === "rejected" && (
                             <p className="text-[10px] text-slate-500 pl-1">
                               <span className="font-semibold text-red-500">Msg: </span>
-                              {(r as any).reject_reason?.trim() || "No message"}
+                              {r.reject_reason?.trim() || "No message"}
                             </p>
                           )}
-                          {["signed", "reviewed", "approved"].includes((r as any).status || "") && (r as any).sign_message?.trim() && (
+                          {["signed", "reviewed", "approved"].includes(r.status || "") && r.sign_message?.trim() && (
                             <p className="text-[10px] text-slate-500 pl-1">
                               <span className="font-semibold text-green-500">Msg: </span>
-                              {(r as any).sign_message?.trim()}
+                              {r.sign_message?.trim()}
                             </p>
                           )}
                         </div>
@@ -1405,7 +1416,7 @@ function DocumentDetailModal({
                   <div>
                     <p className="text-sm font-bold text-red-700">Changes Required</p>
                     <p className="text-sm text-red-600 mt-1 whitespace-pre-wrap">
-                      {(rejectRecipient as any).reject_reason?.trim() || "No message provided"}
+                      {rejectRecipient.reject_reason?.trim() || "No message provided"}
                     </p>
                   </div>
                 </div>
@@ -1416,7 +1427,7 @@ function DocumentDetailModal({
           {/* Sign Message Card */}
           {(() => {
             const signRecipient = currentDoc.recipients.find(r => ["signed", "reviewed", "approved"].includes(r.status || ""));
-            if (!signRecipient || !(signRecipient as any).sign_message?.trim()) return null;
+            if (!signRecipient || !signRecipient.sign_message?.trim()) return null;
             return (
               <div className="rounded-2xl border border-green-200 bg-green-50 shadow-sm overflow-hidden">
                 <div className="px-6 py-4 flex items-start gap-3">
@@ -1424,7 +1435,7 @@ function DocumentDetailModal({
                   <div>
                     <p className="text-sm font-bold text-green-700">Message from Signer</p>
                     <p className="text-sm text-green-600 mt-1 whitespace-pre-wrap">
-                      {(signRecipient as any).sign_message?.trim()}
+                      {signRecipient.sign_message?.trim()}
                     </p>
                   </div>
                 </div>
@@ -1464,7 +1475,7 @@ function DocumentDetailModal({
               <div className="flex items-center gap-2">
                 {(() => {
                   const viewingR = currentDoc.recipients.find(r => r.email === viewingRecipient);
-                  const openUrl = (viewingR as any)?.signed_file_url || currentDoc.fileUrl;
+                  const openUrl = viewingR?.signed_file_url || currentDoc.fileUrl;
                   if (!openUrl) return null;
                   return (
                     <a
@@ -1506,7 +1517,7 @@ function DocumentDetailModal({
                 const isSigned = viewingR?.status === "signed" || viewingR?.status === "reviewed";
 
                 // 1. Prefer individual signed content, then global template content (HTML/Text)
-                const displayContent = (viewingR as any)?.signed_content || currentDoc.content;
+                const displayContent = viewingR?.signed_content || currentDoc.content;
 
                 if (displayContent) {
                   return (
@@ -1527,7 +1538,7 @@ function DocumentDetailModal({
                 }
 
                 // 2. Fallback to fileUrl (Iframe or Image)
-                const displayFileUrl = (viewingR as any)?.signed_file_url || currentDoc.fileUrl;
+                const displayFileUrl = viewingR?.signed_file_url || currentDoc.fileUrl;
                 if (displayFileUrl) {
                   const isWordDoc = /\.(doc|docx)$/i.test(currentDoc.name || "");
                   const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(currentDoc.name || "");

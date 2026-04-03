@@ -1,0 +1,260 @@
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/.kilo/worktrees/everlasting-dash/app/components/upload-button.tsx
+    5:18  warning  'FileText' is defined but never used                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+    5:35  warning  'X' is defined but never used                                                                                                                                                                                                                                                            @typescript-eslint/no-unused-vars
+   25:12  warning  'uploadProgress' is assigned a value but never used                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+   26:12  warning  'uploadedUrls' is assigned a value but never used                                                                                                                                                                                                                                        @typescript-eslint/no-unused-vars
+  223:29  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  230:33  warning  Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images                                                                                                                                                                              jsx-a11y/alt-text
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/.kilo/worktrees/everlasting-dash/app/dashboard/create-envelope/page.tsx
+  97:7  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/.kilo/worktrees/everlasting-dash/app/dashboard/create-envelope/page.tsx:97:7
+   95 |   useEffect(() => {
+   96 |     if (signMethod === "template" && selected) {
+>  97 |       setDocuments((prev) => {
+      |       ^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+   98 |         // Remove any existing template documents to avoid duplicates
+   99 |         const filtered = prev.filter((d) => d.source !== "Template");
+  100 |         return [  react-hooks/set-state-in-effect
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/.kilo/worktrees/everlasting-dash/app/dashboard/documents/page.tsx
+  256:14  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/.kilo/worktrees/everlasting-dash/app/dashboard/layout.tsx
+  149:9  warning  Custom fonts not added in `pages/_document.js` will only load for a single page. This is discouraged. See: https://nextjs.org/docs/messages/no-page-custom-font  @next/next/no-page-custom-font
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/.kilo/worktrees/everlasting-dash/app/dashboard/my-documents/page.tsx
+   36:12  warning  'files' is assigned a value but never used                                                                                                                                                                                                                                               @typescript-eslint/no-unused-vars
+   39:12  warning  'showCategoryModal' is assigned a value but never used                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+   39:31  warning  'setShowCategoryModal' is assigned a value but never used                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+   40:12  warning  'selectedCategory' is assigned a value but never used                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+   40:30  warning  'setSelectedCategory' is assigned a value but never used                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+  181:11  warning  'removeFile' is assigned a value but never used                                                                                                                                                                                                                                          @typescript-eslint/no-unused-vars
+  271:20  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/.kilo/worktrees/everlasting-dash/app/dashboard/sign-document/page.tsx
+     4:8   warning  'Link' is defined but never used                                                                           @typescript-eslint/no-unused-vars
+   209:18  warning  'e' is defined but never used                                                                              @typescript-eslint/no-unused-vars
+   229:29  warning  'setDraggingSignature' is assigned a value but never used                                                  @typescript-eslint/no-unused-vars
+   231:25  warning  'setDragCursorPos' is assigned a value but never used                                                      @typescript-eslint/no-unused-vars
+   233:10  warning  'dragPreviewPosition' is assigned a value but never used                                                   @typescript-eslint/no-unused-vars
+   233:31  warning  'setDragPreviewPosition' is assigned a value but never used                                                @typescript-eslint/no-unused-vars
+   234:10  warning  'signatureLoaded' is assigned a value but never used                                                       @typescript-eslint/no-unused-vars
+   269:9   warning  'signatureToolDragRef' is assigned a value but never used                                                  @typescript-eslint/no-unused-vars
+   360:9   warning  'getSignatureStagePosition' is assigned a value but never used                                             @typescript-eslint/no-unused-vars
+   444:10  warning  'selectedFieldId' is assigned a value but never used                                                       @typescript-eslint/no-unused-vars
+   445:10  warning  'draggingFieldType' is assigned a value but never used                                                     @typescript-eslint/no-unused-vars
+   573:9   warning  'canSign' is assigned a value but never used                                                               @typescript-eslint/no-unused-vars
+   631:9   warning  'startSigning' is assigned a value but never used                                                          @typescript-eslint/no-unused-vars
+   709:14  warning  'e' is defined but never used                                                                              @typescript-eslint/no-unused-vars
+   754:9   warning  'handleFieldDrop' is assigned a value but never used                                                       @typescript-eslint/no-unused-vars
+   814:9   warning  'handlePlacedFieldPointerDown' is assigned a value but never used                                          @typescript-eslint/no-unused-vars
+   832:9   warning  'handlePlacedFieldPointerMove' is assigned a value but never used                                          @typescript-eslint/no-unused-vars
+   851:9   warning  'handlePlacedFieldPointerUp' is assigned a value but never used                                            @typescript-eslint/no-unused-vars
+   859:14  warning  'e' is defined but never used                                                                              @typescript-eslint/no-unused-vars
+   875:9   warning  'handleFieldResizePointerDown' is assigned a value but never used                                          @typescript-eslint/no-unused-vars
+   891:9   warning  'handleFieldResizePointerMove' is assigned a value but never used                                          @typescript-eslint/no-unused-vars
+   909:9   warning  'handleFieldResizePointerUp' is assigned a value but never used                                            @typescript-eslint/no-unused-vars
+   917:9   warning  'deleteField' is assigned a value but never used                                                           @typescript-eslint/no-unused-vars
+  1472:51  warning  img elements must have an alt prop, either with meaningful text, or an empty string for decorative images  jsx-a11y/alt-text
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/.kilo/worktrees/everlasting-dash/app/dashboard/templates/page.tsx
+   434:14  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+   818:23  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  1601:23  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/.kilo/worktrees/everlasting-dash/app/head.tsx
+  11:7  warning  Do not include stylesheets manually. See: https://nextjs.org/docs/messages/no-css-tags  @next/next/no-css-tags
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/.kilo/worktrees/everlasting-dash/app/lib/uploadthing-client.ts
+  18:22  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/.kilo/worktrees/everlasting-dash/app/login/page.tsx
+  1:1  warning  Unused eslint-disable directive (no problems were reported from '@next/next/no-img-element')
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/components/upload-button.tsx
+    5:18  warning  'FileText' is defined but never used                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+    5:35  warning  'X' is defined but never used                                                                                                                                                                                                                                                            @typescript-eslint/no-unused-vars
+   25:12  warning  'uploadProgress' is assigned a value but never used                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+   26:12  warning  'uploadedUrls' is assigned a value but never used                                                                                                                                                                                                                                        @typescript-eslint/no-unused-vars
+  223:29  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  230:33  warning  Image elements must have an alt prop, either with meaningful text, or an empty string for decorative images                                                                                                                                                                              jsx-a11y/alt-text
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/dashboard/create-envelope/page.tsx
+  97:7  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/dashboard/create-envelope/page.tsx:97:7
+   95 |   useEffect(() => {
+   96 |     if (signMethod === "template" && selected) {
+>  97 |       setDocuments((prev) => {
+      |       ^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+   98 |         // Remove any existing template documents to avoid duplicates
+   99 |         const filtered = prev.filter((d) => d.source !== "Template");
+  100 |         return [  react-hooks/set-state-in-effect
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/dashboard/create-envelope/prepare/page.tsx
+  211:6  warning  React Hook useEffect has a missing dependency: 'placedFields'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/dashboard/documents/page.tsx
+    44:38   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+    45:23   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+    94:10   warning  'userId' is assigned a value but never used                                                                                                                                                                                                                                              @typescript-eslint/no-unused-vars
+   107:52   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   184:52   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   185:34   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   186:39   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   187:51   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   188:34   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   189:39   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   191:118  error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   191:169  error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   197:52   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   198:34   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   199:39   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   200:51   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   201:34   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   202:39   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   295:18   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   295:58   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   296:18   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   296:61   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   346:14   warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+   523:9    warning  'markAsReceivedAction' is assigned a value but never used                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+   698:63   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   699:63   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   880:61   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   881:61   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1059:9    warning  'isSingleRecipient' is assigned a value but never used                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+  1069:11   warning  'role' is assigned a value but never used                                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+  1137:9    warning  'getOverallStatusColor' is assigned a value but never used                                                                                                                                                                                                                               @typescript-eslint/no-unused-vars
+  1171:9    warning  'getOverallIcon' is assigned a value but never used                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+  1207:9    warning  'pendingCount' is assigned a value but never used                                                                                                                                                                                                                                        @typescript-eslint/no-unused-vars
+  1219:27   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1219:79   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1220:27   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1220:78   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1225:25   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1225:77   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1226:25   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1226:76   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1355:34   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1358:38   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1361:78   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1361:106  error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1364:38   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1408:44   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1419:54   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1427:42   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1467:48   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1506:23   warning  'isSigned' is assigned a value but never used                                                                                                                                                                                                                                            @typescript-eslint/no-unused-vars
+  1509:53   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1530:53   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+  1538:25   warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  1552:71   error    `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`                                                                                                                                                                                                                          react/no-unescaped-entities
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/dashboard/layout.tsx
+  149:9  warning  Custom fonts not added in `pages/_document.js` will only load for a single page. This is discouraged. See: https://nextjs.org/docs/messages/no-page-custom-font  @next/next/no-page-custom-font
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/dashboard/my-documents/page.tsx
+   36:12  warning  'files' is assigned a value but never used                                                                                                                                                                                                                                               @typescript-eslint/no-unused-vars
+   39:12  warning  'showCategoryModal' is assigned a value but never used                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+   39:31  warning  'setShowCategoryModal' is assigned a value but never used                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+   40:12  warning  'selectedCategory' is assigned a value but never used                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+   40:30  warning  'setSelectedCategory' is assigned a value but never used                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+  182:11  warning  'removeFile' is assigned a value but never used                                                                                                                                                                                                                                          @typescript-eslint/no-unused-vars
+  272:20  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/dashboard/notifications/page.tsx
+   89:44  error  Unexpected any. Specify a different type          @typescript-eslint/no-explicit-any
+  128:59  error  Unexpected any. Specify a different type          @typescript-eslint/no-explicit-any
+  131:72  error  Unexpected any. Specify a different type          @typescript-eslint/no-explicit-any
+  164:9   error  'patch' is never reassigned. Use 'const' instead  prefer-const
+  164:31  error  Unexpected any. Specify a different type          @typescript-eslint/no-explicit-any
+  166:59  error  Unexpected any. Specify a different type          @typescript-eslint/no-explicit-any
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/dashboard/page.tsx
+   20:16  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        @typescript-eslint/no-explicit-any
+  119:51  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        @typescript-eslint/no-explicit-any
+  147:5   error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/dashboard/page.tsx:147:5
+  145 |   useEffect(() => {
+  146 |     const filtered = filterByDateRange(allSentDocs, dateRange);
+> 147 |     setDocumentsSent(filtered.length);
+      |     ^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  148 |     setPendingCount(filtered.filter((d) => d.status === "waiting" || d.status === "reviewing").length);
+  149 |     setApprovedCount(filtered.filter((d) => d.status === "approved" || d.status === "reviewed" || d.status === "signed" || d.status === "completed").length);
+  150 |     setRejectedCount(filtered.filter((d) => {  react-hooks/set-state-in-effect
+  152:69  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        @typescript-eslint/no-explicit-any
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/dashboard/settings/page.tsx
+  59:16  warning  'err' is defined but never used  @typescript-eslint/no-unused-vars
+  89:14  warning  'err' is defined but never used  @typescript-eslint/no-unused-vars
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/dashboard/sign-document/page.tsx
+     4:8   warning  'Link' is defined but never used                                                                           @typescript-eslint/no-unused-vars
+   176:39  error    Unexpected any. Specify a different type                                                                   @typescript-eslint/no-explicit-any
+   176:55  error    Unexpected any. Specify a different type                                                                   @typescript-eslint/no-explicit-any
+   260:18  warning  'e' is defined but never used                                                                              @typescript-eslint/no-unused-vars
+   279:29  warning  'setDraggingSignature' is assigned a value but never used                                                  @typescript-eslint/no-unused-vars
+   283:10  warning  'dragPreviewPosition' is assigned a value but never used                                                   @typescript-eslint/no-unused-vars
+   284:10  warning  'signatureLoaded' is assigned a value but never used                                                       @typescript-eslint/no-unused-vars
+   314:35  error    Unexpected any. Specify a different type                                                                   @typescript-eslint/no-explicit-any
+   314:51  error    Unexpected any. Specify a different type                                                                   @typescript-eslint/no-explicit-any
+   325:57  error    Unexpected any. Specify a different type                                                                   @typescript-eslint/no-explicit-any
+   364:16  warning  'err' is defined but never used                                                                            @typescript-eslint/no-unused-vars
+   395:9   warning  'downloadSignedPreview' is assigned a value but never used                                                 @typescript-eslint/no-unused-vars
+   424:9   warning  'signatureToolDragRef' is assigned a value but never used                                                  @typescript-eslint/no-unused-vars
+   515:9   warning  'getSignatureStagePosition' is assigned a value but never used                                             @typescript-eslint/no-unused-vars
+   613:9   error    'isMounted' is never reassigned. Use 'const' instead                                                       prefer-const
+   617:52  error    Unexpected any. Specify a different type                                                                   @typescript-eslint/no-explicit-any
+   643:21  warning  'row' is assigned a value but never used                                                                   @typescript-eslint/no-unused-vars
+   763:9   warning  'canSign' is assigned a value but never used                                                               @typescript-eslint/no-unused-vars
+   821:9   warning  'startSigning' is assigned a value but never used                                                          @typescript-eslint/no-unused-vars
+   899:14  warning  'e' is defined but never used                                                                              @typescript-eslint/no-unused-vars
+  1004:9   warning  'handlePlacedFieldPointerDown' is assigned a value but never used                                          @typescript-eslint/no-unused-vars
+  1022:9   warning  'handlePlacedFieldPointerMove' is assigned a value but never used                                          @typescript-eslint/no-unused-vars
+  1041:9   warning  'handlePlacedFieldPointerUp' is assigned a value but never used                                            @typescript-eslint/no-unused-vars
+  1049:14  warning  'e' is defined but never used                                                                              @typescript-eslint/no-unused-vars
+  1107:9   warning  'deleteField' is assigned a value but never used                                                           @typescript-eslint/no-unused-vars
+  1746:49  warning  img elements must have an alt prop, either with meaningful text, or an empty string for decorative images  jsx-a11y/alt-text
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/dashboard/templates/page.tsx
+   207:52  error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   478:14  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+   825:23  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+  1391:11  warning  'isDateKey' is assigned a value but never used                                                                                                                                                                                                                                           @typescript-eslint/no-unused-vars
+  1632:25  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/head.tsx
+  11:7  warning  Do not include stylesheets manually. See: https://nextjs.org/docs/messages/no-css-tags  @next/next/no-css-tags
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/lib/uploadthing-client.ts
+  18:22  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
+
+/media/raj/Zorin OS 18 Education 64bit/crm-mock/app/login/page.tsx
+  1:1  warning  Unused eslint-disable directive (no problems were reported from '@next/next/no-img-element')
+
+✖ 163 problems (65 errors, 98 warnings)
+  2 errors and 2 warnings potentially fixable with the `--fix` option.
+

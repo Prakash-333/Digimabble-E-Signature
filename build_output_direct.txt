@@ -1,0 +1,2 @@
+⨯ Unable to acquire lock at /media/raj/Zorin OS 18 Education 64bit/crm-mock/.next/lock, is another instance of next build running?
+  Suggestion: If you intended to restart next build, terminate the other process, and then try again.

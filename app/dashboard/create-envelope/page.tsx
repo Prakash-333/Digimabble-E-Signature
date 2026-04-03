@@ -70,7 +70,7 @@ function CreateEnvelopeContent() {
   const [message, setMessage] = useState(
     "Hi, please review the document and sign when ready. Thanks."
   );
-  const [documents, setDocuments] = useState<EnvelopeDocument[]>([]);
+  const [uploadedDocuments, setUploadedDocuments] = useState<EnvelopeDocument[]>([]);
   const [isDragActive, setIsDragActive] = useState(false);
   const [isUploadMenuOpen, setIsUploadMenuOpen] = useState(false);
   const [sender, setSender] = useState<Profile>({
@@ -92,22 +92,19 @@ function CreateEnvelopeContent() {
     [templateId]
   );
 
-  useEffect(() => {
+  const documents = useMemo(() => {
     if (signMethod === "template" && selected) {
-      setDocuments((prev) => {
-        // Remove any existing template documents to avoid duplicates
-        const filtered = prev.filter((d) => d.source !== "Template");
-        return [
-          {
-            id: `template-${selected.id}`,
-            name: `${selected.name}.pdf`,
-            source: "Template",
-          },
-          ...filtered,
-        ];
-      });
+      return [
+        {
+          id: `template-${selected.id}`,
+          name: `${selected.name}.pdf`,
+          source: "Template" as EnvelopeDocumentSource,
+        },
+        ...uploadedDocuments,
+      ];
     }
-  }, [signMethod, selected]);
+    return uploadedDocuments;
+  }, [signMethod, selected, uploadedDocuments]);
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -183,14 +180,14 @@ function CreateEnvelopeContent() {
           newDoc.dataUrl = await readFileAsDataUrl(file);
         }
 
-        setDocuments((prev) => [newDoc, ...prev]);
+        setUploadedDocuments((prev) => [newDoc, ...prev]);
       })
     );
   };
 
   const addTemplateDocument = () => {
     if (!selected) return;
-    setDocuments((prev) => [
+    setUploadedDocuments((prev) => [
       {
         id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
         name: `${selected.name}.pdf`,
@@ -309,7 +306,7 @@ function CreateEnvelopeContent() {
                 <button
                   type="button"
                   className="text-xs font-semibold text-slate-500 hover:text-slate-700"
-                  onClick={() => setDocuments([])}
+                  onClick={() => setUploadedDocuments([])}
                 >
                   Clear
                 </button>
@@ -462,7 +459,7 @@ function CreateEnvelopeContent() {
                     type="button"
                     className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                     onClick={() =>
-                      setDocuments((prev) => prev.filter((d) => d.id !== doc.id))
+                      setUploadedDocuments((prev) => prev.filter((d) => d.id !== doc.id))
                     }
                     aria-label="Remove document"
                   >
