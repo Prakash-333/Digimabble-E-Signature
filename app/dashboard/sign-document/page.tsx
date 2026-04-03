@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import { RotateCw, CloudUpload, PenLine as Pen, Square, User, Mail, Building2, Tag, Type, CheckSquare, PenTool, X, Image as ImageIcon, Loader2, Calendar } from "lucide-react";
+import { RotateCw, CloudUpload, PenLine as Pen, Square, User as UserIcon, Mail, Building2, Tag, Type, CheckSquare, PenTool, X, Image as ImageIcon, Loader2, Calendar } from "lucide-react";
 import { useUploadThing } from "../../lib/uploadthing-client";
 import { deleteCloudFiles } from "../../actions/uploadthing";
 import { supabase } from "../../lib/supabase/browser";
@@ -33,6 +33,17 @@ type UploadedDoc = {
   key?: string;
 };
 
+type Recipient = {
+  name: string;
+  email: string;
+  role: string;
+  status: string;
+  signed_file_url?: string;
+  signed_file_key?: string;
+  signed_content?: string;
+  sign_message?: string;
+};
+
 type PlacedField = {
   id: string;
   type: "initial" | "stamp" | "name" | "first_name" | "last_name" | "email" | "company" | "title" | "text" | "checkbox" | "date";
@@ -44,13 +55,83 @@ type PlacedField = {
   value?: string;
 };
 
+interface ResizableWrapperProps {
+  field: PlacedField;
+  isSelected: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+  onResizeStart: (e: React.PointerEvent) => void;
+  children: React.ReactNode;
+}
+
+const ResizableWrapper = ({
+  field,
+  isSelected,
+  onSelect,
+  onDelete,
+  onResizeStart,
+  children,
+}: ResizableWrapperProps) => {
+  return (
+    <div
+      className={`absolute rounded-md border-2 border-dashed group flex items-center justify-center cursor-grab active:cursor-grabbing select-none transition-all ${
+        isSelected ? "border-violet-500 bg-violet-50/50" : "border-slate-400 hover:border-violet-400"
+      }`}
+      style={{
+        left: `${field.x}px`,
+        top: `${field.y}px`,
+        width: `${field.width}px`,
+        height: `${field.height}px`,
+        zIndex: 15,
+      }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect();
+      }}
+    >
+      {children}
+      {/* Delete button (Top-right) */}
+      <button
+        type="button"
+        className="absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center hover:bg-red-600 transition-all active:scale-90 opacity-0 group-hover:opacity-100"
+        style={{ zIndex: 30 }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete();
+        }}
+      >
+        <X className="h-2.5 w-2.5" />
+      </button>
+
+      {/* Resize handle (Bottom-right) */}
+      <div
+        className="absolute -right-2 -bottom-2 w-5 h-5 cursor-nwse-resize bg-violet-600 rounded-full shadow-md hover:bg-violet-500 transition-all border-2 border-white flex items-center justify-center"
+        style={{ zIndex: 30 }}
+        onPointerDown={onResizeStart}
+      >
+        <svg
+          className="w-2.5 h-2.5 text-white"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={3}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M22 22L12 22L22 12Z" fill="currentColor" />
+        </svg>
+      </div>
+    </div>
+  );
+};
+
 const DRAGGABLE_FIELDS = [
   { type: "initial", label: "Initial", icon: <span className="font-bold text-[10px] text-blue-600">DS</span> },
   { type: "stamp", label: "Stamp", icon: <Square className="h-4 w-4 text-slate-700" /> },
-  { type: "name", label: "Name", icon: <User className="h-4 w-4 text-blue-500" /> },
+  { type: "name", label: "Name", icon: <UserIcon className="h-4 w-4 text-blue-500" /> },
   { type: "date", label: "Date", icon: <Calendar className="h-4 w-4 text-green-500" /> },
-  { type: "first_name", label: "First Name", icon: <User className="h-4 w-4 text-blue-500" /> },
-  { type: "last_name", label: "Last Name", icon: <User className="h-4 w-4 text-blue-500" /> },
+  { type: "first_name", label: "First Name", icon: <UserIcon className="h-4 w-4 text-blue-500" /> },
+  { type: "last_name", label: "Last Name", icon: <UserIcon className="h-4 w-4 text-blue-500" /> },
   { type: "email", label: "Email Address", icon: <Mail className="h-4 w-4 text-blue-400" /> },
   { type: "company", label: "Company", icon: <Building2 className="h-4 w-4 text-slate-400" /> },
   { type: "title", label: "Title", icon: <Tag className="h-4 w-4 text-slate-400" /> },
@@ -173,7 +254,7 @@ export default function SignDocumentPage() {
               .maybeSingle();
 
             const myRecipientRole = Array.isArray(docRow?.recipients)
-              ? (docRow.recipients as any[]).find((r: any) => normalizeEmail(r.email) === senderEmail)?.role
+              ? (docRow.recipients as Recipient[]).find((r: Recipient) => normalizeEmail(r.email) === senderEmail)?.role
               : null;
             const isReviewDoc = docRow?.category === "Reviewer" || myRecipientRole?.toLowerCase() === "reviewer";
             const recipientStatus = isReviewDoc ? "reviewed" : "signed";
@@ -311,7 +392,7 @@ export default function SignDocumentPage() {
         const senderEmail = normalizeEmail(session?.user?.email) || "";
 
         const myRecipientRole = Array.isArray(docRow?.recipients)
-          ? (docRow.recipients as any[]).find((r: any) => normalizeEmail(r.email) === senderEmail)?.role
+          ? (docRow.recipients as Recipient[]).find((r: Recipient) => normalizeEmail(r.email) === senderEmail)?.role
           : null;
         const isReviewDoc = docRow?.category === "Reviewer" || myRecipientRole?.toLowerCase() === "reviewer";
         const recipientStatus = isReviewDoc ? "reviewed" : "signed";
@@ -322,7 +403,7 @@ export default function SignDocumentPage() {
         let updatedRecipients = docRow?.recipients;
         if (Array.isArray(updatedRecipients)) {
           let matched = false;
-          updatedRecipients = updatedRecipients.map((r: any) => {
+          updatedRecipients = updatedRecipients.map((r: Recipient) => {
             if (!matched && normalizeEmail(r.email) === senderEmail) {
               matched = true;
               return {
@@ -614,7 +695,7 @@ export default function SignDocumentPage() {
     const loadSignature = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        let user = (session?.user ?? undefined) as any;
+        let user: any = session?.user;
         
         if (!user) {
           const { data: { user: freshUser }, error: authError } = await supabase.auth.getUser();
@@ -1480,70 +1561,48 @@ export default function SignDocumentPage() {
                     {/* Placed Fields */}
                     {placedFields.map((field) => {
                       const isEditable = field.type !== "checkbox" && field.type !== "initial" && field.type !== "stamp";
+                      
                       return (
-                        <div
+                        <ResizableWrapper
                           key={field.id}
-                          className={`absolute rounded-md border-2 border-dashed group flex items-center justify-center cursor-grab active:cursor-grabbing select-none transition-all ${
-                            selectedFieldId === field.id ? "border-violet-500 bg-violet-50/50" : "border-slate-400 hover:border-violet-400"
-                          } ${isEditable ? "cursor-text" : ""}`}
-                          style={{
-                            left: `${field.x}px`,
-                            top: `${field.y}px`,
-                            width: `${field.width}px`,
-                            height: `${field.height}px`,
-                            zIndex: 15,
-                          }}
-                          onClick={(e) => {
+                          field={field}
+                          isSelected={selectedFieldId === field.id}
+                          onSelect={() => {
                             if (isEditable) {
-                              e.stopPropagation();
                               setEditingFieldId(field.id);
                               setEditingFieldValue(field.value || "");
                             }
+                            setSelectedFieldId(field.id);
                           }}
+                          onDelete={() => deleteField(field.id)}
+                          onResizeStart={(e) => handleFieldResizePointerDown(field.id, e)}
                         >
-                          {field.type === "checkbox" ? (
-                            <CheckSquare
-                              className={`h-5 w-5 ${field.value === "checked" ? "text-violet-600 fill-violet-600" : "text-slate-400"}`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setPlacedFields(prev => prev.map(f => {
-                                  if (f.id === field.id) {
-                                    return { ...f, value: f.value === "checked" ? "" : "checked" };
-                                  }
-                                  return f;
-                                }));
-                              }}
-                            />
-                          ) : (
-                            <span className="text-xs font-bold text-slate-700 px-1 truncate">{field.value}</span>
-                          )}
-                          <button
-                            type="button"
-                            className="absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center hover:bg-red-600 transition-all active:scale-90 opacity-0 group-hover:opacity-100"
-                            style={{ zIndex: 30 }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setPlacedFields(prev => prev.filter(f => f.id !== field.id));
-                            }}
-                          >
-                            <X className="h-2.5 w-2.5" />
-                          </button>
                           <div
-                            className="absolute -right-2 -bottom-2 w-4 h-4 cursor-nwse-resize bg-violet-600 rounded-full shadow-md hover:bg-violet-500 transition-all border-2 border-white flex items-center justify-center"
-                            style={{ zIndex: 30 }}
-                            onPointerDown={(e) => {
-                              e.stopPropagation();
-                              e.preventDefault();
-                              handleFieldResizePointerDown(field.id, e);
-                            }}
-                            onPointerMove={(e) => handleFieldResizePointerMove(e)}
-                            onPointerUp={(e) => handleFieldResizePointerUp(e)}
+                            className="w-full h-full flex items-center justify-center"
+                            onPointerDown={(e) => handlePlacedFieldPointerDown(field.id, e)}
+                            onPointerMove={handlePlacedFieldPointerMove}
+                            onPointerUp={handlePlacedFieldPointerUp}
                           >
-                            <svg className="w-2 h-2 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3}>
-                              <path d="M18 18L6 6M18 6L6 18" />
-                            </svg>
+                            {field.type === "checkbox" ? (
+                              <CheckSquare
+                                className={`h-5 w-5 ${field.value === "checked" ? "text-violet-600 fill-violet-600" : "text-slate-400"}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPlacedFields(prev => prev.map(f => {
+                                    if (f.id === field.id) {
+                                      return { ...f, value: f.value === "checked" ? "" : "checked" };
+                                    }
+                                    return f;
+                                  }));
+                                }}
+                              />
+                            ) : (
+                              <span className="text-xs font-bold text-slate-700 px-1 truncate">
+                                {field.value}
+                              </span>
+                            )}
                           </div>
-                        </div>
+                        </ResizableWrapper>
                       );
                     })}
 

@@ -29,6 +29,14 @@ export default function ActivitiesPage() {
       }
 
       try {
+        interface DocumentRow {
+          id: string;
+          name: string;
+          subject: string | null;
+          sent_at: string | null;
+          status: string | null;
+        }
+
         const { data, error: supabaseError } = await supabase
           .from("documents")
           .select("id, name, subject, sent_at, status")
@@ -37,7 +45,7 @@ export default function ActivitiesPage() {
 
         if (supabaseError) throw supabaseError;
 
-        const mapped: Activity[] = (data ?? []).map((doc) => ({
+        const mapped: Activity[] = (data as DocumentRow[] ?? []).map((doc) => ({
           id: doc.id,
           type: "Document",
           subject: doc.subject || doc.name,
