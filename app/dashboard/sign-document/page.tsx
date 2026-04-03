@@ -291,6 +291,11 @@ export default function SignDocumentPage() {
     signMessageRef.current = signMessage;
     setShowSignMessageDialog(false);
 
+    if (!signedPreview && !signedHtmlContent) {
+      setBanner("Please sign the document first.");
+      return;
+    }
+
     if (signedHtmlContent) {
       if (!sourceDocumentId) return;
       setSignedUploadAction("send");
@@ -362,19 +367,28 @@ export default function SignDocumentPage() {
       return;
     }
 
-    if (!signedPreview) return;
+    if (!signedPreview) {
+      setBanner("No signed document found. Please sign the document first.");
+      return;
+    }
     setSignedUploadAction("send");
     setBanner("Preparing signed document for sending...");
     try {
       const response = await fetch(signedPreview);
+      if (!response.ok) {
+        throw new Error("Failed to fetch signed preview");
+      }
       const blob = await response.blob();
       const filename = `signed-${activeDoc?.name?.replace(/\s+/g, "-") || "document"}.png`;
       const file = new File([blob], filename, { type: "image/png" });
 
       await uploadSigned([file]);
+      
+      setBanner("Uploading signed document...");
+      
     } catch (e) {
       console.error("Upload preparation failed", e);
-      setBanner("Failed to prepare file for sending.");
+      setBanner("Failed to prepare file for sending. Please try again.");
     }
   };
 
@@ -584,6 +598,8 @@ export default function SignDocumentPage() {
   const [placedFields, setPlacedFields] = useState<PlacedField[]>([]);
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
   const [draggingFieldType, setDraggingFieldType] = useState<PlacedField["type"] | null>(null);
+  const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
+  const [editingFieldValue, setEditingFieldValue] = useState("");
 
   const dragRef = useRef<{
     pointerId: number;
@@ -1367,18 +1383,30 @@ export default function SignDocumentPage() {
                     <p className="text-[10px] text-center text-slate-400">{Math.round(signatureScale * 100)}%</p>
                   </div>
                 )}
+              </div>
 
-                {/* Instructions */}
-                <div className="rounded-xl bg-slate-50 border border-slate-100 p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">How to sign</p>
-                  <ol className="text-[11px] text-slate-500 space-y-1.5 list-decimal list-inside">
-                    <li>Create or upload your signature</li>
-                    <li>Click &quot;Place on Document&quot;</li>
-                    <li>Drag it to the desired position</li>
-                    <li>Resize as needed</li>
-                    <li>Click &quot;Sign&quot; to finalize</li>
-                  </ol>
-                </div>
+              {/* Fields Section */}
+              <div className="border-b border-slate-100 px-6 py-5">
+                <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-500">Fields</p>
+              </div>
+              <div className="p-4 space-y-2">
+                {DRAGGABLE_FIELDS.map((field) => (
+                  <div
+                    key={field.type}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData("fieldType", field.type);
+                      setDraggingFieldType(field.type);
+                    }}
+                    onDragEnd={() => setDraggingFieldType(null)}
+                    className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-2.5 shadow-sm hover:border-violet-300 hover:bg-violet-50/50 cursor-grab active:cursor-grabbing transition-all"
+                  >
+                    <div className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-100 text-slate-600">
+                      {field.icon}
+                    </div>
+                    <span className="text-xs font-semibold text-slate-700">{field.label}</span>
+                  </div>
+                ))}
               </div>
             </aside>
 
@@ -1388,6 +1416,32 @@ export default function SignDocumentPage() {
                 <div
                   ref={previewStageRef}
                   className="relative mx-auto w-fit h-fit bg-white shadow-[0_20px_50px_rgba(0,0,0,0.1)] rounded-sm select-none transition-all border border-slate-200"
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    if (draggingFieldType) {
+                      setDragCursorPos({ x: e.clientX, y: e.clientY });
+                      const rect = previewStageRef.current?.getBoundingClientRect();
+                      if (rect) {
+                        setDragPreviewPosition({
+                          x: e.clientX - rect.left,
+                          y: e.clientY - rect.top,
+                        });
+                      }
+                    }
+                  }}
+                  onDragLeave={() => {
+                    setDragCursorPos(null);
+                    setDragPreviewPosition(null);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const fieldType = e.dataTransfer.getData("fieldType") as PlacedField["type"];
+                    if (fieldType) {
+                      handleFieldDrop(e, fieldType);
+                      setDragCursorPos(null);
+                      setDragPreviewPosition(null);
+                    }
+                  }}
                 >
                   {htmlContent ? (
                     <div className="w-[800px] min-h-[1056px] text-left shrink-0 bg-white p-12 md:p-16 text-[15px] text-slate-800 leading-[1.9] tracking-tight"
@@ -1423,7 +1477,77 @@ export default function SignDocumentPage() {
                     </div>
                   )}
 
-                  {/* Signature placed on document - draggable */}
+                    {/* Placed Fields */}
+                    {placedFields.map((field) => {
+                      const isEditable = field.type !== "checkbox" && field.type !== "initial" && field.type !== "stamp";
+                      return (
+                        <div
+                          key={field.id}
+                          className={`absolute rounded-md border-2 border-dashed group flex items-center justify-center cursor-grab active:cursor-grabbing select-none transition-all ${
+                            selectedFieldId === field.id ? "border-violet-500 bg-violet-50/50" : "border-slate-400 hover:border-violet-400"
+                          } ${isEditable ? "cursor-text" : ""}`}
+                          style={{
+                            left: `${field.x}px`,
+                            top: `${field.y}px`,
+                            width: `${field.width}px`,
+                            height: `${field.height}px`,
+                            zIndex: 15,
+                          }}
+                          onClick={(e) => {
+                            if (isEditable) {
+                              e.stopPropagation();
+                              setEditingFieldId(field.id);
+                              setEditingFieldValue(field.value || "");
+                            }
+                          }}
+                        >
+                          {field.type === "checkbox" ? (
+                            <CheckSquare
+                              className={`h-5 w-5 ${field.value === "checked" ? "text-violet-600 fill-violet-600" : "text-slate-400"}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPlacedFields(prev => prev.map(f => {
+                                  if (f.id === field.id) {
+                                    return { ...f, value: f.value === "checked" ? "" : "checked" };
+                                  }
+                                  return f;
+                                }));
+                              }}
+                            />
+                          ) : (
+                            <span className="text-xs font-bold text-slate-700 px-1 truncate">{field.value}</span>
+                          )}
+                          <button
+                            type="button"
+                            className="absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center hover:bg-red-600 transition-all active:scale-90 opacity-0 group-hover:opacity-100"
+                            style={{ zIndex: 30 }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPlacedFields(prev => prev.filter(f => f.id !== field.id));
+                            }}
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                          <div
+                            className="absolute -right-2 -bottom-2 w-4 h-4 cursor-nwse-resize bg-violet-600 rounded-full shadow-md hover:bg-violet-500 transition-all border-2 border-white flex items-center justify-center"
+                            style={{ zIndex: 30 }}
+                            onPointerDown={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              handleFieldResizePointerDown(field.id, e);
+                            }}
+                            onPointerMove={(e) => handleFieldResizePointerMove(e)}
+                            onPointerUp={(e) => handleFieldResizePointerUp(e)}
+                          >
+                            <svg className="w-2 h-2 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3}>
+                              <path d="M18 18L6 6M18 6L6 18" />
+                            </svg>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Signature placed on document - draggable */}
                   {savedSignature && signaturePlaced && (
                     <div
                       className="absolute cursor-grab group active:cursor-grabbing rounded-lg border-2 border-dashed border-violet-400 hover:border-violet-600 hover:bg-violet-50/20 transition-colors"
@@ -1673,6 +1797,68 @@ export default function SignDocumentPage() {
           <p className="text-center text-[10px] font-bold text-violet-600 mt-1 uppercase tracking-widest whitespace-nowrap">
             Drop on document
           </p>
+        </div>
+      )}
+
+      {/* Edit Field Value Modal */}
+      {editingFieldId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-xs rounded-2xl border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+              <h3 className="text-sm font-bold text-slate-800">Edit Field Value</h3>
+              <button
+                onClick={() => setEditingFieldId(null)}
+                className="ml-auto rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <input
+                type="text"
+                value={editingFieldValue}
+                onChange={(e) => setEditingFieldValue(e.target.value)}
+                placeholder="Enter value..."
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium focus:border-violet-300 focus:outline-none focus:ring-2 focus:ring-violet-100"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    setPlacedFields(prev => prev.map(f => {
+                      if (f.id === editingFieldId) {
+                        return { ...f, value: editingFieldValue };
+                      }
+                      return f;
+                    }));
+                    setEditingFieldId(null);
+                  }
+                }}
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingFieldId(null)}
+                  className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPlacedFields(prev => prev.map(f => {
+                      if (f.id === editingFieldId) {
+                        return { ...f, value: editingFieldValue };
+                      }
+                      return f;
+                    }));
+                    setEditingFieldId(null);
+                  }}
+                  className="flex-1 rounded-lg bg-violet-600 px-3 py-2 text-xs font-bold text-white hover:bg-violet-700 transition-colors"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

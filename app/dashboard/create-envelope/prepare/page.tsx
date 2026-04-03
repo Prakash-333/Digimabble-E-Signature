@@ -43,6 +43,7 @@ type EnvelopeDraft = {
   documents: DraftDocument[];
   createdAt: string;
   placeholderValues?: Record<string, string>;
+  placedFields?: PlacedField[];
 };
 
 type FieldType =
@@ -181,6 +182,9 @@ export default function PrepareEnvelopePage() {
         if (parsed.placeholderValues && typeof parsed.placeholderValues === "object") {
           setPlaceholderValues(parsed.placeholderValues);
         }
+        if (Array.isArray(parsed.placedFields)) {
+          setPlacedFields(parsed.placedFields);
+        }
       } catch {
         setDraft(null);
       }
@@ -198,6 +202,7 @@ export default function PrepareEnvelopePage() {
         JSON.stringify({
           ...draft,
           placeholderValues,
+          placedFields,
         })
       );
     } catch {
@@ -1027,24 +1032,40 @@ export default function PrepareEnvelopePage() {
                                   onPointerDown={(e) => {
                                     e.stopPropagation();
                                     const startX = e.clientX;
+                                    const startY = e.clientY;
                                     const startScale = field.scale || 1;
+                                    const handle = e.currentTarget as HTMLElement;
+                                    handle.setPointerCapture(e.pointerId);
                                     
-                                    const onPointerMove = (moveEvent: PointerEvent) => {
-                                      const deltaX = moveEvent.clientX - startX;
+                                    const handlePointerMove = (moveEvent: PointerEvent) => {
+                                      if (moveEvent.pointerId !== e.pointerId) return;
+                                      
+                                      // Account for zoom in delta calculation
+                                      // Use the larger of X or Y delta for more intuitive resizing
+                                      const dx = (moveEvent.clientX - startX) / zoom;
+                                      const dy = (moveEvent.clientY - startY) / zoom;
+                                      const delta = Math.abs(dx) > Math.abs(dy) ? dx : dy;
+                                      
                                       // Sensitivity: 150px movement = 1.0 scale change
-                                      const newScale = clamp(startScale + deltaX / 150, 0.5, 3);
+                                      const newScale = clamp(startScale + delta / 150, 0.5, 3);
                                       setPlacedFields((prev) => 
                                         prev.map((f) => f.id === field.id ? { ...f, scale: newScale } : f)
                                       );
                                     };
                                     
-                                    const onPointerUp = () => {
-                                      window.removeEventListener("pointermove", onPointerMove);
-                                      window.removeEventListener("pointerup", onPointerUp);
+                                    const handlePointerUp = (upEvent: PointerEvent) => {
+                                      if (upEvent.pointerId !== e.pointerId) return;
+                                      handle.releasePointerCapture(upEvent.pointerId);
+                                      handle.removeEventListener("pointermove", handlePointerMove);
+                                      handle.removeEventListener("pointerup", handlePointerUp);
                                     };
                                     
-                                    window.addEventListener("pointermove", onPointerMove);
-                                    window.addEventListener("pointerup", onPointerUp);
+                                    handle.addEventListener("pointermove", handlePointerMove);
+                                    handle.addEventListener("pointerup", handlePointerUp);
+                                  }}
+                                  style={{
+                                    transform: `scale(${1 / (field.scale || 1)})`,
+                                    transformOrigin: "center center"
                                   }}
                                 />
 
