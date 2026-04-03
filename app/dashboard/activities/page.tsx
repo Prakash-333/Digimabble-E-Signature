@@ -1,6 +1,14 @@
-type ActivityType = "Call" | "Email" | "Meeting";
+"use client";
+
+import { useEffect, useState } from "react";
+import { supabase } from "../../lib/supabase/browser";
+import { IS_SUPABASE_CONFIGURED } from "../../lib/env";
+import { Loader2, AlertCircle } from "lucide-react";
+
+type ActivityType = "Call" | "Email" | "Meeting" | "Document";
 
 type Activity = {
+  id: string;
   type: ActivityType;
   subject: string;
   relatedTo: string;
@@ -8,9 +16,69 @@ type Activity = {
   status: "Planned" | "Completed" | "Overdue";
 };
 
-const activities: Activity[] = [];
-
 export default function ActivitiesPage() {
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadActivities = async () => {
+      if (!IS_SUPABASE_CONFIGURED) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const { data, error: supabaseError } = await supabase
+          .from("documents")
+          .select("id, name, subject, sent_at, status")
+          .order("sent_at", { ascending: false })
+          .limit(10);
+
+        if (supabaseError) throw supabaseError;
+
+        const mapped: Activity[] = (data ?? []).map((doc) => ({
+          id: doc.id,
+          type: "Document",
+          subject: doc.subject || doc.name,
+          relatedTo: doc.name,
+          dueDate: doc.sent_at ? new Date(doc.sent_at).toLocaleDateString() : "N/A",
+          status: doc.status === "completed" ? "Completed" : "Planned",
+        }));
+
+        setActivities(mapped);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Failed to load activities";
+        console.error("Failed to load activities:", err);
+        setError(message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadActivities();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center rounded-xl border border-slate-200 bg-white shadow-sm">
+        <Loader2 className="h-6 w-6 animate-spin text-violet-600" />
+        <span className="ml-2 text-sm text-slate-500">Loading activities...</span>
+      </div>
+    );
+  }
+
+  if (!IS_SUPABASE_CONFIGURED) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-center shadow-sm">
+        <AlertCircle className="mx-auto h-8 w-8 text-amber-600" />
+        <h3 className="mt-2 text-sm font-semibold text-amber-900">Supabase Not Configured</h3>
+        <p className="mt-1 text-xs text-amber-700">
+          Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel.
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -53,7 +121,7 @@ export default function ActivitiesPage() {
           <tbody>
             {activities.map((activity, index) => (
               <tr
-                key={activity.subject}
+                key={activity.id}
                 className={index % 2 === 0 ? "bg-white" : "bg-slate-50/70"}
               >
                 <td className="px-4 py-2 text-slate-800">
