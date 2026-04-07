@@ -3,13 +3,14 @@
 import { Suspense, useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
-import { Search, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2 } from "lucide-react";
+import { Search, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2, X, PenTool, Type, CloudUpload } from "lucide-react";
 import { OFFER_LETTER_TEMPLATE, type Template } from "./data";
 import { useUploadThing } from "../../lib/uploadthing-client";
 import { supabase } from "../../lib/supabase/browser";
 import { analyzeDocumentFile, extractPlaceholdersFromText } from "../../lib/document-analysis";
 import { normalizeEmail, normalizeRecipients } from "../../lib/documents";
 import { getScopedStorageItem, setScopedStorageItem } from "../../lib/user-storage";
+import { getStoredSignature, setStoredSignature } from "../../lib/signature-storage";
 
 type TemplateId = string | number;
 
@@ -954,10 +955,11 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   const todayISO = new Date().toISOString().split("T")[0];
 
   const hasUploadedDocument = Boolean(template.fileDataUrl);
-  const isOfferLetterTemplate = template.name.includes("Employment Offer") || template.name.includes("Offer Letter");
+  const isOfferLetterTemplate = template.name.toLowerCase().includes("employment offer") || 
+                               template.name.toLowerCase().includes("offer letter");
   const templateContent = isOfferLetterTemplate
     ? OFFER_LETTER_TEMPLATE
-    : "";
+    : (template.detectedText || "");
   const templateFields = templateContent ? generateTemplateFields(templateContent) : [];
   const resolvedTemplateBaseContent = hasUploadedDocument
     ? ""
@@ -998,6 +1000,136 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   // Form values for template fields
   const [formValues, setFormValues] = useState<Record<string, string>>(getInitialFormValues);
   const [placeholderValues, setPlaceholderValues] = useState<Record<string, string>>({});
+
+  // Signature Pad State
+  const [showSignaturePad, setShowSignaturePad] = useState(false);
+  const [signatureMode, setSignatureMode] = useState<"draw" | "type" | "upload">("draw");
+  const [typedSignature, setTypedSignature] = useState("");
+  const [uploadedSignature, setUploadedSignature] = useState<string | null>(null);
+  const [isSavingSignature, setIsSavingSignature] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const isDrawingRef = useRef(false);
+
+  // Drawing Handlers
+  const getCoordinates = (e: React.MouseEvent | React.TouchEvent): { x: number; y: number } | null => {
+    if (!canvasRef.current) return null;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const scaleX = canvasRef.current.width / rect.width;
+    const scaleY = canvasRef.current.height / rect.height;
+
+    if ("touches" in e) {
+      if (e.touches.length === 0) return null;
+      return {
+        x: (e.touches[0].clientX - rect.left) * scaleX,
+        y: (e.touches[0].clientY - rect.top) * scaleY,
+      };
+    }
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+    };
+  };
+
+  const handleMouseDown = (e: React.MouseEvent | React.TouchEvent) => {
+    isDrawingRef.current = true;
+    const coords = getCoordinates(e);
+    if (!coords || !canvasRef.current) return;
+    const ctx = canvasRef.current.getContext("2d");
+    if (!ctx) return;
+    ctx.beginPath();
+    ctx.moveTo(coords.x, coords.y);
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#000000";
+  };
+
+  const handleMouseMove = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!isDrawingRef.current) return;
+    const coords = getCoordinates(e);
+    if (!coords || !canvasRef.current) return;
+    const ctx = canvasRef.current.getContext("2d");
+    if (!ctx) return;
+    ctx.lineTo(coords.x, coords.y);
+    ctx.stroke();
+  };
+
+  const handleMouseUp = () => {
+    isDrawingRef.current = false;
+  };
+
+  const clearCanvas = () => {
+    if (!canvasRef.current) return;
+    const ctx = canvasRef.current.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+  };
+
+  const handleSignatureImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => setUploadedSignature(event.target?.result as string);
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const saveNewSignature = async () => {
+    let signatureDataUrl = "";
+
+    if (signatureMode === "draw") {
+      if (!canvasRef.current) return;
+      // Check if canvas is empty
+      const ctx = canvasRef.current.getContext("2d");
+      const blank = document.createElement('canvas');
+      blank.width = canvasRef.current.width;
+      blank.height = canvasRef.current.height;
+      if (canvasRef.current.toDataURL() === blank.toDataURL()) {
+        alert("Please draw your signature first.");
+        return;
+      }
+      signatureDataUrl = canvasRef.current.toDataURL();
+    } else if (signatureMode === "type") {
+      if (!typedSignature.trim()) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = 400;
+      canvas.height = 200;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "white";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.font = "italic 40px 'Dancing Script', cursive, serif";
+        ctx.fillStyle = "black";
+        ctx.textAlign = "center";
+        ctx.fillText(typedSignature, 200, 110);
+        signatureDataUrl = canvas.toDataURL();
+      }
+    } else if (signatureMode === "upload") {
+      if (!uploadedSignature) return;
+      signatureDataUrl = uploadedSignature;
+    }
+
+    if (!signatureDataUrl || !currentUserId) return;
+
+    setIsSavingSignature(true);
+    try {
+      const { error } = await supabase.from("signatures").insert({
+        owner_id: currentUserId,
+        data_url: signatureDataUrl,
+      });
+
+      if (error) throw error;
+      setSavedSignature(signatureDataUrl);
+      setStoredSignature(currentUserId, signatureDataUrl);
+      setShowSignaturePad(false);
+      setTypedSignature("");
+      setUploadedSignature(null);
+    } catch (error) {
+      console.error("Failed to save signature:", error);
+      alert("Failed to save signature. Please try again.");
+    } finally {
+      setIsSavingSignature(false);
+    }
+  };
   const liveUploadedPreviewText = useMemo(() => {
     if (!template.detectedText) return "";
 
@@ -1064,6 +1196,11 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   // Step 2: recipients
   const [selectedRecipients, setSelectedRecipients] = useState<Recipient[]>([]);
   const [isSent, setIsSent] = useState(false);
+  const [isPlacingSignature, setIsPlacingSignature] = useState(false);
+  const [manualSignaturePos, setManualSignaturePos] = useState<{ x: number; y: number } | null>(null);
+  const [manualSignatureScale, setManualSignatureScale] = useState(1.0);
+  const [isDraggingSignature, setIsDraggingSignature] = useState(false);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [isPersisting, setIsPersisting] = useState(false);
   const [manualEmail, setManualEmail] = useState("");
@@ -1115,7 +1252,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
         SENDER_EMAIL: userData.user?.email || prev.SENDER_EMAIL,
       }));
 
-      setSavedSignature(signatureRow?.data_url ?? null);
+      const localSig = getStoredSignature(currentUserId);
+      setSavedSignature(localSig || signatureRow?.data_url || null);
     };
 
     void loadProfileAndSignature();
@@ -1367,6 +1505,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
       fileKey: fileKey, // Store the unique key for deletion
       category: activeCategory, // Store the category for reviewer tracking
       content: filledHtmlContent, // Store the filled HTML content for viewing
+      manualSignaturePos: manualSignaturePos, // Pass manual placement coordinates
+      manualSignatureScale: manualSignatureScale, // Pass manual scale
     };
 
     try {
@@ -1557,9 +1697,96 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                 <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">Edit details</h3>
                 <p className="text-xs text-slate-500 font-medium mt-1">Update placeholders</p>
               </div>
-              <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar pb-24">
+              <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar pb-24 text-left">
+                {/* My Signature Section */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                       <span className="w-4 h-px bg-slate-200" /> My Signature
+                    </h4>
+                    <button 
+                      onClick={() => setShowSignaturePad(true)}
+                      className="text-[10px] font-bold text-violet-600 hover:text-violet-700 transition-colors"
+                    >
+                      {savedSignature ? "Change Signature" : "Add Signature"}
+                    </button>
+                  </div>
+                  
+                  <div className="relative group">
+                    {savedSignature ? (
+                      <div className="space-y-3">
+                        <div className="p-4 rounded-2xl bg-white border border-slate-100 shadow-sm group-hover:border-violet-200 transition-all flex items-center justify-center min-h-[100px]">
+                          <img src={savedSignature} alt="My Signature" className="max-h-20 w-auto object-contain" />
+                        </div>
+                        <button
+                          onClick={() => {
+                            if (manualSignaturePos) {
+                              setManualSignaturePos(null);
+                              setIsPlacingSignature(false);
+                            } else {
+                              setIsPlacingSignature(!isPlacingSignature);
+                            }
+                          }}
+                          className={`w-full py-3 rounded-xl border-2 font-bold text-xs transition-all flex items-center justify-center gap-2 ${
+                            manualSignaturePos 
+                              ? "border-red-100 bg-red-50 text-red-600 hover:bg-red-100" 
+                              : isPlacingSignature 
+                                ? "border-violet-200 bg-violet-50 text-violet-600 shadow-inner" 
+                                : "border-slate-100 bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-200"
+                          }`}
+                        >
+                          {manualSignaturePos ? (
+                            <>
+                              <Trash2 className="w-3.5 h-3.5" /> Remove from Document
+                            </>
+                          ) : (
+                            <>
+                              <PenTool className="w-3.5 h-3.5" />
+                              {isPlacingSignature ? "Click on document..." : "Place on document"}
+                            </>
+                          )}
+                        </button>
+
+                        {/* Resize Slider */}
+                        {manualSignaturePos && (
+                          <div className="pt-4 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                             <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Signature Size</span>
+                                <span className="text-[10px] font-black text-violet-600 bg-violet-50 px-2 py-0.5 rounded-md">{Math.round(manualSignatureScale * 100)}%</span>
+                             </div>
+                             <input 
+                               type="range"
+                               min="0.5"
+                               max="2.0"
+                               step="0.1"
+                               value={manualSignatureScale}
+                               onChange={(e) => setManualSignatureScale(parseFloat(e.target.value))}
+                               className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-violet-600"
+                             />
+                             <p className="text-[9px] text-slate-400 font-medium leading-relaxed italic text-center">Tip: Drag the signature on the document to reposition it.</p>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={() => setShowSignaturePad(true)}
+                        className="w-full flex flex-col items-center justify-center p-8 rounded-2xl border-2 border-dashed border-slate-100 bg-slate-50/50 hover:bg-white hover:border-violet-200 transition-all gap-3"
+                      >
+                        <div className="w-10 h-10 rounded-full bg-violet-50 flex items-center justify-center text-violet-600 shadow-sm ring-4 ring-violet-50/50">
+                          <Plus className="w-5 h-5" />
+                        </div>
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Sign Now</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                     <span className="w-4 h-px bg-slate-200" /> Edit placeholders
+                  </h4>
                 {hasUploadedDocument ? (
-                  <>
+                  <div className="space-y-6">
                     {detectedPlaceholders.length > 0 ? (
                       detectedPlaceholders.map((placeholder, index) => (
                         <div key={`${placeholder}-${index}`} className="space-y-1.5 group">
@@ -1579,23 +1806,26 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                         We could not detect placeholders from this file yet.
                       </div>
                     )}
-                  </>
+                  </div>
                 ) : (
-                  templateFields
-                    .filter((f) => f.key !== "SIGNATURE" && f.key !== "CURRENT_DATE" && f.key !== "MANAGER_NAME_DESIGNATION" && f.key !== "OFFER_EXPIRY_DATE" && f.key !== "TEAM_NAME")
-                    .map((field) => (
-                      <div key={field.key} className="space-y-1.5 group">
-                        <label className="text-[10px] font-black text-slate-600 uppercase tracking-wider group-focus-within:text-violet-500 transition-colors">{field.label}</label>
-                        <input
-                          type={field.type}
-                          value={formValues[field.key] || ""}
-                          onChange={e => setFormValues(prev => ({ ...prev, [field.key]: e.target.value }))}
-                          className="w-full px-4 py-3 rounded-xl border border-slate-200 text-xs font-semibold outline-none focus:border-violet-400 focus:ring-4 focus:ring-violet-50 transition-all bg-slate-50/50 focus:bg-white placeholder:text-slate-300"
-                          placeholder={`Enter ${field.label.toLowerCase()}...`}
-                        />
-                      </div>
-                    ))
+                  <div className="space-y-6">
+                    {templateFields
+                      .filter((f) => f.key !== "SIGNATURE" && f.key !== "CURRENT_DATE" && f.key !== "MANAGER_NAME_DESIGNATION" && f.key !== "OFFER_EXPIRY_DATE" && f.key !== "TEAM_NAME")
+                      .map((field) => (
+                        <div key={field.key} className="space-y-1.5 group">
+                          <label className="text-[10px] font-black text-slate-600 uppercase tracking-wider group-focus-within:text-violet-500 transition-colors">{field.label}</label>
+                          <input
+                            type={field.type}
+                            value={formValues[field.key] || ""}
+                            onChange={e => setFormValues(prev => ({ ...prev, [field.key]: e.target.value }))}
+                            className="w-full px-4 py-3 rounded-xl border border-slate-200 text-xs font-semibold outline-none focus:border-violet-400 focus:ring-4 focus:ring-violet-50 transition-all bg-slate-50/50 focus:bg-white placeholder:text-slate-300"
+                            placeholder={`Enter ${field.label.toLowerCase()}...`}
+                          />
+                        </div>
+                      ))}
+                  </div>
                 )}
+                </div>
               </div>
               <div className="p-6 border-t border-slate-100 bg-white/80 backdrop-blur-sm shrink-0 relative z-20 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
               </div>
@@ -1603,9 +1833,63 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
 
             {/* Main Area: Document Preview */}
             <div className="flex-1 overflow-y-auto p-6 flex justify-center bg-slate-100/30 custom-scrollbar">
-              <div className="w-full max-w-4xl h-fit">
+              <div 
+                ref={previewContainerRef}
+                onMouseMove={(e) => {
+                  if (isDraggingSignature && previewContainerRef.current) {
+                    const rect = previewContainerRef.current.getBoundingClientRect();
+                    const x = ((e.clientX - rect.left) / rect.width) * 100;
+                    const y = ((e.clientY - rect.top) / rect.height) * 100;
+                    // Clamp to 0-100
+                    setManualSignaturePos({ 
+                      x: Math.max(0, Math.min(100, x)), 
+                      y: Math.max(0, Math.min(100, y)) 
+                    });
+                  }
+                }}
+                onMouseUp={() => setIsDraggingSignature(false)}
+                onMouseLeave={() => setIsDraggingSignature(false)}
+                onClick={(e) => {
+                  if (isPlacingSignature && previewContainerRef.current) {
+                    const rect = previewContainerRef.current.getBoundingClientRect();
+                    const x = ((e.clientX - rect.left) / rect.width) * 100;
+                    const y = ((e.clientY - rect.top) / rect.height) * 100;
+                    setManualSignaturePos({ x, y });
+                    setIsPlacingSignature(false);
+                  }
+                }}
+                className={`w-full max-w-4xl h-fit transition-all relative ${isPlacingSignature ? "cursor-crosshair ring-4 ring-violet-400 ring-offset-4 ring-offset-slate-100" : ""}`}
+              >
                 <p className="text-sm font-bold text-slate-700 mb-4">Live preview</p>
-                <div className="bg-white rounded-2xl shadow-lg shadow-slate-200 border border-slate-200 overflow-hidden">
+                <div className="bg-white rounded-2xl shadow-lg shadow-slate-200 border border-slate-200 overflow-hidden relative">
+                  {/* Manual Placement Render */}
+                  {manualSignaturePos && savedSignature && (
+                    <div 
+                      className={`absolute z-50 group ${isDraggingSignature ? "cursor-grabbing" : "cursor-grab"}`}
+                      style={{ 
+                        left: `${manualSignaturePos.x}%`, 
+                        top: `${manualSignaturePos.y}%`,
+                        transform: `translate(-50%, -50%) scale(${manualSignatureScale})`,
+                        pointerEvents: isPlacingSignature ? 'none' : 'auto'
+                      }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation();
+                        setIsDraggingSignature(true);
+                      }}
+                    >
+                      <div className={`relative ${isDraggingSignature ? "opacity-75" : ""}`}>
+                        <img 
+                          src={savedSignature} 
+                          alt="Placed Signature" 
+                          className="h-16 w-auto object-contain select-none pointer-events-none" 
+                        />
+                        <div className={`absolute -inset-2 border-2 border-dashed border-violet-400 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity ${isDraggingSignature ? "opacity-100" : ""}`} />
+                        <div className="absolute -top-1 -right-1 w-4 h-4 bg-violet-600 rounded-full border-2 border-white shadow-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                           <div className="w-1.5 h-1.5 bg-white rounded-full" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   {hasUploadedDocument && template.fileDataUrl ? (
                     <div className="p-6">
                       {template.detectedText || detectedPlaceholders.length > 0 ? (
@@ -1982,126 +2266,331 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
               )}
           </>
         )}
+        {/* ── STEP 3: Confirm & Send ── */}
         {step === "send" && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-300">
-            <div className="w-full max-w-3xl mx-4 bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-300">
-              {isSent ? (
-                <div className="px-10 py-8 text-center space-y-5">
-                  <div className="flex items-center justify-center gap-4">
-                    <div className="rounded-full bg-green-50 w-16 h-16 flex items-center justify-center shadow-inner shrink-0">
-                      <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                      </svg>
-                    </div>
-                    <div className="text-left">
-                      <h3 className="text-xl font-black text-green-600 tracking-tighter">{activeCategory === "Reviewer" ? "Sent for Review!" : "Sent Successfully!"}</h3>
-                      <p className="text-slate-500 text-sm font-medium">{activeCategory === "Reviewer" ? "Track progress in shared document page." : "Your document has been sent. Check status in shared documents."}</p>
-                    </div>
+          <div className="flex-1 flex min-h-[calc(100vh-73px)] bg-slate-50 overflow-hidden">
+            {isSent ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-white animate-in fade-in duration-500">
+                <div className="w-24 h-24 rounded-[2.5rem] bg-green-50 flex items-center justify-center text-4xl mb-6 shadow-sm border border-green-100">✨</div>
+                <div className="max-w-md space-y-4">
+                  <h3 className="text-3xl font-black text-slate-900 tracking-tight leading-tight">
+                    {activeCategory === "Reviewer" ? "Sent for Review!" : "Document Sent Successfully!"}
+                  </h3>
+                  <p className="text-slate-500 font-medium leading-relaxed">
+                    {activeCategory === "Reviewer" 
+                      ? "Your document has been sent for internal review. You can track its progress in the Documents page." 
+                      : "Everything looks great! Your document is on its way to the recipients for signing."}
+                  </p>
+                  <div className="pt-6">
+                    <button 
+                      onClick={() => router.push("/dashboard/documents")} 
+                      className="py-4 px-10 rounded-2xl bg-slate-900 text-white font-bold text-sm shadow-xl shadow-slate-200 hover:bg-slate-800 transition-all hover:-translate-y-1 active:scale-95"
+                    >
+                      View in Shared Documents
+                    </button>
                   </div>
-                  <button onClick={() => router.push("/dashboard/documents")} className="py-2.5 px-8 rounded-full bg-violet-600 text-white font-bold text-sm hover:bg-violet-800 transition-all">Go to Shared Documents</button>
                 </div>
-              ) : (
-                <>
-                  {/* Popup Header */}
-                  <div className="px-8 pt-8 pb-2">
-                    <h3 className="text-lg font-black text-slate-900 tracking-tight leading-tight">Confirm & Send</h3>
-                    <p className="text-slate-400 text-xs font-medium mt-1">
-                      Sending <span className="text-violet-600 font-bold">&ldquo;{template.name}&rdquo;</span> to {(selectedRecipients.length + (manualEmail.trim() && !selectedRecipients.some(r => normalizeEmail(r.email) === normalizeEmail(manualEmail)) ? 1 : 0)) || 1} recipient{((selectedRecipients.length + (manualEmail.trim() && !selectedRecipients.some(r => normalizeEmail(r.email) === normalizeEmail(manualEmail)) ? 1 : 0)) > 1) ? "s" : ""}
-                    </p>
-                  </div>
+              </div>
+            ) : (
+              <>
+                {/* Left Panel: Template Preview */}
+                <div className="flex-1 flex flex-col bg-slate-50 overflow-hidden animate-in fade-in duration-1000">
+                  <div className="flex-1 overflow-y-auto px-12 py-16 custom-scrollbar scroll-smooth">
+                    <div className="max-w-4xl mx-auto bg-white rounded-[2.5rem] shadow-2xl border border-slate-200/60 overflow-hidden ring-8 ring-slate-100/30">
+                      <div className="p-16 text-left">
+                        {/* Full letter content with replaced placeholders */}
+                        <div className="space-y-6 text-slate-600 leading-[2] text-[16px] font-sans antialiased tracking-tight relative z-10" style={{ fontFamily: '"Inter", sans-serif' }}>
+                          {/* Manual Signature Overlay for Step 3 */}
+                          {manualSignaturePos && savedSignature && (
+                            <div 
+                              className="absolute z-50 pointer-events-none"
+                              style={{ 
+                                left: `${manualSignaturePos.x}%`, 
+                                top: `${manualSignaturePos.y}%`,
+                                transform: `translate(-50%, -50%) scale(${manualSignatureScale})`
+                              }}
+                            >
+                              <img 
+                                src={savedSignature} 
+                                alt="Manually Placed Signature" 
+                                className="h-16 w-auto object-contain" 
+                              />
+                            </div>
+                          )}
+                          {(() => {
+                            let filledContent = templateContent;
 
-                  {/* Popup Body — horizontal layout */}
-                  <div className="px-8 py-5 flex gap-6">
-                    {/* Sender Details */}
-                    <div className="flex-1 space-y-2">
-                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Sender Details</h4>
-                      <div className="bg-slate-50 rounded-2xl p-4 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-slate-500 font-medium">Sender Name</span>
-                          <span className="text-sm font-semibold text-slate-900">{formValues.SENDER_NAME || "Digimabble Sender"}</span>
-                        </div>
-                        <div className="border-t border-slate-100" />
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-slate-500 font-medium">Company</span>
-                          <span className="text-sm font-semibold text-slate-900">{formValues.SENDER_COMPANY || "Digimabble"}</span>
-                        </div>
-                        <div className="border-t border-slate-100" />
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-slate-500 font-medium">Designation</span>
-                          <span className="text-sm font-semibold text-slate-900">{formValues.SENDER_DESIGNATION || "HR Director"}</span>
-                        </div>
-                        <div className="border-t border-slate-100" />
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-slate-500 font-medium">Date</span>
-                          <span className="text-sm font-semibold text-slate-900">{formatDate(formValues.CURRENT_DATE || todayISO)}</span>
+                            // Security & Style replacements
+                            filledContent = filledContent.replace(/<strong>/g, '<span class="font-bold text-slate-900">').replace(/<\/strong>/g, '</span>');
+
+                            Object.keys(formValues).forEach(key => {
+                              const val = formValues[key] || `<span class="bg-violet-50 text-violet-400 px-1 rounded">[${key}]</span>`;
+                              const isDateKey = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
+                              const displayVal = isDateKey(key) ? formatDate(val) : val;
+                              filledContent = filledContent.replace(new RegExp(`\\[${key}\\]`, 'g'), `<span class="font-bold text-slate-900">${displayVal}</span>`);
+                            });
+
+                            if (savedSignature) {
+                              filledContent = filledContent.replace(
+                                /\[SIGNATURE\]/g,
+                                `<div style="margin-top: 30px;">
+                                  <img src="${savedSignature}" alt="Signature" class="h-24 w-auto object-contain" />
+                                  <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 12px; margin-top: 8px;">Authorized Signature</div>
+                                </div>`
+                              );
+                            } else {
+                              filledContent = filledContent.replace(
+                                /\[SIGNATURE\]/g,
+                                `<div style="margin-top: 30px;">
+                                  <div style="height: 100px;"></div>
+                                  <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 12px;">Authorized Signature</div>
+                                </div>`
+                              );
+                            }
+                            return <div dangerouslySetInnerHTML={{ __html: filledContent.replace(/\n/g, "<br/>") }} />;
+                          })()}
                         </div>
                       </div>
                     </div>
+                  </div>
+                </div>
 
-                    {/* Recipients */}
-                    <div className="flex-1 space-y-2">
-                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Recipients</h4>
-                      <div className="space-y-2 max-h-44 overflow-y-auto custom-scrollbar">
-                        {selectedRecipients.map(r => (
-                          <div key={r.email} className="flex items-center gap-3 p-2.5 bg-slate-50 rounded-xl">
-                            <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center text-violet-600 text-xs font-black shrink-0">
-                              {r.name.charAt(0)}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-semibold text-slate-900 truncate">{r.name}</p>
-                            </div>
+                {/* Right Sidebar: Confirmation Details */}
+                <div className="w-[400px] bg-white border-l border-slate-200 flex flex-col animate-in slide-in-from-right duration-500 bg-white/80 backdrop-blur-md">
+                  <div className="flex-1 overflow-y-auto custom-scrollbar">
+                    <div className="p-8 border-b border-slate-100">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="w-8 h-8 rounded-xl bg-violet-600 flex items-center justify-center text-white text-xs font-black shadow-lg shadow-violet-200">3</div>
+                        <h3 className="text-2xl font-black text-slate-900 tracking-tight">Confirm & Send</h3>
+                      </div>
+                      <p className="text-slate-500 text-xs font-medium">Finalize and dispatch your document.</p>
+                    </div>
+
+                    <div className="p-8 space-y-10">
+                      {/* Sender Section */}
+                      <div className="space-y-4">
+                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                          <span className="w-4 h-px bg-slate-200" /> Sender Information
+                        </h4>
+                        <div className="bg-slate-50/50 rounded-2xl p-6 space-y-4 border border-slate-100/50">
+                          <div className="flex flex-col gap-1 text-left">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Sender Name</span>
+                            <span className="text-sm font-bold text-slate-700">{formValues.SENDER_NAME || "Digimabble Sender"}</span>
                           </div>
-                        ))}
-                        {manualEmail.trim() && !selectedRecipients.some(r => normalizeEmail(r.email) === normalizeEmail(manualEmail)) && (
-                          <div className="flex items-center gap-3 p-2.5 bg-slate-50 rounded-xl">
-                            <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center text-violet-600 text-xs font-black shrink-0">
-                              ✉
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-semibold text-slate-900 truncate">External Contact</p>
-                            </div>
+                          <div className="flex flex-col gap-1 text-left">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Company & Role</span>
+                            <span className="text-sm font-bold text-slate-700">{formValues.SENDER_COMPANY || "Digimabble"} • {formValues.SENDER_DESIGNATION || "HR Director"}</span>
                           </div>
+                          <div className="flex flex-col gap-1 text-left">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Date</span>
+                            <span className="text-sm font-bold text-slate-700">{formatDate(formValues.CURRENT_DATE || todayISO)}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Recipients Section */}
+                      <div className="space-y-4 text-left">
+                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                          <span className="w-4 h-px bg-slate-200" /> Recipients
+                        </h4>
+                        <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                          {selectedRecipients.map(r => (
+                            <div key={r.email} className="flex items-center gap-4 p-4 bg-white border border-slate-100 rounded-2xl shadow-sm hover:border-violet-200 transition-colors">
+                              <div className="w-10 h-10 rounded-xl bg-violet-50 flex items-center justify-center text-violet-600 text-sm font-black shrink-0">
+                                {r.name.charAt(0).toUpperCase()}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-bold text-slate-900 truncate">{r.name}</p>
+                                <p className="text-[10px] text-slate-400 font-medium truncate">{r.email}</p>
+                              </div>
+                            </div>
+                          ))}
+                          {manualEmail.trim() && !selectedRecipients.some(r => normalizeEmail(r.email) === normalizeEmail(manualEmail)) && (
+                            <div className="flex items-center gap-4 p-4 bg-white border border-slate-100 rounded-2xl shadow-sm bg-slate-50/50">
+                              <div className="w-10 h-10 rounded-xl bg-violet-100 flex items-center justify-center text-violet-600 text-sm font-black shrink-0">✉</div>
+                              <div className="flex-1 min-w-0 text-left">
+                                <p className="text-sm font-bold text-slate-900 truncate">{manualEmail}</p>
+                                <p className="text-[10px] text-slate-400 font-medium">External Contact</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions Sidebar Footer */}
+                  <div className="p-8 border-t border-slate-100 bg-slate-50/30 space-y-4">
+                    {sendError && (
+                      <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-xs font-bold text-red-600 animate-in shake duration-300">
+                        ⚠️ {sendError}
+                      </div>
+                    )}
+                    <div className="flex flex-col gap-3">
+                      <button
+                        onClick={handleSend}
+                        disabled={isUploadingDoc || isPersisting}
+                        className="w-full py-4 rounded-2xl bg-violet-600 text-white font-black text-sm shadow-xl shadow-violet-100 hover:bg-violet-700 hover:-translate-y-1 transition-all active:scale-95 disabled:bg-slate-200 disabled:shadow-none flex items-center justify-center gap-2"
+                      >
+                        {isUploadingDoc || isPersisting ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Sending...
+                          </>
+                        ) : (
+                          activeCategory === "Reviewer" ? "Send for Review" : "Send Document Now"
                         )}
-                      </div>
+                      </button>
+                      <button
+                        onClick={() => setStep("recipients")}
+                        className="w-full py-4 rounded-2xl text-slate-400 font-bold text-sm hover:bg-slate-100 hover:text-slate-600 transition-all active:scale-95"
+                      >
+                        Back to Recipients
+                      </button>
                     </div>
                   </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
-                  {/* Popup Footer */}
-                  <div className="px-8 pb-6 pt-1 flex gap-3">
-                    <button
-                      onClick={() => setStep("recipients")}
-                      className="flex-1 py-3 rounded-2xl text-slate-600 font-bold text-sm hover:text-slate-900 transition-all active:scale-95"
-                    >
-                      Back
-                    </button>
-                    <button
-                      onClick={handleSend}
-                      disabled={isUploadingDoc || isPersisting}
-                      className="flex-[2] py-3 rounded-2xl bg-violet-600 text-white font-bold text-sm shadow-lg shadow-violet-200 hover:bg-violet-700 hover:-translate-y-0.5 transition-all active:scale-95 disabled:bg-slate-300 disabled:shadow-none flex items-center justify-center gap-2"
-                    >
-                      {isUploadingDoc || isPersisting ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Sending...
-                        </>
-                      ) : (
-                        activeCategory === "Reviewer" ? "Review" : "Send Now"
-                      )}
-                    </button>
-                  </div>
-                  {sendError && (
-                    <div className="px-8 pb-6">
-                      <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
-                        {sendError}
-                      </div>
+        {/* Signature Pad Modal Overlay */}
+        {showSignaturePad && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-300">
+            <div className="w-full max-w-lg mx-4 bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-300">
+              <div className="flex items-center justify-between border-b border-slate-100 px-8 py-6">
+                <div>
+                  <h3 className="text-xl font-black text-slate-900 tracking-tight">Create Signature</h3>
+                  <p className="text-xs text-slate-500 font-medium mt-1">This will be added to the document.</p>
+                </div>
+                <button
+                  onClick={() => setShowSignaturePad(false)}
+                  className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-50 border border-slate-100 text-slate-400 hover:text-slate-900 transition-all hover:rotate-90"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Interaction Modes */}
+              <div className="flex border-b border-slate-100">
+                {(["draw", "type", "upload"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setSignatureMode(mode)}
+                    className={`flex-1 py-4 text-xs font-black uppercase tracking-widest transition-all ${
+                      signatureMode === mode
+                        ? "text-violet-600 border-b-2 border-violet-600 bg-violet-50/30"
+                        : "text-slate-400 hover:text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className="flex items-center justify-center gap-2">
+                       {mode === "draw" && <PenTool className="w-3 h-3" />}
+                       {mode === "type" && <Type className="w-3 h-3" />}
+                       {mode === "upload" && <CloudUpload className="w-3 h-3" />}
+                       {mode}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="p-8">
+                {signatureMode === "draw" && (
+                  <div className="space-y-4">
+                    <div className="relative rounded-2xl overflow-hidden border-2 border-slate-100 bg-slate-50/50 hover:border-violet-100 transition-all">
+                      <canvas
+                        ref={canvasRef}
+                        width={400}
+                        height={200}
+                        className="w-full cursor-crosshair"
+                        onMouseDown={handleMouseDown}
+                        onMouseMove={handleMouseMove}
+                        onMouseUp={handleMouseUp}
+                        onMouseLeave={handleMouseUp}
+                        onTouchStart={handleMouseDown}
+                        onTouchMove={handleMouseMove}
+                        onTouchEnd={handleMouseUp}
+                      />
+                      <button
+                        onClick={clearCanvas}
+                        className="absolute bottom-4 right-4 px-3 py-1.5 rounded-lg bg-white/80 backdrop-blur-md border border-slate-200 text-[10px] font-black text-slate-400 hover:text-slate-900 shadow-sm transition-all"
+                      >
+                        Clear Canvas
+                      </button>
                     </div>
+                  </div>
+                )}
+
+                {signatureMode === "type" && (
+                  <div className="space-y-6">
+                    <input
+                      type="text"
+                      autoFocus
+                      value={typedSignature}
+                      onChange={(e) => setTypedSignature(e.target.value)}
+                      placeholder="Type your name here..."
+                      className="w-full rounded-2xl border-2 border-slate-100 bg-slate-50/50 px-6 py-4 text-lg font-bold text-slate-800 outline-none placeholder:text-slate-300 focus:border-violet-200 focus:bg-white transition-all shadow-inner"
+                    />
+                    {typedSignature && (
+                      <div className="rounded-3xl border border-slate-100 bg-gradient-to-br from-white to-slate-50 p-12 text-center shadow-xl shadow-slate-100/50 border-t-8 border-violet-100">
+                        <p className="text-5xl text-slate-900 antialiased" style={{ fontFamily: '"Great Vibes", cursive, cursive-serif, serif' }}>
+                          {typedSignature}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {signatureMode === "upload" && (
+                  <div className="space-y-6">
+                    <label className="flex flex-col items-center justify-center rounded-3xl border-2 border-dashed border-slate-200 bg-slate-50/30 p-12 cursor-pointer hover:bg-slate-100/50 hover:border-violet-200 transition-all group">
+                      <div className="w-16 h-16 rounded-2xl bg-white flex items-center justify-center text-slate-400 mb-4 shadow-sm group-hover:scale-110 group-hover:text-violet-500 transition-all ring-8 ring-slate-100/30">
+                        <CloudUpload className="w-8 h-8" />
+                      </div>
+                      <span className="text-sm font-black text-slate-600">Select Signature Image</span>
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-2 px-3 py-1 rounded-full bg-slate-100 group-hover:bg-violet-100 group-hover:text-violet-600 transition-all">PNG, JPG up to 2MB</span>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg"
+                        onChange={handleSignatureImageUpload}
+                        className="hidden"
+                      />
+                    </label>
+                    {uploadedSignature && (
+                      <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-md shadow-slate-100">
+                        <img src={uploadedSignature} alt="Uploaded" className="max-h-32 mx-auto object-contain" />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-3 bg-slate-50/50 px-8 py-6 border-t border-slate-100">
+                <button
+                  onClick={() => setShowSignaturePad(false)}
+                  className="flex-1 py-4 rounded-2xl border border-slate-200 bg-white text-sm font-black text-slate-400 hover:text-slate-600 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveNewSignature}
+                  disabled={isSavingSignature}
+                  className="flex-[2] py-4 rounded-2xl bg-violet-600 text-white font-black text-sm shadow-xl shadow-violet-100 hover:bg-violet-700 hover:-translate-y-1 transition-all active:scale-95 disabled:bg-slate-300 disabled:shadow-none flex items-center justify-center gap-2"
+                >
+                  {isSavingSignature ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    "Save & Use Signature"
                   )}
-                </>
-              )}
+                </button>
+              </div>
             </div>
           </div>
         )}
-      </div >
-    </div >
+      </div>
+    </div>
   );
 }
