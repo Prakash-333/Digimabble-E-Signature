@@ -1722,112 +1722,150 @@ export default function SignDocumentPage() {
           )}
 
           {/* Main content fills remaining space */}
-          <div className="flex-1 min-h-0">
-            {signedPreview || signedHtmlContent ? (
-              <div className="flex flex-col h-full gap-3">
-                <div className="flex-1 min-h-0 rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-inner overflow-auto">
-                  {signedHtmlContent ? (
-                    <div className="mx-auto w-[800px] min-h-[1056px] shrink-0 bg-white p-12 md:p-16 shadow-sm border border-slate-100 text-[15px] text-slate-800 leading-[1.9] tracking-tight relative"
-                         dangerouslySetInnerHTML={{ __html: signedHtmlContent.replace(/\n/g, "<br/>").replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">') }} />
-                  ) : (
-                    <img src={signedPreview!} alt="Signed" className="mx-auto max-h-full w-auto shadow-2xl border border-white" />
-                  )}
+          <div className="flex-1 min-h-0 flex gap-6">
+            <div className="flex-1 min-h-0">
+              {signedPreview || signedHtmlContent ? (
+                <div className="flex flex-col h-full gap-3">
+                  <div className="flex-1 min-h-0 rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-inner overflow-auto">
+                    {signedHtmlContent ? (
+                      <div className="mx-auto w-[800px] min-h-[1056px] shrink-0 bg-white p-12 md:p-16 shadow-sm border border-slate-100 text-[15px] text-slate-800 leading-[1.9] tracking-tight relative"
+                           dangerouslySetInnerHTML={{ __html: signedHtmlContent.replace(/\n/g, "<br/>").replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">') }} />
+                    ) : (
+                      <img src={signedPreview!} alt="Signed" className="mx-auto max-h-full w-auto shadow-2xl border border-white" />
+                    )}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div
-                className={
-                  "h-full flex flex-col items-center justify-center rounded-2xl border-2 border-dashed bg-white px-6 text-center transition-all " +
-                  (isDragActive ? "border-violet-500 bg-violet-50 scale-[0.99]" : "border-slate-200 hover:border-violet-300 hover:bg-slate-50/50")
-                }
-                onDragOver={(e) => { e.preventDefault(); setIsDragActive(true); }}
-                onDragLeave={() => setIsDragActive(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setIsDragActive(false);
-                  if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
-                }}
-              >
-                {isUploadingToCloud ? (
-                  <div className="flex flex-col items-center justify-center space-y-4">
-                    <div className="relative">
-                      <div className="h-16 w-16 rounded-full border-4 border-violet-100 border-t-violet-600 animate-spin"></div>
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <CloudUpload className="h-6 w-6 text-violet-600" />
+              ) : (
+                <div
+                  className={
+                    "h-full flex flex-col items-center justify-center rounded-2xl border-2 border-dashed bg-white px-6 text-center transition-all " +
+                    (isDragActive ? "border-violet-500 bg-violet-50 scale-[0.99]" : "border-slate-200 hover:border-violet-300 hover:bg-slate-50/50")
+                  }
+                  onDragOver={(e) => { e.preventDefault(); setIsDragActive(true); }}
+                  onDragLeave={() => setIsDragActive(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDragActive(false);
+                    if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+                  }}
+                >
+                  {isUploadingToCloud ? (
+                    <div className="flex flex-col items-center justify-center space-y-4">
+                      <div className="relative">
+                        <div className="h-16 w-16 rounded-full border-4 border-violet-100 border-t-violet-600 animate-spin"></div>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <CloudUpload className="h-6 w-6 text-violet-600" />
+                        </div>
+                      </div>
+                      <p className="text-base font-bold text-slate-900">Uploading...</p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-100 text-violet-600 shadow-sm transition-transform group-hover:scale-110">
+                        <CloudUpload className="h-7 w-7" />
+                      </div>
+                      <p className="text-base font-bold text-slate-900">Choose a file or drag it here</p>
+                      <p className="mt-1 text-xs text-slate-500 font-medium tracking-tight">Accepts {acceptedHint}</p>
+                      <div className="mt-5">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-7 py-3 text-sm font-bold text-white shadow-xl shadow-violet-900/20 hover:bg-violet-700 transition-all active:scale-95"
+                          onClick={() => fileInputRef.current?.click()}
+                        >
+                          Browse Files
+                        </button>
+                      </div>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept={ACCEPTED_INPUT}
+                        multiple
+                        className="hidden"
+                        onChange={(e) => {
+                          if (e.target.files?.length) addFiles(e.target.files);
+                        }}
+                      />
+                    </>
+                  )}
+
+                  {docs.length > 0 && (
+                    <div className="mt-6 w-full max-w-lg">
+                      <p className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">Queue ({docs.length})</p>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {docs.map((doc) => (
+                          <div
+                            key={doc.id}
+                            className={
+                              "group flex items-center justify-between gap-2 rounded-xl border p-2.5 transition-all cursor-pointer " +
+                              (doc.id === activeDocId ? "border-violet-300 bg-violet-50 ring-1 ring-violet-200" : "border-slate-100 bg-white hover:border-violet-200 shadow-sm")
+                            }
+                            onClick={() => setActiveDocId(doc.id)}
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-50 border border-slate-100">
+                                {doc.previewUrl ? <img src={doc.previewUrl} className="h-full w-full object-cover" /> : <div className="text-[9px] font-black text-slate-400">{doc.type.split('/')[1].toUpperCase()}</div>}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="truncate text-xs font-bold text-slate-800">{doc.name}</p>
+                                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">{formatBytes(doc.sizeBytes)}</p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="h-6 w-6 rounded-full flex items-center justify-center text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors text-xs"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                if (doc.key) {
+                                  await deleteCloudFiles(doc.key);
+                                }
+                                setDocs(prev => prev.filter(d => d.id !== doc.id));
+                                if (activeDocId === doc.id) setActiveDocId(null);
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
                       </div>
                     </div>
-                    <p className="text-base font-bold text-slate-900">Uploading...</p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-100 text-violet-600 shadow-sm transition-transform group-hover:scale-110">
-                      <CloudUpload className="h-7 w-7" />
-                    </div>
-                    <p className="text-base font-bold text-slate-900">Choose a file or drag it here</p>
-                    <p className="mt-1 text-xs text-slate-500 font-medium tracking-tight">Accepts {acceptedHint}</p>
-                    <div className="mt-5">
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-7 py-3 text-sm font-bold text-white shadow-xl shadow-violet-900/20 hover:bg-violet-700 transition-all active:scale-95"
-                        onClick={() => fileInputRef.current?.click()}
-                      >
-                        Browse Files
-                      </button>
-                    </div>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept={ACCEPTED_INPUT}
-                      multiple
-                      className="hidden"
-                      onChange={(e) => {
-                        if (e.target.files?.length) addFiles(e.target.files);
-                      }}
-                    />
-                  </>
-                )}
+                  )}
+                </div>
+              )}
+            </div>
 
-                {docs.length > 0 && (
-                  <div className="mt-6 w-full max-w-lg">
-                    <p className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">Queue ({docs.length})</p>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {docs.map((doc) => (
-                        <div
-                          key={doc.id}
-                          className={
-                            "group flex items-center justify-between gap-2 rounded-xl border p-2.5 transition-all cursor-pointer " +
-                            (doc.id === activeDocId ? "border-violet-300 bg-violet-50 ring-1 ring-violet-200" : "border-slate-100 bg-white hover:border-violet-200 shadow-sm")
-                          }
-                          onClick={() => setActiveDocId(doc.id)}
-                        >
-                          <div className="flex min-w-0 items-center gap-2">
-                            <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-50 border border-slate-100">
-                              {doc.previewUrl ? <img src={doc.previewUrl} className="h-full w-full object-cover" /> : <div className="text-[9px] font-black text-slate-400">{doc.type.split('/')[1].toUpperCase()}</div>}
-                            </div>
-                            <div className="min-w-0">
-                              <p className="truncate text-xs font-bold text-slate-800">{doc.name}</p>
-                              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">{formatBytes(doc.sizeBytes)}</p>
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            className="h-6 w-6 rounded-full flex items-center justify-center text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors text-xs"
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              if (doc.key) {
-                                await deleteCloudFiles(doc.key);
-                              }
-                              setDocs(prev => prev.filter(d => d.id !== doc.id));
-                              if (activeDocId === doc.id) setActiveDocId(null);
-                            }}
-                          >
-                            ✕
-                          </button>
+            {/* Right Panel: Signature Preview */}
+            {!(signedPreview || signedHtmlContent) && (
+              <div className="hidden md:flex w-80 flex-col rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden h-full flex-shrink-0">
+                <div className="border-b border-slate-100 bg-slate-50/50 px-5 py-4">
+                  <p className="text-sm font-bold text-slate-900">My Signature</p>
+                  <p className="text-xs text-slate-500 mt-1">This signature will be applied to your documents.</p>
+                </div>
+                <div className="p-5 flex-1 overflow-y-auto w-full flex flex-col items-center">
+                  <div className="w-full rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 min-h-[160px] flex flex-col items-center justify-center">
+                    {savedSignature ? (
+                      <img src={savedSignature} alt="My signature" className="max-h-24 max-w-full object-contain drop-shadow-sm mb-3" />
+                    ) : (
+                      <div className="text-center">
+                        <div className="h-12 w-12 bg-white rounded-full flex items-center justify-center border border-slate-200 mx-auto mb-3 shadow-sm">
+                          <PenTool className="h-5 w-5 text-slate-400" />
                         </div>
-                      ))}
-                    </div>
+                        <p className="text-sm font-bold text-slate-800">No signature found</p>
+                        <p className="text-[10px] font-medium text-slate-500 mt-1">Please create a signature first</p>
+                      </div>
+                    )}
                   </div>
-                )}
+                  
+                  <button
+                    type="button"
+                    onClick={() => setShowSignaturePad(true)}
+                    className="mt-6 w-full rounded-full border border-violet-200 bg-violet-50 px-4 py-2.5 text-xs font-bold text-violet-700 hover:bg-violet-100 hover:border-violet-300 transition-all active:scale-95 shadow-sm"
+                  >
+                    {savedSignature ? 'Update Signature' : 'Create Signature'}
+                  </button>
+                  <p className="mt-4 text-[10px] text-center text-slate-400 font-medium px-4 leading-relaxed">
+                    You can securely draw or upload your signature directly from here.
+                  </p>
+                </div>
               </div>
             )}
           </div>

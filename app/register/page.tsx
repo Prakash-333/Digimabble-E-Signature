@@ -133,7 +133,7 @@ export default function RegisterPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
-              pattern="^[a-zA-Z0-9._%+-]+@gmail\\.com$"
+              pattern="^[a-zA-Z0-9._%+\-]+@gmail\.com$"
               title="Use a Gmail address ending in @gmail.com"
               className="w-full rounded-2xl border border-slate-200 bg-white/50 px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition-all placeholder:text-slate-400 focus:border-violet-400 focus:bg-white focus:ring-4 focus:ring-violet-50"
               required

@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { supabase } from "../lib/supabase/browser";
 import { getMatchingRecipient, isCompletedForRecipient, normalizeEmail, type SharedDocumentRecord } from "../lib/documents";
-import { getHiddenNotificationIds, getSeenNotificationIds } from "../lib/notification-storage";
+import { getHiddenNotificationIds, getSeenNotificationIds, markNotificationsSeen } from "../lib/notification-storage";
 
 // Same navItems...
 const navItems = [
@@ -42,6 +42,8 @@ export default function DashboardLayout({
   const [loadingSession, setLoadingSession] = useState(true);
   const [userLabel, setUserLabel] = useState("User");
   const [notificationCount, setNotificationCount] = useState(0);
+  const [pendingIds, setPendingIds] = useState<string[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
 
   useEffect(() => {
@@ -62,6 +64,7 @@ export default function DashboardLayout({
         router.replace("/login");
         return;
       }
+      setCurrentUserId(session.user.id);
 
       const name =
         session.user.user_metadata?.full_name ||
@@ -78,13 +81,32 @@ export default function DashboardLayout({
 
         const hiddenIds = getHiddenNotificationIds(session.user.id);
         const seenIds = getSeenNotificationIds(session.user.id);
-        const count = ((rows ?? []) as SharedDocumentRecord[]).filter((row) => {
-          if (row.owner_id === session.user.id) return false;
-          if (hiddenIds.has(row.id) || seenIds.has(row.id)) return false;
-          return Boolean(getMatchingRecipient(row.recipients, userEmail)) && !isCompletedForRecipient(row.status);
-        }).length;
-        setNotificationCount(count);
+        
+        const ids: string[] = [];
+        ((rows ?? []) as SharedDocumentRecord[]).forEach((row) => {
+          if (row.owner_id !== session.user.id) {
+            // Incoming Request
+            if (hiddenIds.has(row.id) || seenIds.has(row.id)) return;
+            const isRecipient = Boolean(getMatchingRecipient(row.recipients, userEmail));
+            if (isRecipient && !isCompletedForRecipient(row.status)) {
+              ids.push(row.id);
+            }
+          } else {
+            // Outgoing Update (track completions)
+            row.recipients.forEach((r) => {
+              if (["signed", "reviewed", "approved", "rejected"].includes(r.status || "")) {
+                const virtualId = `${row.id}_${normalizeEmail(r.email)}_${r.status}`;
+                if (!hiddenIds.has(virtualId) && !seenIds.has(virtualId)) {
+                  ids.push(virtualId);
+                }
+              }
+            });
+          }
+        });
+        setPendingIds(ids);
+        setNotificationCount(ids.length);
       } else {
+        setPendingIds([]);
         setNotificationCount(0);
       }
       setLoadingSession(false);
@@ -92,12 +114,12 @@ export default function DashboardLayout({
 
     syncSession();
 
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data } = supabase.auth.onAuthStateChange((_event: string, session: any) => {
       if (!session) {
         router.replace("/login");
         return;
       }
-
+      setCurrentUserId(session.user.id);
       const name =
         session.user.user_metadata?.full_name ||
         session.user.email ||
@@ -108,16 +130,32 @@ export default function DashboardLayout({
         .select("id, owner_id, recipients, status, category, sender, sent_at, file_url, file_key, content, name, subject")
         .order("sent_at", { ascending: false })
         .limit(200)
-        .then(({ data: rows }) => {
+        .then(({ data: rows }: { data: any }) => {
           const userEmail = normalizeEmail(session.user.email);
           const hiddenIds = getHiddenNotificationIds(session.user.id);
           const seenIds = getSeenNotificationIds(session.user.id);
-          const count = ((rows ?? []) as SharedDocumentRecord[]).filter((row) => {
-            if (row.owner_id === session.user.id) return false;
-            if (hiddenIds.has(row.id) || seenIds.has(row.id)) return false;
-            return Boolean(getMatchingRecipient(row.recipients, userEmail)) && !isCompletedForRecipient(row.status);
-          }).length;
-          setNotificationCount(count);
+
+          const ids: string[] = [];
+          ((rows ?? []) as SharedDocumentRecord[]).forEach((row) => {
+            if (row.owner_id !== session.user.id) {
+              if (hiddenIds.has(row.id) || seenIds.has(row.id)) return;
+              const isRecipient = Boolean(getMatchingRecipient(row.recipients, userEmail));
+              if (isRecipient && !isCompletedForRecipient(row.status)) {
+                ids.push(row.id);
+              }
+            } else {
+              row.recipients.forEach((r) => {
+                if (["signed", "reviewed", "approved", "rejected"].includes(r.status || "")) {
+                  const virtualId = `${row.id}_${normalizeEmail(r.email)}_${r.status}`;
+                  if (!hiddenIds.has(virtualId) && !seenIds.has(virtualId)) {
+                    ids.push(virtualId);
+                  }
+                }
+              });
+            }
+          });
+          setPendingIds(ids);
+          setNotificationCount(ids.length);
         });
       setLoadingSession(false);
     });
@@ -131,6 +169,15 @@ export default function DashboardLayout({
   const handleLogout = async () => {
     await supabase.auth.signOut();
     router.replace("/login");
+  };
+
+  const handleNotificationClick = () => {
+    if (pendingIds.length > 0) {
+      markNotificationsSeen(currentUserId, pendingIds);
+      setNotificationCount(0);
+      setPendingIds([]);
+    }
+    router.push("/dashboard/notifications");
   };
 
   if (loadingSession) {
@@ -246,7 +293,7 @@ export default function DashboardLayout({
                 <p className="text-[11px] text-slate-500">Admin</p>
               </div>
               <button 
-                onClick={() => router.push("/dashboard/notifications")}
+                onClick={handleNotificationClick}
                 title="Notifications" 
                 className={`relative ml-auto inline-flex h-9 w-9 items-center justify-center rounded-xl transition-colors ${
                   pathname.includes("/notifications")
@@ -272,7 +319,7 @@ export default function DashboardLayout({
         ) : (
           <div className="border-t border-slate-200 py-4 flex flex-col items-center gap-4">
             <button 
-              onClick={() => router.push("/dashboard/notifications")}
+              onClick={handleNotificationClick}
               title="Notifications" 
               className={`relative inline-flex h-12 w-12 items-center justify-center rounded-xl transition-colors ${
                 pathname.includes("/notifications")
@@ -314,7 +361,7 @@ export default function DashboardLayout({
 
           <div className="flex items-center gap-3 text-xs">
             <button
-              onClick={() => router.push("/dashboard/notifications")}
+              onClick={handleNotificationClick}
               title="Notifications"
               className={`relative inline-flex h-10 w-10 items-center justify-center rounded-full border transition-colors ${
                 pathname.includes("/notifications")

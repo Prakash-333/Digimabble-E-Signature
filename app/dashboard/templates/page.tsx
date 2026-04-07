@@ -79,7 +79,7 @@ const getTemplatePlaceholders = (template: AppTemplate) => {
   }
 
   if (template.name.includes("Employment Offer") || template.name.includes("Offer Letter")) {
-    return Array.from(new Set((OFFER_LETTER_TEMPLATE.match(/\[([^\]]+)\]/g) || []).map((item) => item.replace(/[\[\]]/g, ""))));
+    return Array.from(new Set((OFFER_LETTER_TEMPLATE.match(/\[([^\]]+)\]|\{([^}]+)\}|\(([^)]+)\)/g) || []).map((item) => item.replace(/[\[\](){}]/g, ""))));
   }
 
   return [];
@@ -535,7 +535,7 @@ function TemplatesContent() {
         <div className="relative w-full">
           <input
             type="text"
-            placeholder="Search templates by name or category..."
+            placeholder="Search templates by name or contact type..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
@@ -902,9 +902,9 @@ const createEmptyRecipientGroups = (categories: readonly string[] = RECIPIENT_CA
 
 // Generate template fields based on the template content
 const generateTemplateFields = (templateContent: string) => {
-  const regex = /\[([^\]]+)\]/g;
+  const regex = /\[([^\]]+)\]|\{([^}]+)\}|\(([^)]+)\)/g;
   const matches = Array.from(templateContent.matchAll(regex));
-  const placeholders = Array.from(new Set(matches.map(m => m[1])));
+  const placeholders = Array.from(new Set(matches.map(m => m[1] || m[2] || m[3])));
 
   // Define the order of fields
   const fieldOrder = [
@@ -1009,6 +1009,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
       const escaped = escapeRegExp(placeholder);
       const patterns = [
         new RegExp(`\\[\\s*${escaped}\\s*\\]`, "gi"),
+        new RegExp(`\\{\\s*${escaped}\\s*\\}`, "gi"),
         new RegExp(`\\(\\s*${escaped}\\s*\\)`, "gi"),
       ];
 
@@ -1255,7 +1256,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
         .eq("category", category);
 
       if (error) {
-        alert(`Could not delete category: ${error.message}`);
+        alert(`Could not delete contact type: ${error.message}`);
         return;
       }
     }
@@ -1719,12 +1720,12 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                       setShowCategoryDialog(true);
                     }}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-violet-100 text-violet-600 transition-colors hover:bg-violet-200"
-                    aria-label="Add category"
+                    aria-label="Add recipient role"
                   >
                     <Plus className="h-4 w-4" />
                   </button>
                 </div>
-                <p className="text-xs text-slate-500 font-medium mt-1">Choose a category below</p>
+                <p className="text-xs text-slate-500 font-medium mt-1">Select a recipient role</p>
               </div>
 
               <div className="p-4 border-b border-slate-100 bg-slate-50/50">
@@ -1937,18 +1938,18 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                 </div>
               </div>
 
-              {/* Create Category Dialog */}
+              {/* Create Contact Dialog */}
               {showCategoryDialog && (
                 <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
                   <div className="w-full max-w-sm mx-4 bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
                     <div className="px-6 pt-6 pb-4 border-b border-slate-100">
-                      <h3 className="text-base font-bold text-slate-900">Create Category</h3>
-                      <p className="text-xs text-slate-500 mt-1">Add a new recipient category.</p>
+                      <h3 className="text-base font-bold text-slate-900">Select a recipient role</h3>
+                      <p className="text-xs text-slate-500 mt-1">Add a new recipient role.</p>
                     </div>
                     <div className="px-6 py-5">
                       <input
                         type="text"
-                        placeholder="Category name"
+                        placeholder="Recipient role name"
                         value={newCategoryName}
                         onChange={(e) => setNewCategoryName(e.target.value)}
                         onKeyDown={(e) => {
@@ -1973,7 +1974,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                         onClick={() => { addCategory(); setShowCategoryDialog(false); }}
                         className="flex-[2] py-2.5 rounded-2xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700 transition-all flex items-center justify-center gap-2"
                       >
-                        Create Category
+                        Create Role
                       </button>
                     </div>
                   </div>
@@ -2048,7 +2049,6 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-semibold text-slate-900 truncate">{r.name}</p>
-                              <p className="text-[10px] text-slate-500 font-medium truncate">{r.email}</p>
                             </div>
                           </div>
                         ))}
@@ -2059,7 +2059,6 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-semibold text-slate-900 truncate">External Contact</p>
-                              <p className="text-[10px] text-slate-500 font-medium truncate">{manualEmail}</p>
                             </div>
                           </div>
                         )}

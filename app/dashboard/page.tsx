@@ -79,11 +79,13 @@ export default function DashboardPage() {
         supabase
           .from("documents")
           .select("id, owner_id, recipients, status, category, sender, sent_at, file_url, file_key, content, name, subject")
+          .or(`owner_id.eq.${user.id},recipients.cs.[{"email":"${userEmail}"}]`)
           .order("sent_at", { ascending: false })
           .limit(200),
         supabase
           .from("documents")
           .select("id, name, status, sent_at, recipients, owner_id")
+          .eq("owner_id", user.id)
           .order("sent_at", { ascending: false })
           .limit(5),
       ]);
@@ -124,15 +126,31 @@ export default function DashboardPage() {
 
       const hiddenIds = getHiddenNotificationIds(user.id);
       const seenIds = getSeenNotificationIds(user.id);
-      setNotificationCount(
-        userEmail
-          ? ((notificationRows ?? []) as SharedDocumentRecord[]).filter((row) => {
-              if (row.owner_id === user.id) return false;
-              if (hiddenIds.has(row.id) || seenIds.has(row.id)) return false;
-              return Boolean(getMatchingRecipient(row.recipients, userEmail)) && !isCompletedForRecipient(row.status);
-            }).length
-          : 0
-      );
+      
+      let count = 0;
+      if (userEmail) {
+        ((notificationRows ?? []) as SharedDocumentRecord[]).forEach((row) => {
+          if (row.owner_id !== user.id) {
+            // Incoming Request
+            if (hiddenIds.has(row.id) || seenIds.has(row.id)) return;
+            const isRecipient = Boolean(getMatchingRecipient(row.recipients, userEmail));
+            if (isRecipient && !isCompletedForRecipient(row.status)) {
+              count++;
+            }
+          } else {
+            // Outgoing Update (track completions)
+            row.recipients.forEach((r) => {
+              if (["signed", "reviewed", "approved", "rejected"].includes(r.status || "")) {
+                const virtualId = `${row.id}_${normalizeEmail(r.email)}_${r.status}`;
+                if (!hiddenIds.has(virtualId) && !seenIds.has(virtualId)) {
+                  count++;
+                }
+              }
+            });
+          }
+        });
+      }
+      setNotificationCount(count);
     };
 
     loadCounts();

@@ -151,6 +151,7 @@ export default function DocumentsPage() {
         const { data: rows, error } = await supabase
           .from("documents")
           .select("id, owner_id, name, subject, recipients, sender, sent_at, status, file_url, file_key, category, content")
+          .or(`owner_id.eq.${user.id},recipients.cs.[{"email":"${normalizeEmail(user.email)}"}]`)
           .order("sent_at", { ascending: false });
 
         if (error) {
@@ -506,10 +507,55 @@ export default function DocumentsPage() {
 
   const filteredDocuments = documents.filter((doc) => {
     if (activeFilter === "all") {/* noop */}
-    else if (activeFilter === "pending") { if (!(doc.status !== "approved" && doc.status !== "reviewed" && doc.status !== "signed" && doc.status !== "completed")) return false; }
-    else if (activeFilter === "approved") { const hasRejection = doc.recipients.some(r => r.status === "rejected"); if (hasRejection || doc.status !== "signed") return false; }
-    else if (activeFilter === "rejected") { if (!(doc.status === "rejected" || doc.recipients.some(r => r.status === "rejected"))) return false; }
-    else if (activeFilter === "received") { const hasRejection = doc.recipients.some(r => r.status === "rejected"); if (hasRejection || !(doc.direction === "sent" && doc.recipients.some(r => r.status === "signed" || r.status === "reviewed" || r.status === "approved" || r.status === "completed"))) return false; }
+    else if (activeFilter === "pending") {
+      if (doc.direction === "sent") {
+        const hasRejection = doc.recipients.some(r => r.status === "rejected");
+        if (hasRejection || doc.status === "rejected") return false;
+        const allCompleted = doc.recipients.length > 0 && doc.recipients.every(r => ["signed", "reviewed", "approved"].includes(r.status || ""));
+        if (allCompleted) return false;
+      } else {
+        const myRecipient = doc.recipientRole ? doc.recipients.find(r => r.role?.toLowerCase() === doc.recipientRole?.toLowerCase()) : doc.recipients.find(r => r.email === currentUserEmail);
+        const myStatus = myRecipient?.status || doc.status;
+        if (myStatus === "rejected" || ["signed", "reviewed", "approved", "completed"].includes(myStatus)) return false;
+      }
+    }
+    else if (activeFilter === "approved") {
+      if (doc.direction === "sent") {
+        const hasRejection = doc.recipients.some(r => r.status === "rejected");
+        if (hasRejection || doc.status === "rejected") return false;
+        const allCompleted = doc.recipients.length > 0 && doc.recipients.every(r => ["signed", "reviewed", "approved"].includes(r.status || ""));
+        if (!allCompleted) return false;
+      } else {
+        const myRecipient = doc.recipientRole ? doc.recipients.find(r => r.role?.toLowerCase() === doc.recipientRole?.toLowerCase()) : doc.recipients.find(r => r.email === currentUserEmail);
+        const myStatus = myRecipient?.status || doc.status;
+        if (!["signed", "reviewed", "approved", "completed"].includes(myStatus)) return false;
+      }
+    }
+    else if (activeFilter === "rejected") {
+      if (doc.direction === "sent") {
+        const hasRejection = doc.recipients.some(r => r.status === "rejected");
+        if (!hasRejection && doc.status !== "rejected") return false;
+      } else {
+        const myRecipient = doc.recipientRole ? doc.recipients.find(r => r.role?.toLowerCase() === doc.recipientRole?.toLowerCase()) : doc.recipients.find(r => r.email === currentUserEmail);
+        const myStatus = myRecipient?.status || doc.status;
+        if (myStatus !== "rejected") return false;
+      }
+    }
+    else if (activeFilter === "received") {
+      if (doc.direction === "sent") {
+        const hasRejection = doc.recipients.some(r => r.status === "rejected");
+        if (hasRejection) return false;
+        const anyCompleted = doc.recipients.some(r => ["signed", "reviewed", "approved", "completed"].includes(r.status || ""));
+        if (!anyCompleted) return false;
+      } else {
+        // The original logic only showed documents where direction === "sent". 
+        // We ensure recipients looking at the shared docs don't accidentally see their pending docs in 'received'
+        // unless they themselves signed it, but typically this tab is for Senders receiving signatures.
+        const myRecipient = doc.recipientRole ? doc.recipients.find(r => r.role?.toLowerCase() === doc.recipientRole?.toLowerCase()) : doc.recipients.find(r => r.email === currentUserEmail);
+        const myStatus = myRecipient?.status || doc.status;
+        if (!["signed", "reviewed", "approved", "completed"].includes(myStatus)) return false;
+      }
+    }
 
     if (dateFilter !== "all") {
       const docDate = new Date(doc.sentAt);

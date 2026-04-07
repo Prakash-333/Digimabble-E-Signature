@@ -27,11 +27,11 @@ export const readFileAsDataUrl = (file: File) =>
   });
 
 export const extractPlaceholdersFromText = (content: string) => {
-  const matches = content.match(/\[([^\]]+)\]|\(([^)]+)\)|_{3,}/g);
+  const matches = content.match(/\[([^\]]+)\]|\{([^}]+)\}|\(([^)]+)\)|_{3,}/g);
   if (!matches) return [];
   const normalized = matches.map((item) =>
     item
-      .replace(/[\[\]()]/g, "")
+      .replace(/[\[\](){}]/g, "")
       .replace(/_{3,}/g, "blank field")
       .trim()
   );
