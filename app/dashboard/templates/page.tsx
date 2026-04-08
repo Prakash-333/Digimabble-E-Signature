@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
-import { Search, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2, X, PenTool, Type, CloudUpload } from "lucide-react";
+import { Search, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2, X, PenTool, Type, CloudUpload, Eye, CheckSquare, Check } from "lucide-react";
 import { OFFER_LETTER_TEMPLATE, type Template } from "./data";
 import { useUploadThing } from "../../lib/uploadthing-client";
 import { supabase } from "../../lib/supabase/browser";
@@ -1213,6 +1213,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   const [newCategoryName, setNewCategoryName] = useState("");
   const [showCategoryDialog, setShowCategoryDialog] = useState(false);
   const [savedSignature, setSavedSignature] = useState<string | null>(null);
+  const [showSendChoice, setShowSendChoice] = useState(false);
+  const [sendActionType, setSendActionType] = useState<"review" | "sign" | null>(null);
 
   // Categories for the sidebar
   const categories = categoryNames;
@@ -1484,23 +1486,25 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
         finalRecipients.push({ 
           name: "External Contact", 
           email: manualEmail.trim(), 
-          role: activeCategory === "Reviewer" ? "reviewer" : "signer" 
+          role: (sendActionType === "review" || activeCategory === "Reviewer") ? "reviewer" : "signer" 
         });
       }
     }
 
+    const isReviewMode = sendActionType === "review" || activeCategory === "Reviewer";
+
     const newDoc = {
       id: `tmp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       name: template.name,
-      subject: activeCategory === "Reviewer" ? `Please review: ${template.name}` : `Please sign: ${template.name}`,
+      subject: isReviewMode ? `Please review: ${template.name}` : `Please sign: ${template.name}`,
       recipients: finalRecipients.map((r) => ({ 
         ...r, 
-        role: r.role || (activeCategory === "Reviewer" ? "reviewer" : "signer"), 
+        role: r.role || (isReviewMode ? "reviewer" : "signer"), 
         status: "pending" 
       })),
       sender: { fullName: formValues.SENDER_NAME || "User", workEmail: formValues.SENDER_EMAIL || "user@example.com" },
       sentAt: new Date().toISOString(),
-      status: activeCategory === "Reviewer" ? "reviewing" : (fileUrl ? "waiting" : "pending"),
+      status: isReviewMode ? "reviewing" : (fileUrl ? "waiting" : "pending"),
       fileUrl: fileUrl, // Store the cloud URL
       fileKey: fileKey, // Store the unique key for deletion
       category: activeCategory, // Store the category for reviewer tracking
@@ -1511,7 +1515,32 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
 
     try {
       setSendError(null);
-      await persistSharedDocument(newDoc);
+      const savedDoc = await persistSharedDocument(newDoc);
+      
+      // Trigger real emails to recipients
+      if (savedDoc?.id) {
+        console.log("Triggering emails for document:", savedDoc.id);
+        const emailPromises = finalRecipients.map(recipient => 
+          fetch('/api/send-document', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              documentId: savedDoc.id,
+              recipientEmail: recipient.email,
+              recipientName: recipient.name,
+              senderName: newDoc.sender.fullName,
+              documentName: newDoc.name,
+              subject: newDoc.subject
+            })
+          }).then(res => res.json())
+        );
+
+        // We run this in the background, but wait for all to complete if we want to show a consolidated status
+        Promise.all(emailPromises)
+          .then(results => console.log("Email dispatch results:", results))
+          .catch(err => console.error("Email dispatch failed:", err));
+      }
+
       setIsSent(true);
     } catch (error) {
       console.error("Failed to save uploaded template document:", error);
@@ -2271,7 +2300,9 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
           <div className="flex-1 flex min-h-[calc(100vh-73px)] bg-slate-50 overflow-hidden">
             {isSent ? (
               <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-white animate-in fade-in duration-500">
-                <div className="w-24 h-24 rounded-[2.5rem] bg-green-50 flex items-center justify-center text-4xl mb-6 shadow-sm border border-green-100">✨</div>
+                <div className="w-24 h-24 rounded-[2.5rem] bg-violet-50 flex items-center justify-center mb-6 shadow-sm border border-violet-100">
+                  <Check className="w-10 h-10 text-violet-600" />
+                </div>
                 <div className="max-w-md space-y-4">
                   <h3 className="text-3xl font-black text-slate-900 tracking-tight leading-tight">
                     {activeCategory === "Reviewer" ? "Sent for Review!" : "Document Sent Successfully!"}
@@ -2284,7 +2315,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                   <div className="pt-6">
                     <button 
                       onClick={() => router.push("/dashboard/documents")} 
-                      className="py-4 px-10 rounded-2xl bg-slate-900 text-white font-bold text-sm shadow-xl shadow-slate-200 hover:bg-slate-800 transition-all hover:-translate-y-1 active:scale-95"
+                      className="py-4 px-10 rounded-2xl bg-violet-600 text-white font-bold text-sm shadow-xl shadow-violet-200 hover:bg-violet-700 transition-all hover:-translate-y-1 active:scale-95"
                     >
                       View in Shared Documents
                     </button>
@@ -2428,7 +2459,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                     )}
                     <div className="flex flex-col gap-3">
                       <button
-                        onClick={handleSend}
+                        onClick={() => setShowSendChoice(true)}
                         disabled={isUploadingDoc || isPersisting}
                         className="w-full py-4 rounded-2xl bg-violet-600 text-white font-black text-sm shadow-xl shadow-violet-100 hover:bg-violet-700 hover:-translate-y-1 transition-all active:scale-95 disabled:bg-slate-200 disabled:shadow-none flex items-center justify-center gap-2"
                       >
@@ -2438,7 +2469,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                             Sending...
                           </>
                         ) : (
-                          activeCategory === "Reviewer" ? "Send for Review" : "Send Document Now"
+                          "Send Document Now"
                         )}
                       </button>
                       <button
@@ -2586,6 +2617,61 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                     "Save & Use Signature"
                   )}
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Send Choice Modal Overlay */}
+        {showSendChoice && (
+          <div className="fixed inset-0 z-[400] flex items-center justify-center bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-300">
+            <div className="w-full max-w-2xl mx-4 bg-white rounded-[2.5rem] shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-300">
+              <div className="px-10 py-10 text-center space-y-8">
+                <div className="space-y-2">
+                  <h3 className="text-3xl font-black text-slate-900 tracking-tight">How would you like to proceed?</h3>
+                  <p className="text-slate-500 font-medium">Choose the next step for this document workflow.</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-6">
+                  <button
+                    onClick={() => {
+                      setSendActionType("review");
+                      setShowSendChoice(false);
+                      handleSend();
+                    }}
+                    className="group relative flex flex-col items-center justify-center p-8 rounded-[2rem] bg-slate-50 border-2 border-transparent hover:border-violet-400 hover:bg-violet-50/50 transition-all duration-300"
+                  >
+                    <div className="w-16 h-16 rounded-2xl bg-white border border-slate-100 flex items-center justify-center text-slate-400 mb-4 shadow-sm group-hover:scale-110 group-hover:bg-violet-600 group-hover:text-white transition-all ring-8 ring-slate-100/30">
+                      <Eye className="w-8 h-8" />
+                    </div>
+                    <span className="text-lg font-bold text-slate-900 mb-1 text-left">Review the document</span>
+                    <span className="text-xs text-slate-500 font-medium leading-relaxed text-left">Send this to internal reviewers for verification before final signing.</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setSendActionType("sign");
+                      setShowSendChoice(false);
+                      handleSend();
+                    }}
+                    className="group relative flex flex-col items-center justify-center p-8 rounded-[2rem] bg-slate-50 border-2 border-transparent hover:border-violet-400 hover:bg-violet-50/50 transition-all duration-300"
+                  >
+                    <div className="w-16 h-16 rounded-2xl bg-white border border-slate-100 flex items-center justify-center text-slate-400 mb-4 shadow-sm group-hover:scale-110 group-hover:bg-violet-600 group-hover:text-white transition-all ring-8 ring-slate-100/30">
+                      <CheckSquare className="w-8 h-8" />
+                    </div>
+                    <span className="text-lg font-bold text-slate-900 mb-1 text-left">Sign the document</span>
+                    <span className="text-xs text-slate-500 font-medium leading-relaxed text-left">Skip review and send directly to recipients for digital signature.</span>
+                  </button>
+                </div>
+
+                <div className="pt-4">
+                  <button
+                    onClick={() => setShowSendChoice(false)}
+                    className="text-sm font-bold text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    Cancel and go back
+                  </button>
+                </div>
               </div>
             </div>
           </div>

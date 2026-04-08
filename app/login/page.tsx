@@ -50,6 +50,20 @@ export default function LoginPage() {
     router.replace("/dashboard");
   };
 
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback`,
+      },
+    });
+    if (error) {
+      setError(error.message);
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-50 px-4 py-10">
       <div className="pointer-events-none absolute inset-0">
@@ -171,11 +185,16 @@ export default function LoginPage() {
         </div>
 
         <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3 text-sm">
-          <button className="inline-flex w-full sm:flex-1 items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-700 shadow-sm transition-all hover:bg-slate-50 hover:border-slate-300 active:scale-95">
+          <button 
+            type="button"
+            onClick={handleGoogleLogin}
+            disabled={loading}
+            className="inline-flex w-full sm:flex-1 items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-700 shadow-sm transition-all hover:bg-slate-50 hover:border-slate-300 active:scale-95 disabled:opacity-50"
+          >
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-50 text-[12px] font-bold text-slate-900 border border-slate-200">
               G
             </span>
-            <span className="font-semibold">Google</span>
+            <span className="font-semibold">{loading ? "Connecting..." : "Google"}</span>
           </button>
           <button className="inline-flex w-full sm:flex-1 items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-700 shadow-sm transition-all hover:bg-slate-50 hover:border-slate-300 active:scale-95">
             <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#0A66C2] text-[12px] font-bold text-white">

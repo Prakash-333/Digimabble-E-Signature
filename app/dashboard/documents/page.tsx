@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye, Search } from "lucide-react";
 import { deleteCloudFiles } from "../../actions/uploadthing";
 import { supabase } from "../../lib/supabase/browser";
@@ -92,6 +93,7 @@ const mapRowToSentDocument = (row: DocumentRow, currentUserId: string, currentUs
 };
 
 export default function DocumentsPage() {
+  const router = useRouter();
   const [documents, setDocuments] = useState<SentDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState("all");
@@ -1030,6 +1032,7 @@ export default function DocumentsPage() {
           doc={detailDoc}
           onClose={() => setDetailDoc(null)}
           formatDate={formatDate}
+          router={router}
         />
       )}
     </div>
@@ -1044,10 +1047,12 @@ function DocumentDetailModal({
   doc,
   onClose,
   formatDate,
+  router,
 }: {
   doc: SentDocument;
   onClose: () => void;
   formatDate: (d: string) => string;
+  router: any;
 }) {
   const [viewingRecipient, setViewingRecipient] = useState<string | null>(null);
   const [refreshedDoc, setRefreshedDoc] = useState<SentDocument>(doc);
@@ -1363,10 +1368,13 @@ function DocumentDetailModal({
           <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
             <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-900">Status</h3>
-              {isSender && currentDoc.category === "Reviewer" && (getOverallStatusLabel() === "Reviewed" || getOverallStatusLabel() === "Finished") && (
+              {isSender && (currentDoc.category === "Reviewer" || currentDoc.status === "reviewed" || getOverallStatusLabel() === "Reviewed" || getOverallStatusLabel() === "Finished") && (
                 <button
-                  onClick={() => {
-                    window.location.href = `/dashboard/templates?step=recipients&documentId=${currentDoc.id}`;
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    console.log("Redirecting to templates with doc ID:", currentDoc.id);
+                    router.push(`/dashboard/templates?step=recipients&documentId=${encodeURIComponent(currentDoc.id)}`);
                   }}
                   className="inline-flex items-center gap-1.5 rounded-full bg-green-600 border border-green-700 px-4 py-1.5 text-[11px] font-bold text-white hover:bg-green-700 transition-colors shadow-sm"
                 >

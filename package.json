@@ -9,6 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@supabase/auth-helpers-nextjs": "^0.15.0",
+    "@supabase/auth-helpers-react": "^0.15.0",
     "@supabase/supabase-js": "^2.100.1",
     "@types/pdfjs-dist": "^2.10.377",
     "@uploadthing/react": "^7.3.3",
@@ -19,6 +21,7 @@
     "pdfjs-dist": "^5.5.207",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "resend": "^6.10.0",
     "tesseract.js": "^7.0.0",
     "uploadthing": "^7.7.4"
   },
