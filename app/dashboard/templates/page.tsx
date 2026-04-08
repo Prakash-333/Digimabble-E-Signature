@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
-import { Search, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2, X, PenTool, Type, CloudUpload, Eye, CheckSquare, Check } from "lucide-react";
+import { Search, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2, X, PenTool, Type, CloudUpload, Eye, CheckSquare, Check, CheckCircle2 } from "lucide-react";
 import { OFFER_LETTER_TEMPLATE, type Template } from "./data";
 import { useUploadThing } from "../../lib/uploadthing-client";
 import { supabase } from "../../lib/supabase/browser";
@@ -1729,8 +1729,12 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
               Continue →
             </button>
           )}
-          <button onClick={onClose} className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-50 border border-slate-100 text-slate-400 hover:text-slate-900 transition-all shrink-0">
-            <span className="text-2xl font-light">×</span>
+          <button 
+            onClick={onClose} 
+            className="w-10 h-10 flex items-center justify-center rounded-2xl bg-white border border-slate-200 text-slate-400 hover:text-red-600 hover:bg-red-50 hover:border-red-200 transition-all shadow-sm group"
+            aria-label="Close"
+          >
+            <X className="w-5 h-5 transition-transform group-hover:scale-110" />
           </button>
         </div>
       </div>
@@ -2008,7 +2012,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                           });
 
                           // Add signature logic
-                          if (savedSignature) {
+                          if (savedSignature && !manualSignaturePos) {
                             filledContent = filledContent.replace(
                               /\[SIGNATURE\]/g,
                               `<div style="margin-top: 15px;">
@@ -2380,7 +2384,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                               filledContent = filledContent.replace(new RegExp(`\\[${escapeRegExp(key)}\\]`, 'g'), `<span class="font-bold text-slate-900">${displayVal}</span>`);
                             });
 
-                            if (savedSignature) {
+                            if (savedSignature && !manualSignaturePos) {
                               filledContent = filledContent.replace(
                                 /\[SIGNATURE\]/g,
                                 `<div style="margin-top: 30px;">
@@ -2644,7 +2648,14 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
         {/* Send Choice Modal Overlay */}
         {showSendChoice && (
           <div className="fixed inset-0 z-[400] flex items-center justify-center bg-violet-900/10 backdrop-blur-xl animate-in fade-in duration-300">
-            <div className="w-full max-w-2xl mx-4 bg-white rounded-[3rem] shadow-2xl border border-white overflow-hidden animate-in zoom-in-95 duration-300">
+            <div className="relative w-full max-w-2xl mx-4 bg-white rounded-[3rem] shadow-2xl border border-white overflow-hidden animate-in zoom-in-95 duration-300">
+              <button
+                onClick={() => setShowSendChoice(false)}
+                className="absolute top-6 right-6 w-12 h-12 flex items-center justify-center rounded-full bg-slate-50 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all z-10"
+                aria-label="Close"
+              >
+                <X className="w-6 h-6" />
+              </button>
               <div className="px-12 py-12 text-center space-y-10">
                 <div className="space-y-3">
                   <div className="mx-auto w-16 h-1 w-12 bg-slate-100 rounded-full mb-6" />
