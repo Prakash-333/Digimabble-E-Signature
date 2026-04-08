@@ -1985,7 +1985,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                             const val = formValues[key] || `<span style="font-family: inherit;">[${key}]</span>`;
                             const isDateKey = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
                             const displayVal = isDateKey(key) ? formatDate(val) : val;
-                            filledContent = filledContent.replace(new RegExp(`\\[${key}\\]`, 'g'), `<span style="font-family: inherit;">${displayVal}</span>`);
+                            filledContent = filledContent.replace(new RegExp(`\\[${escapeRegExp(key)}\\]`, 'g'), `<span style="font-family: inherit;">${displayVal}</span>`);
                           });
 
                           // Add signature logic
@@ -2358,7 +2358,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                               const val = formValues[key] || `<span class="bg-violet-50 text-violet-400 px-1 rounded">[${key}]</span>`;
                               const isDateKey = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
                               const displayVal = isDateKey(key) ? formatDate(val) : val;
-                              filledContent = filledContent.replace(new RegExp(`\\[${key}\\]`, 'g'), `<span class="font-bold text-slate-900">${displayVal}</span>`);
+                              filledContent = filledContent.replace(new RegExp(`\\[${escapeRegExp(key)}\\]`, 'g'), `<span class="font-bold text-slate-900">${displayVal}</span>`);
                             });
 
                             if (savedSignature) {
