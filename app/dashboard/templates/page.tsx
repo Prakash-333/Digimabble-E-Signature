@@ -244,7 +244,14 @@ function TemplatesContent() {
       }
 
       const remoteTemplates = (rows ?? []).map((row: TemplateRow) => mapTemplateRowToAppTemplate(row));
-      setAppTemplates(remoteTemplates);
+      setAppTemplates(prev => {
+        // Keep any 'review-' injected templates so they aren't overwritten
+        const injected = prev.filter(t => String(t.id).startsWith("review-"));
+        // Filter out remote templates that have the same name as injected ones to avoid duplicates
+        const injectedNames = new Set(injected.map(t => t.name));
+        const filteredRemote = remoteTemplates.filter(t => !injectedNames.has(t.name));
+        return [...injected, ...filteredRemote];
+      });
     };
 
     void loadTemplates();
@@ -385,14 +392,17 @@ function TemplatesContent() {
 
         loadedDocumentIdRef.current = documentId;
 
+        const tempId = `review-${docData.id}`;
+        
         setAppTemplates((prev) => {
-          // Check if it already exists by ID or by name
-          const alreadyExists = prev.some(
-            (t) => t.id === `review-${docData.id}` || t.name === docData.name
-          );
-
-          if (alreadyExists) {
-            // Update the existing one if it's there
+          const nameExists = prev.find((t) => t.name === docData.name && !String(t.id).startsWith("review-"));
+          
+          if (nameExists) {
+             // If a saved template with the same name exists, we'll merge and select IT instead of creating a new temporary one.
+             setTimeout(() => {
+                setSelectedForUse(nameExists.id);
+                setUseStep("recipients");
+             }, 0);
             return prev.map((t) =>
               t.name === docData.name
                 ? {
@@ -404,27 +414,38 @@ function TemplatesContent() {
             );
           }
 
-          const tempTemplate: AppTemplate = {
-            id: `review-${docData.id}`,
-            initial: docData.name.charAt(0).toUpperCase(),
-            name: docData.name,
-            category: (docData.category as Template["category"]) || "Legal",
-            updated: formatTemplateUpdatedLabel(),
-            uses: "0 uses",
-            color: "bg-violet-50 text-violet-600",
-            fileDataUrl: docData.file_url ?? undefined,
-            detectedText: docData.content ?? undefined,
-            preview: {
-              headline: docData.name,
-              sections: [{ title: "Document", lines: ["Reviewed document ready to send"] }],
-            },
-          };
+          if (!prev.some(t => t.id === tempId)) {
+            const tempTemplate: AppTemplate = {
+              id: tempId,
+              initial: docData.name.charAt(0).toUpperCase(),
+              name: docData.name,
+              category: (docData.category as Template["category"]) || "Legal",
+              updated: formatTemplateUpdatedLabel(),
+              uses: "0 uses",
+              color: "bg-violet-50 text-violet-600",
+              fileDataUrl: docData.file_url ?? undefined,
+              detectedText: docData.content ?? undefined,
+              preview: {
+                headline: docData.name,
+                sections: [{ title: "Document", lines: ["Reviewed document ready to send"] }],
+              },
+            };
+            
+            setTimeout(() => {
+              setSelectedForUse(tempId);
+              setUseStep("recipients");
+            }, 0);
+            
+            return [tempTemplate, ...prev];
+          }
 
-          return [tempTemplate, ...prev];
+          setTimeout(() => {
+            setSelectedForUse(tempId);
+            setUseStep("recipients");
+          }, 0);
+          
+          return prev;
         });
-
-        setSelectedForUse(`review-${docData.id}`);
-        setUseStep("recipients");
       };
 
       void loadReviewedDocument();
@@ -1920,47 +1941,45 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                     </div>
                   )}
                   {hasUploadedDocument && template.fileDataUrl ? (
-                    <div className="p-6">
-                      {template.detectedText || detectedPlaceholders.length > 0 ? (
-                        <div className="overflow-auto max-h-[75vh]">
-                          {template.detectedText ? (
-                            <div className="whitespace-pre-wrap break-words text-[15px] leading-8 text-slate-900">
-                              {liveUploadedPreviewText || template.detectedText}
-                            </div>
-                          ) : (
-                            <div className="space-y-4">
-                              {detectedPlaceholders.map((placeholder, index) => (
-                                <div key={`${placeholder}-${index}`} className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
-                                  <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                                    {placeholder}
-                                  </div>
-                                  <div className="mt-1 text-[15px] font-semibold text-slate-900">
-                                    {placeholderValues[placeholder]?.trim() || placeholder}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ) : template.mimeType?.startsWith("image/") ? (
-                        <img
-                          src={template.fileDataUrl}
-                          alt={template.name}
-                          className="max-h-[75vh] w-auto max-w-full object-contain mx-auto"
-                        />
-                      ) : template.mimeType === "application/msword" || template.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || template.sourceFileName?.toLowerCase().endsWith(".doc") || template.sourceFileName?.toLowerCase().endsWith(".docx") ? (
-                        <div className="overflow-auto max-h-[75vh]">
-                          <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-slate-700">
-                            {liveUploadedPreviewText || template.detectedText || "No text content could be extracted from this Word document."}
+                    <div className="bg-slate-100/50 p-4 md:p-12 min-h-screen overflow-y-auto custom-scrollbar flex justify-center">
+                      <div className="w-full max-w-[816px] bg-white shadow-2xl rounded-sm p-16 text-left relative" style={{ minHeight: '1056px', aspectRatio: '1/1.414' }}>
+                        {/* Simulation of a real document page */}
+                        {template.mimeType?.startsWith("image/") ? (
+                          <img
+                            src={template.fileDataUrl}
+                            alt={template.name}
+                            className="max-h-full w-auto max-w-full object-contain mx-auto"
+                          />
+                        ) : (
+                          <div className="whitespace-pre-wrap break-words text-[15px] leading-relaxed text-slate-900 font-serif">
+                             {liveUploadedPreviewText || template.detectedText || "No text content could be extracted from this document."}
                           </div>
-                        </div>
-                      ) : (
-                        <iframe
-                          src={template.fileDataUrl}
-                          title={template.name}
-                          className="h-[75vh] w-full"
-                        />
-                      )}
+                        )}
+
+                        {/* If it's a manual placement mode, ensure signature overlay is positioned relative to this paper */}
+                        {manualSignaturePos && savedSignature && (
+                          <div 
+                            className="absolute z-50 pointer-events-none group"
+                            style={{ 
+                              left: `${manualSignaturePos.x}%`, 
+                              top: `${manualSignaturePos.y}%`,
+                              transform: `translate(-50%, -50%) scale(${manualSignatureScale})`,
+                              pointerEvents: isPlacingSignature ? 'none' : 'auto'
+                            }}
+                            onMouseDown={(e) => {
+                              e.stopPropagation();
+                              setIsDraggingSignature(true);
+                            }}
+                          >
+                             <img 
+                              src={savedSignature} 
+                              alt="Placed Signature" 
+                              className="h-16 w-auto object-contain select-none pointer-events-none" 
+                            />
+                            <div className={`absolute -inset-2 border-2 border-dashed border-violet-400 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity ${isDraggingSignature ? "opacity-100" : ""}`} />
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <>
@@ -2301,7 +2320,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
             {isSent ? (
               <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-white animate-in fade-in duration-500">
                 <div className="w-24 h-24 rounded-[2.5rem] bg-violet-50 flex items-center justify-center mb-6 shadow-sm border border-violet-100">
-                  <Check className="w-10 h-10 text-violet-600" />
+                  <CheckCircle2 className="w-10 h-10 text-violet-600" />
                 </div>
                 <div className="max-w-md space-y-4">
                   <h3 className="text-3xl font-black text-slate-900 tracking-tight leading-tight">
@@ -2317,7 +2336,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                       onClick={() => router.push("/dashboard/documents")} 
                       className="py-4 px-10 rounded-2xl bg-violet-600 text-white font-bold text-sm shadow-xl shadow-violet-200 hover:bg-violet-700 transition-all hover:-translate-y-1 active:scale-95"
                     >
-                      View in Shared Documents
+                      View Documents
                     </button>
                   </div>
                 </div>
@@ -2624,28 +2643,29 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
 
         {/* Send Choice Modal Overlay */}
         {showSendChoice && (
-          <div className="fixed inset-0 z-[400] flex items-center justify-center bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-300">
-            <div className="w-full max-w-2xl mx-4 bg-white rounded-[2.5rem] shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-300">
-              <div className="px-10 py-10 text-center space-y-8">
-                <div className="space-y-2">
+          <div className="fixed inset-0 z-[400] flex items-center justify-center bg-violet-900/10 backdrop-blur-xl animate-in fade-in duration-300">
+            <div className="w-full max-w-2xl mx-4 bg-white rounded-[3rem] shadow-2xl border border-white overflow-hidden animate-in zoom-in-95 duration-300">
+              <div className="px-12 py-12 text-center space-y-10">
+                <div className="space-y-3">
+                  <div className="mx-auto w-16 h-1 w-12 bg-slate-100 rounded-full mb-6" />
                   <h3 className="text-3xl font-black text-slate-900 tracking-tight">How would you like to proceed?</h3>
-                  <p className="text-slate-500 font-medium">Choose the next step for this document workflow.</p>
+                  <p className="text-slate-500 font-medium text-sm">Choose the next step for this document workflow to begin.</p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-6">
+                <div className="grid grid-cols-2 gap-8">
                   <button
                     onClick={() => {
                       setSendActionType("review");
                       setShowSendChoice(false);
                       handleSend();
                     }}
-                    className="group relative flex flex-col items-center justify-center p-8 rounded-[2rem] bg-slate-50 border-2 border-transparent hover:border-violet-400 hover:bg-violet-50/50 transition-all duration-300"
+                    className="group relative flex flex-col items-center justify-center p-10 rounded-[2.5rem] bg-slate-50 border-2 border-transparent hover:border-violet-400 hover:bg-violet-50/50 transition-all duration-300 shadow-sm hover:shadow-xl hover:shadow-violet-100/50"
                   >
-                    <div className="w-16 h-16 rounded-2xl bg-white border border-slate-100 flex items-center justify-center text-slate-400 mb-4 shadow-sm group-hover:scale-110 group-hover:bg-violet-600 group-hover:text-white transition-all ring-8 ring-slate-100/30">
-                      <Eye className="w-8 h-8" />
+                    <div className="w-20 h-20 rounded-3xl bg-white border border-slate-100 flex items-center justify-center text-slate-400 mb-6 shadow-sm group-hover:scale-110 group-hover:bg-violet-600 group-hover:text-white transition-all ring-8 ring-slate-100/30">
+                      <Eye className="w-10 h-10" />
                     </div>
-                    <span className="text-lg font-bold text-slate-900 mb-1 text-left">Review the document</span>
-                    <span className="text-xs text-slate-500 font-medium leading-relaxed text-left">Send this to internal reviewers for verification before final signing.</span>
+                    <span className="text-xl font-extrabold text-slate-900 mb-2">Internal Review</span>
+                    <span className="text-xs text-slate-500 font-bold leading-relaxed text-center opacity-80 uppercase tracking-tighter">Verified by Team</span>
                   </button>
 
                   <button
@@ -2654,20 +2674,20 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                       setShowSendChoice(false);
                       handleSend();
                     }}
-                    className="group relative flex flex-col items-center justify-center p-8 rounded-[2rem] bg-slate-50 border-2 border-transparent hover:border-violet-400 hover:bg-violet-50/50 transition-all duration-300"
+                    className="group relative flex flex-col items-center justify-center p-10 rounded-[2.5rem] bg-slate-50 border-2 border-transparent hover:border-violet-400 hover:bg-violet-50/50 transition-all duration-300 shadow-sm hover:shadow-xl hover:shadow-violet-100/50"
                   >
-                    <div className="w-16 h-16 rounded-2xl bg-white border border-slate-100 flex items-center justify-center text-slate-400 mb-4 shadow-sm group-hover:scale-110 group-hover:bg-violet-600 group-hover:text-white transition-all ring-8 ring-slate-100/30">
-                      <CheckSquare className="w-8 h-8" />
+                    <div className="w-20 h-20 rounded-3xl bg-white border border-slate-100 flex items-center justify-center text-slate-400 mb-6 shadow-sm group-hover:scale-110 group-hover:bg-violet-600 group-hover:text-white transition-all ring-8 ring-slate-100/30">
+                      <CheckCircle2 className="w-10 h-10" />
                     </div>
-                    <span className="text-lg font-bold text-slate-900 mb-1 text-left">Sign the document</span>
-                    <span className="text-xs text-slate-500 font-medium leading-relaxed text-left">Skip review and send directly to recipients for digital signature.</span>
+                    <span className="text-xl font-extrabold text-slate-900 mb-2">Send for Sign</span>
+                    <span className="text-xs text-slate-500 font-bold leading-relaxed text-center opacity-80 uppercase tracking-tighter">Direct to Signers</span>
                   </button>
                 </div>
 
                 <div className="pt-4">
                   <button
                     onClick={() => setShowSendChoice(false)}
-                    className="text-sm font-bold text-slate-400 hover:text-slate-600 transition-colors"
+                    className="text-sm font-bold text-slate-400 hover:text-violet-600 transition-colors uppercase tracking-widest px-8 py-3 rounded-full hover:bg-violet-50"
                   >
                     Cancel and go back
                   </button>

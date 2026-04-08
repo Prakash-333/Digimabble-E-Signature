@@ -25,6 +25,8 @@ export async function POST(request: Request) {
       .update({
         access_id: accessId,
         access_password: accessPassword,
+        status: 'waiting',
+        sent_at: new Date().toISOString(),
       })
       .eq('id', documentId);
 

@@ -73,7 +73,7 @@ export async function submitGuestSignature(id: string, signatureDataUrl: string,
     // but in a real app we'd match by email from the portal session)
     let recipients = doc.recipients as DocumentRecipient[];
     const isReviewDoc = doc.category === "Reviewer";
-    const status = isReviewDoc ? "reviewed" : "signed";
+    const status = isReviewDoc ? "reviewed" : "completed";
     
     // Update the recipient status
     // Note: In this version We're updating the first recipient for simplicity, 

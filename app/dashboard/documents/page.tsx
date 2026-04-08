@@ -171,9 +171,9 @@ export default function DocumentsPage() {
 
         // Consolidation logic - only merge rows from the same owner with the same fileKey
         const consolidated = remoteDocsRaw.reduce((acc, doc) => {
-          const timeKey = doc.sentAt ? doc.sentAt.substring(0, 16) : "no-time";
-          // Include direction in groupKey to prevent merging sent with received docs
-          const groupKey = `${doc.direction}-${doc.fileKey || `${doc.name}-${doc.subject}-${timeKey}`}`;
+          const timeKey = doc.sentAt ? doc.sentAt.substring(0, 16) : `no-time-${doc.id}`;
+          // Include direction and unique ID in groupKey to prevent merging
+          const groupKey = `${doc.direction}-${doc.fileKey || doc.id}`;
 
           if (!acc[groupKey]) {
             acc[groupKey] = { ...doc };
@@ -408,9 +408,9 @@ export default function DocumentsPage() {
           );
         }
         if (completedCount === totalCount) {
-          const label = totalCount === 1
-            ? (recipients[0]?.status === "reviewed" ? "Reviewed" : "Signed")
-          : "Signed";
+          const label = category === "Reviewer" 
+            ? "Reviewed" 
+            : (totalCount === 1 && recipients[0]?.status === "reviewed" ? "Reviewed" : "Signed");
           return (
             <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
               <CheckCircle2 className="mr-1 h-3 w-3" />
@@ -1368,7 +1368,7 @@ function DocumentDetailModal({
           <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
             <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-900">Status</h3>
-              {isSender && (currentDoc.category === "Reviewer" || currentDoc.status === "reviewed" || getOverallStatusLabel() === "Reviewed" || getOverallStatusLabel() === "Finished") && (
+              {isSender && (["Reviewed", "Finished", "Approved"].includes(getOverallStatusLabel())) && (
                 <button
                   type="button"
                   onClick={(e) => {

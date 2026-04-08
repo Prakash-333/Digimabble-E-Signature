@@ -61,10 +61,33 @@ export const extractTextFromPdf = async (file: File) => {
   return chunks.join("\n");
 };
 
-export const extractTextFromImage = async (file: File) => {
+export const extractTextFromImage = async (imageSource: string | File) => {
   const { recognize } = await import("tesseract.js");
-  const result = await recognize(file, "eng");
+  const result = await recognize(imageSource, "eng");
   return result.data.text || "";
+};
+
+export const convertPdfPageToImage = async (file: File, pageNumber: number = 1) => {
+  const pdfjs = await getPdfJs();
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+  const page = await pdf.getPage(pageNumber);
+  
+  const viewport = page.getViewport({ scale: 2.0 }); // Higher scale for better OCR
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  
+  if (!context) throw new Error("Could not create canvas context");
+  
+  canvas.height = viewport.height;
+  canvas.width = viewport.width;
+  
+  await page.render({
+    canvasContext: context as any,
+    viewport: viewport,
+  } as any).promise;
+  
+  return canvas.toDataURL("image/png");
 };
 
 export const extractTextFromWord = async (file: File) => {
@@ -78,7 +101,20 @@ export const analyzeDocumentFile = async (file: File): Promise<DocumentAnalysis>
   const dataUrl = await readFileAsDataUrl(file);
 
   if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-    const textContent = await extractTextFromPdf(file);
+    let textContent = await extractTextFromPdf(file);
+    
+    // Fallback to OCR if text extraction is empty or too short (handles scanned PDFs)
+    if (textContent.trim().length < 20) {
+      console.log("PDF text layer is sparse. Falling back to OCR...");
+      try {
+        // Convert the first page to an image for OCR
+        const pageImage = await convertPdfPageToImage(file, 1);
+        textContent = await extractTextFromImage(pageImage);
+      } catch (ocrError) {
+        console.error("OCR fallback failed for PDF:", ocrError);
+      }
+    }
+    
     return {
       dataUrl,
       textContent,
