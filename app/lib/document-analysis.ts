@@ -141,13 +141,18 @@ export const analyzeDocumentFile = async (file: File): Promise<DocumentAnalysis>
     };
   }
 
-  if (file.type.startsWith("image/")) {
-    let textContent = "";
-    try {
-      textContent = await extractTextFromImage(file);
-    } catch (error) {
-      console.error("OCR failed:", error);
-    }
+  if (
+    file.type === "text/plain" ||
+    file.type === "text/csv" ||
+    file.name.toLowerCase().endsWith(".txt") ||
+    file.name.toLowerCase().endsWith(".csv")
+  ) {
+    const textContent = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error("Failed to read text file"));
+      reader.readAsText(file);
+    });
 
     return {
       dataUrl,

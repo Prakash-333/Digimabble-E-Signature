@@ -45,7 +45,7 @@ export const templates: Template[] = [
     initial: "O",
     name: "Employment Offer Letter",
     category: "HR",
-    updated: `Updated ${today}`,
+    updated: today,
     uses: "0 uses",
     color: "bg-blue-50 text-blue-600",
     preview: {

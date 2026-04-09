@@ -98,7 +98,7 @@ const escapeHtml = (value: string) =>
     .replace(/'/g, "&#39;");
 
 const formatTemplateUpdatedLabel = (value?: string) =>
-  `Updated ${new Date(value ?? Date.now()).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+  new Date(value ?? Date.now()).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
 const mapTemplateRowToAppTemplate = (row: TemplateRow): AppTemplate => ({
   id: row.id,
@@ -285,7 +285,7 @@ function TemplatesContent() {
               headline: baseName,
               sections: [
                 {
-                  title: "Imported Content",
+                  title: "Document",
                   lines: [
                     analysis?.textContent?.trim()
                       ? `${analysis.textContent.slice(0, 220)}${analysis.textContent.length > 220 ? "..." : ""}`
@@ -334,10 +334,14 @@ function TemplatesContent() {
           file.type === "application/pdf" ||
           file.type.startsWith("image/") ||
           file.type === "application/msword" ||
-          file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+          file.type === "text/plain" ||
+          file.type === "text/csv" ||
+          file.name.toLowerCase().endsWith(".txt") ||
+          file.name.toLowerCase().endsWith(".csv")
       );
       if (!files.length) {
-        alert("Please add a PDF, Image, or Word document.");
+        alert("Please add a PDF, Image, Word, Text, or CSV document.");
         e.target.value = "";
         return;
       }
@@ -501,9 +505,9 @@ function TemplatesContent() {
     }
 
     return (
-      <div className="flex h-full w-full flex-col justify-center bg-gradient-to-br from-slate-50 via-white to-slate-100 p-4">
-        <div className="rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm">
-          <p className="line-clamp-3 text-xs font-semibold leading-5 text-slate-700">
+      <div className="flex h-full w-full flex-col bg-white p-5">
+        <div className="space-y-1">
+          <p className="line-clamp-6 text-[11px] leading-relaxed text-slate-600">
             {tpl.preview.sections[0]?.lines[0] || tpl.name}
           </p>
         </div>
@@ -532,7 +536,7 @@ function TemplatesContent() {
             type="file"
             ref={fileInputRef}
             className="hidden"
-            accept="application/pdf,image/*,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            accept="application/pdf,image/*,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,.txt,.csv"
             onChange={handleFileUpload}
           />
           <button
@@ -635,7 +639,7 @@ function TemplatesContent() {
                         {tpl.name}
                       </p>
                       <p className="text-[11px] text-slate-500">
-                        Last updated {tpl.updated}
+                        Updated {tpl.updated}
                       </p>
                     </div>
                   </div>
@@ -747,7 +751,7 @@ function TemplatesContent() {
                   </div>
                 </div>
                 {viewMode === "grid" && (
-                  <div className="mt-4 h-40 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                  <div className="mt-4 h-48 overflow-hidden rounded-3xl border border-slate-200/60 bg-white shadow-sm">
                     {getTemplatePreview(tpl)}
                   </div>
                 )}
