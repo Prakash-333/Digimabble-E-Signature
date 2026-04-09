@@ -636,29 +636,21 @@ export default function DocumentsPage() {
   }
 
   return (
-    <div className="px-4 py-6 md:px-10 md:py-10">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <h1 className="text-xl font-semibold tracking-tight text-slate-900">
-            Shared Documents
-          </h1>
-          <div className="relative w-[28rem]">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search by name, company, email..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-12 pr-4 py-3 text-sm rounded-full border border-slate-200 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-400 text-slate-700 placeholder:text-slate-400"
-            />
-          </div>
+    <div className="px-2 pb-8 pt-0 md:px-4 md:pb-10 md:pt-0">
+      <div className="flex flex-wrap items-center gap-4 mt-4">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Search by name, company, email..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-10 pr-4 py-2.5 text-sm rounded-xl border border-slate-200 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-100 focus:border-slate-400 text-slate-800 placeholder:text-slate-400"
+          />
         </div>
       </div>
-      <p className="mt-2 text-sm text-slate-600">
-        Documents sent and received will appear here.
-      </p>
 
-      <div className="mt-8 flex flex-wrap gap-2">
+      <div className="mt-6 flex flex-wrap gap-2">
         {[{ value: "all", label: "All" }, { value: "pending", label: "Pending" }, { value: "approved", label: "Signed" }, { value: "rejected", label: "Changes Required" }, { value: "received", label: "Received" }].map((tag) => (
           <button
             key={tag.value}
@@ -1082,7 +1074,7 @@ function DocumentDetailModal({
 
   // Fetch current user email
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
+    supabase.auth.getUser().then(({ data }: { data: any }) => {
       setCurrentUserEmail(normalizeEmail(data.user?.email));
     });
   }, []);

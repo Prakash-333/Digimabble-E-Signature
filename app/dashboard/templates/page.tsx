@@ -524,13 +524,20 @@ function TemplatesContent() {
   }, []);
 
   return (
-    <div className="px-4 pb-8 pt-6 md:px-8 md:pb-10 md:pt-8">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight text-slate-900">
-            Templates
-          </h1>
+    <div className="px-2 pb-8 pt-0 md:px-4 md:pb-10 md:pt-0">
+      <div className="flex flex-wrap items-center justify-between gap-3 mt-4">
+        {/* Search Bar & Upload Row */}
+        <div className="relative flex-1 max-w-md">
+          <input
+            type="text"
+            placeholder="Search templates by name or contact type..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100 shadow-sm"
+          />
+          <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
         </div>
+
         <div className="relative">
           <input
             type="file"
@@ -542,13 +549,10 @@ function TemplatesContent() {
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
-            className="inline-flex items-center rounded-full border border-violet-600 bg-white px-4 py-2 text-xs font-semibold text-violet-600 shadow-sm hover:bg-violet-600 hover:text-white transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center rounded-xl border border-violet-600 bg-white px-4 py-2.5 text-xs font-semibold text-violet-600 shadow-sm hover:bg-violet-600 hover:text-white transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isUploading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Uploading...
-              </>
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               "+ Upload Template"
             )}
@@ -557,17 +561,6 @@ function TemplatesContent() {
       </div>
 
       <div className="mt-4 space-y-3">
-        {/* Search Bar */}
-        <div className="relative w-full">
-          <input
-            type="text"
-            placeholder="Search templates by name or contact type..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-          />
-          <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-        </div>
 
         {/* Category Filter Buttons */}
         <div className="flex flex-wrap gap-2">
