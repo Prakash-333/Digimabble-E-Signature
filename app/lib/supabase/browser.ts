@@ -76,7 +76,7 @@ const createMockClient = () => {
     update: async () => ({ data: null, error: null }),
     delete: async () => ({ data: null, error: null }),
     single: async () => ({ data: null, error: null }),
-    then: (resolve: any) => resolve({ data: [], error: null }),
+    then: (resolve: (val: { data: any[]; error: any | null }) => void) => resolve({ data: [], error: null }),
   };
 
   return {
@@ -88,11 +88,10 @@ const createMockClient = () => {
         getPublicUrl: () => ({ data: { publicUrl: "" } }),
       }),
     },
-  } as any;
+  } as unknown as any;
 };
 
 // Export either the real client or the mock
 export const supabase = isConfigured 
   ? createClient(supabaseUrl, supabaseAnonKey)
   : createMockClient();
-

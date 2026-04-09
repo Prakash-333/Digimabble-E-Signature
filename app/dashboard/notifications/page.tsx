@@ -109,9 +109,9 @@ export default function NotificationsPage() {
                 virtualId,
                 type: "outgoing_update",
                 recipientRole: r.role ?? null,
-                recipientStatus: r.status,
-                recipientEmail: r.email,
-                recipientName: r.name,
+                recipientStatus: r.status ?? null,
+                recipientEmail: r.email ?? null,
+                recipientName: r.name ?? null,
               });
             }
           });

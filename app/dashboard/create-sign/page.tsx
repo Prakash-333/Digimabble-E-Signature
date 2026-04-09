@@ -28,13 +28,15 @@ export default function CreateSignPage() {
       if (!currentUser) return;
       setUserId(currentUser.id);
 
-      const { data: row, error } = await supabase
+      const { data: signatureData, error } = await supabase
         .from("signatures")
         .select("id, owner_id, name, data_url")
         .eq("owner_id", currentUser.id)
         .order("created_at", { ascending: false })
         .limit(1)
-        .maybeSingle<SignatureRow>();
+        .maybeSingle();
+
+      const row = signatureData as SignatureRow | null;
 
       if (!error && row?.data_url) {
         setSavedSignature(row.data_url);
@@ -134,7 +136,7 @@ export default function CreateSignPage() {
         name: "My signature",
         data_url: dataUrl,
       })
-      .then(({ error }) => {
+      .then(({ error }: { error: any }) => {
         if (error) {
           setBanner("Could not save signature to Supabase.");
           return;
@@ -186,7 +188,7 @@ export default function CreateSignPage() {
       .from("signatures")
       .delete()
       .eq("owner_id", userId)
-      .then(({ error }) => {
+      .then(({ error }: { error: any }) => {
         if (error) {
           setBanner("Could not remove signature from Supabase.");
           return;

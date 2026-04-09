@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
-import { Search, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2, X, PenTool, Type, CloudUpload, Eye, CheckSquare, Check, CheckCircle2, Building2, Globe } from "lucide-react";
+import { Search, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2, X, PenTool, Type, CloudUpload, Eye, CheckCircle2, Building2, Globe } from "lucide-react";
 import { OFFER_LETTER_TEMPLATE, type Template } from "./data";
 import { useUploadThing } from "../../lib/uploadthing-client";
 import { supabase } from "../../lib/supabase/browser";
@@ -205,15 +205,15 @@ function TemplatesContent() {
     const loadCurrentUser = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        let user = (session?.user ?? undefined) as any;
+        let user = (session?.user ?? undefined);
         
         if (!user) {
-          const { data: { user: freshUser }, error: authError } = await supabase.auth.getUser();
+          const { data: authData, error: authError } = await supabase.auth.getUser();
           if (authError) {
             if (authError.message?.includes("stole it")) return;
             throw authError;
           }
-          user = freshUser;
+          user = authData.user;
         }
 
         setCurrentUserId(user?.id ?? null);
@@ -246,10 +246,10 @@ function TemplatesContent() {
       const remoteTemplates = (rows ?? []).map((row: TemplateRow) => mapTemplateRowToAppTemplate(row));
       setAppTemplates(prev => {
         // Keep any 'review-' injected templates so they aren't overwritten
-        const injected = prev.filter(t => String(t.id).startsWith("review-"));
+        const injected = prev.filter((t: AppTemplate) => String(t.id).startsWith("review-"));
         // Filter out remote templates that have the same name as injected ones to avoid duplicates
-        const injectedNames = new Set(injected.map(t => t.name));
-        const filteredRemote = remoteTemplates.filter(t => !injectedNames.has(t.name));
+        const injectedNames = new Set(injected.map((t: AppTemplate) => t.name));
+        const filteredRemote = remoteTemplates.filter((t: AppTemplate) => !injectedNames.has(t.name));
         return [...injected, ...filteredRemote];
       });
     };
@@ -382,12 +382,14 @@ function TemplatesContent() {
     loadedDocumentIdRef.current = documentId;
 
       const loadReviewedDocument = async () => {
-        const { data: docData, error } = await supabase
+        const { data, error } = await supabase
           .from("documents")
           .select("id, name, category, file_url, content")
           .eq("id", documentId)
           .eq("owner_id", currentUserId)
-          .maybeSingle<ReviewedDocumentRow>();
+          .maybeSingle();
+
+        const docData = data as ReviewedDocumentRow | null;
 
         if (error || !docData) {
           console.warn("Failed to load reviewed document:", error);
@@ -1098,7 +1100,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
     if (signatureMode === "draw") {
       if (!canvasRef.current) return;
       // Check if canvas is empty
-      const ctx = canvasRef.current.getContext("2d");
+      canvasRef.current.getContext("2d");
       const blank = document.createElement('canvas');
       blank.width = canvasRef.current.width;
       blank.height = canvasRef.current.height;
@@ -1250,21 +1252,25 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
     if (!currentUserId) return;
 
     const loadProfileAndSignature = async () => {
-      const [{ data: userData }, { data: profileRow }, { data: signatureRow }] = await Promise.all([
+      const [userDataResponse, profileResponse, signatureResponse] = await Promise.all([
         supabase.auth.getUser(),
         supabase
           .from("profiles")
           .select("full_name, company, timezone")
           .eq("id", currentUserId)
-          .maybeSingle<ProfileRow>(),
+          .maybeSingle(),
         supabase
           .from("signatures")
           .select("data_url")
           .eq("owner_id", currentUserId)
           .order("created_at", { ascending: false })
           .limit(1)
-          .maybeSingle<SignatureRow>(),
+          .maybeSingle(),
       ]);
+
+      const profileRow = profileResponse.data as ProfileRow | null;
+      const signatureRow = signatureResponse.data as SignatureRow | null;
+      const userData = userDataResponse.data;
 
       setFormValues((prev) => ({
         ...prev,
@@ -1577,7 +1583,6 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   };
 
   const handleSend = async () => {
-    const isDateKey = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
     setSendError(null);
     setIsPersisting(true);
 
@@ -1717,8 +1722,6 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                 }
                 if (step === "review") {
                   setStep("type_selection");
-                } else if (step === "type_selection") {
-                  setStep("recipients");
                 } else {
                   setStep("send");
                 }
@@ -1948,7 +1951,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                     <div className="bg-slate-100/50 p-4 md:p-12 min-h-screen overflow-y-auto custom-scrollbar flex justify-center">
                       <div className="w-full max-w-[816px] bg-white shadow-2xl rounded-sm p-16 text-left relative" style={{ minHeight: '1056px', aspectRatio: '1/1.414' }}>
                         {/* Simulation of a real document page */}
-                        {template.mimeType?.startsWith("image/") ? (
+                        {(template.mimeType?.startsWith("image/") && !template.detectedText) ? (
                           <img
                             src={template.fileDataUrl}
                             alt={template.name}

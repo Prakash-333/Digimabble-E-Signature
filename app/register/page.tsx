@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
+import { type Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase/browser";
 
 const isGmailAddress = (value: string) =>
@@ -18,7 +19,7 @@ export default function RegisterPage() {
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(({ data }: { data: { session: Session | null } }) => {
       if (data.session) {
         router.replace("/dashboard");
       }

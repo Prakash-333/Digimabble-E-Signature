@@ -3,16 +3,29 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
-import { CheckCircle2, Loader2, FileText, PenLine as Pen, Lock, ShieldCheck, AlertCircle, Clock, X, RotateCcw, Globe, Building2 } from "lucide-react";
+import { CheckCircle2, Loader2, FileText, PenLine as Pen, Lock, ShieldCheck, AlertCircle, Clock, X, RotateCcw } from "lucide-react";
 import { getGuestDocumentMetaData, markFirstLogin, submitGuestSignature } from "../../actions/document-guest";
 import { supabase } from "../../lib/supabase/browser";
 import { normalizeEmail } from "../../lib/documents";
+
+interface DocumentData {
+  id: string;
+  name: string;
+  category?: string;
+  status: string;
+  content?: string;
+  file_url?: string;
+  access_id?: string;
+  access_password?: string;
+  access_first_login?: string | null;
+  recipients?: Array<{ email: string; name: string }>;
+}
 
 export default function PublicSignPage() {
   const { id } = useParams() as { id: string };
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [document, setDocument] = useState<any>(null);
+  const [document, setDocument] = useState<DocumentData | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   // Login State
@@ -94,7 +107,7 @@ export default function PublicSignPage() {
              setIsAuthenticated(true);
           }
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Load error:", err);
         setError("Failed to connect to the secure document server.");
       } finally {
@@ -162,8 +175,10 @@ export default function PublicSignPage() {
 
         localStorage.setItem(`sd_session_${id}`, "active");
         setIsAuthenticated(true);
-        startTimer(new Date(firstLoginTime));
-      } catch (err) {
+        if (firstLoginTime) {
+          startTimer(new Date(firstLoginTime));
+        }
+      } catch (err: unknown) {
         setLoginError("Failed to start session. Please try again.");
       }
     } else {
@@ -230,8 +245,8 @@ export default function PublicSignPage() {
       
       setIsSigned(true);
       setShowSignModal(false);
-    } catch (err: any) {
-      alert("Failed to submit signature: " + err.message);
+    } catch (err: unknown) {
+      alert("Failed to submit signature: " + (err instanceof Error ? err.message : String(err)));
     } finally {
       setIsSubmitting(false);
     }

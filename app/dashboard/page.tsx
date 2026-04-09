@@ -180,13 +180,10 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div className="px-4 pb-8 pt-6 md:px-10 md:pb-12 md:pt-10">
-      <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="px-2 pb-8 pt-0 md:px-4 md:pb-10 md:pt-0">
+      <div className="mt-4 mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Welcome back, {userLabel}!</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Here&apos;s an overview of your recent documents.
-          </p>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Welcome back, {userLabel}!</h1>
         </div>
         <div className="flex items-center gap-2">
           <select
