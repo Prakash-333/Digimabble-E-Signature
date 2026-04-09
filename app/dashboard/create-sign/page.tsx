@@ -28,7 +28,7 @@ export default function CreateSignPage() {
       if (!currentUser) return;
       setUserId(currentUser.id);
 
-      const { data: signatureData, error } = await supabase
+      const { data: signatureData, error } = await (supabase as any)
         .from("signatures")
         .select("id, owner_id, name, data_url")
         .eq("owner_id", currentUser.id)

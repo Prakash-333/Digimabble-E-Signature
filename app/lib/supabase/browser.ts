@@ -67,15 +67,16 @@ const createMockClient = () => {
   };
 
   const mockQueryBuilder = {
-    select: () => mockQueryBuilder,
-    eq: () => mockQueryBuilder,
-    order: () => mockQueryBuilder,
-    limit: () => mockQueryBuilder,
-    upsert: async () => ({ data: null, error: null }),
-    insert: async () => ({ data: null, error: null }),
-    update: async () => ({ data: null, error: null }),
-    delete: async () => ({ data: null, error: null }),
-    single: async () => ({ data: null, error: null }),
+    select: <T = any>(...args: any[]) => mockQueryBuilder as any,
+    eq: <T = any>(...args: any[]) => mockQueryBuilder as any,
+    order: <T = any>(...args: any[]) => mockQueryBuilder as any,
+    limit: <T = any>(...args: any[]) => mockQueryBuilder as any,
+    upsert: async <T = any>(...args: any[]) => ({ data: null as any, error: null }),
+    insert: async <T = any>(...args: any[]) => ({ data: null as any, error: null }),
+    update: async <T = any>(...args: any[]) => ({ data: null as any, error: null }),
+    delete: async <T = any>(...args: any[]) => ({ data: null as any, error: null }),
+    single: async <T = any>(...args: any[]) => ({ data: null as any, error: null }),
+    maybeSingle: async <T = any>(...args: any[]) => ({ data: null as any, error: null }),
     then: (resolve: (val: { data: any[]; error: any | null }) => void) => resolve({ data: [], error: null }),
   };
 
