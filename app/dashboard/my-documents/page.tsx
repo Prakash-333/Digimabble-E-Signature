@@ -5,7 +5,7 @@ import { useUploadThing } from "../../lib/uploadthing-client";
 import { deleteCloudFiles } from "../../actions/uploadthing";
 import { supabase } from "../../lib/supabase/browser";
 import { getMissingTableMessage, isMissingSupabaseTable } from "../../lib/supabase/errors";
-import { CloudUpload, FileText, Image as ImageIcon, Folder, X, File, FileSpreadsheet, Presentation, FileType, Briefcase, User, Check, MoreHorizontal, Download, Trash2, Loader2, List, LayoutGrid } from "lucide-react";
+import { CloudUpload, FileText, Image as ImageIcon, Folder, X, File, FileSpreadsheet, Presentation, FileType, Briefcase, User, Check, MoreHorizontal, Download, Trash2, Loader2, List, LayoutGrid, Search } from "lucide-react";
 
 type DocumentCategory = "personal" | "company";
 
@@ -34,6 +34,7 @@ type MyDocumentRow = {
 
 export default function MyDocumentsPage() {
     const [files, setFiles] = useState<File[]>([]);
+    const [searchQuery, setSearchQuery] = useState("");
     const [pendingCategory, setPendingCategory] = useState<DocumentCategory | null>(null);
     const [showUploadModal, setShowUploadModal] = useState(false);
     const [showCategoryModal, setShowCategoryModal] = useState(false);
@@ -289,15 +290,16 @@ export default function MyDocumentsPage() {
     };
 
     const filteredDocuments = storedDocuments.filter((doc) => {
-        if (activeFilter === "all") return true;
-        return doc.category === activeFilter;
+        const matchesFilter = activeFilter === "all" || doc.category === activeFilter;
+        const matchesSearch = doc.name.toLowerCase().includes(searchQuery.toLowerCase());
+        return matchesFilter && matchesSearch;
     });
 
     const personalCount = storedDocuments.filter((doc) => doc.category === "personal").length;
     const companyCount = storedDocuments.filter((doc) => doc.category === "company").length;
 
     return (
-        <div className="px-4 pb-8 pt-6 md:px-8 md:pb-10 md:pt-8">
+        <div className="px-2 pb-8 pt-0 md:px-4 md:pb-10 md:pt-0">
             {/* Success Banner */}
             {showSaveSuccess && (
                 <div className="mb-6 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 shadow-sm flex justify-between items-center transition-all animate-in fade-in slide-in-from-top-2">
@@ -314,32 +316,58 @@ export default function MyDocumentsPage() {
                 </div>
             )}
 
-            {/* Header with Upload Button */}
-            <div className="mb-6 flex items-center justify-between">
-                <div>
-                    <h1 className="text-xl font-semibold text-slate-900">My Documents</h1>
-                    <p className="mt-1 text-sm text-slate-500">
-                        Upload and store your documents, spreadsheets, presentations, and images
-                    </p>
+            {/* Header with Search and Actions */}
+            <div className="flex flex-wrap items-center justify-between gap-4 mt-4">
+                <div className="relative flex-1 max-w-md">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <input
+                        type="text"
+                        placeholder="Search your documents..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 text-sm rounded-xl border border-slate-200 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-100 focus:border-slate-400 text-slate-800 placeholder:text-slate-400"
+                    />
                 </div>
-                <button
-                    type="button"
-                    onClick={handleButtonClick}
-                    disabled={isUploading || Boolean(schemaError)}
-                    className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-5 py-2.5 text-xs font-semibold !text-white shadow-md hover:bg-violet-700 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    {isUploading ? (
-                        <>
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Uploading...
-                        </>
-                    ) : (
-                        <>
-                            <CloudUpload className="h-4 w-4" />
-                            Upload Document
-                        </>
-                    )}
-                </button>
+
+                <div className="flex flex-col items-end gap-3">
+                    <button
+                        type="button"
+                        onClick={handleButtonClick}
+                        disabled={isUploading || Boolean(schemaError)}
+                        className="inline-flex items-center gap-2 rounded-full bg-violet-600 px-5 py-2.5 text-xs font-semibold !text-white shadow-md hover:bg-violet-700 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {isUploading ? (
+                            <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Uploading...
+                            </>
+                        ) : (
+                            <>
+                                <CloudUpload className="h-4 w-4" />
+                                Upload Document
+                            </>
+                        )}
+                    </button>
+
+                    <div className="inline-flex items-center rounded-full border border-slate-200 bg-white p-1 shadow-sm">
+                        <button
+                            type="button"
+                            onClick={() => setViewMode("list")}
+                            className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "list" ? "bg-violet-600 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                            aria-label="List view"
+                        >
+                            <List className="h-4 w-4" />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setViewMode("grid")}
+                            className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "grid" ? "bg-violet-600 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50"}`}
+                            aria-label="Grid view"
+                        >
+                            <LayoutGrid className="h-4 w-4" />
+                        </button>
+                    </div>
+                </div>
             </div>
 
             {/* Category Filter Tabs */}
@@ -373,24 +401,6 @@ export default function MyDocumentsPage() {
                     <Briefcase className="inline h-3 w-3 mr-1" />
                     Company ({companyCount})
                 </button>
-                <div className="ml-auto inline-flex items-center rounded-full border border-slate-200 bg-white p-1 shadow-sm">
-                    <button
-                        type="button"
-                        onClick={() => setViewMode("list")}
-                        className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "list" ? "bg-violet-600 text-white" : "text-slate-500 hover:bg-slate-100"}`}
-                        aria-label="List view"
-                    >
-                        <List className="h-4 w-4" />
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setViewMode("grid")}
-                        className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-all ${viewMode === "grid" ? "bg-violet-600 text-white" : "text-slate-500 hover:bg-slate-100"}`}
-                        aria-label="Grid view"
-                    >
-                        <LayoutGrid className="h-4 w-4" />
-                    </button>
-                </div>
             </div>
 
             {/* Empty State */}

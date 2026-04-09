@@ -383,7 +383,7 @@ export default function DashboardLayout({
           </div>
         </header>
 
-        <main className="flex-1 bg-slate-50 p-4">{children}</main>
+        <main className="flex-1 bg-slate-50 p-4 pt-0">{children}</main>
       </div>
     </div>
   );
