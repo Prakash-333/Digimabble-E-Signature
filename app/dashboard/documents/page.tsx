@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye, Search } from "lucide-react";
+import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye, Search, PenLine } from "lucide-react";
 import { deleteCloudFiles } from "../../actions/uploadthing";
 import { supabase } from "../../lib/supabase/browser";
 import { getMatchingRecipient, normalizeEmail } from "../../lib/documents";
@@ -395,7 +395,7 @@ export default function DocumentsPage() {
         (r) => (r as { status?: string }).status === "rejected"
       ).length;
       const completedCount = recipients.filter(
-        (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
+        (r) => ["signed", "reviewed", "approved", "completed"].includes((r as { status?: string }).status || "")
       ).length;
 
       if (totalCount > 0) {
@@ -754,6 +754,28 @@ export default function DocumentsPage() {
                     <div className="absolute top-10 right-0 w-36 rounded-xl border border-slate-200 bg-white p-1 shadow-xl z-20 animate-in fade-in zoom-in duration-200">
                       {(() => {
                         const myRecipient = currentUserEmail ? doc.recipients.find(r => normalizeEmail(r.email) === currentUserEmail) : null;
+                        const myStatus = myRecipient?.status || "pending";
+                        const showSignButton = doc.direction === "received" && !["signed", "reviewed", "approved", "completed"].includes(myStatus);
+
+                        const isReviewer = myRecipient?.role === "reviewer" || doc.category === "Reviewer" || doc.status === "reviewing";
+                        const buttonLabel = isReviewer ? "Review Document" : "Sign Document";
+                        const ButtonIcon = isReviewer ? Eye : PenLine;
+
+                        if (showSignButton) {
+                          return (
+                            <button
+                              onClick={() => {
+                                setOpenMenuId(null);
+                                router.push(`/sign/${doc.id}`);
+                              }}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-bold text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
+                            >
+                              <ButtonIcon className="h-3 w-3" />
+                              {buttonLabel}
+                            </button>
+                          );
+                        }
+
                         const signedFileUrl = myRecipient?.signed_file_url;
                         const signedContent = myRecipient?.signed_content;
                         const displayFileUrl = signedFileUrl || doc.fileUrl;
@@ -1212,7 +1234,7 @@ function DocumentDetailModal({
       (r) => (r as { status?: string }).status === "rejected"
     ).length;
     const completedCount = currentDoc.recipients.filter(
-      (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
+      (r) => ["signed", "reviewed", "approved", "completed"].includes((r as { status?: string }).status || "")
     ).length;
 
     // Multi-recipient logic first

@@ -12,7 +12,7 @@ export async function getGuestDocumentMetaData(id: string) {
     const supabase = createSupabaseAdminClient();
     const { data, error } = await supabase
       .from("documents")
-      .select("id, name, status, access_id, access_password, access_first_login, content, file_url")
+      .select("id, name, status, access_id, access_password, access_first_login, content, file_url, recipients, category")
       .eq("id", id)
       .maybeSingle();
 
@@ -73,23 +73,36 @@ export async function submitGuestSignature(id: string, signatureDataUrl: string,
     // but in a real app we'd match by email from the portal session)
     let recipients = doc.recipients as DocumentRecipient[];
     const isReviewDoc = doc.category === "Reviewer";
-    const status = isReviewDoc ? "reviewed" : "completed";
+    const status = isReviewDoc ? "reviewed" : "signed";
     
     // Update the recipient status
     // Note: In this version We're updating the first recipient for simplicity, 
     // or we could match by a specific guest identifier if we had one.
     if (recipients.length > 0) {
-      recipients = recipients.map((r, idx) => {
-        if (idx === 0) { // For simplicity, update the first one
+      let updated = false;
+      recipients = recipients.map((r) => {
+        // Update the first recipient that hasn't signed/reviewed yet
+        if (!updated && !["signed", "reviewed", "approved", "completed"].includes(r.status || "")) {
+          updated = true;
           return {
             ...r,
             status: status,
-            signed_content: signatureDataUrl, // Or a more complex injection
+            signed_content: signatureDataUrl,
             sign_message: message || r.sign_message
           };
         }
         return r;
       });
+      
+      // Fallback: if all are signed, just update the first one anyway (shouldn't happen often)
+      if (!updated) {
+        recipients[0] = {
+          ...recipients[0],
+          status: status,
+          signed_content: signatureDataUrl,
+          sign_message: message || recipients[0].sign_message
+        };
+      }
     }
 
     // 3. Update document status

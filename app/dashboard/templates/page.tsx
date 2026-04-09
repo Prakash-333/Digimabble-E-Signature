@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
-import { Search, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2, X, PenTool, Type, CloudUpload, Eye, CheckSquare, Check, CheckCircle2 } from "lucide-react";
+import { Search, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2, X, PenTool, Type, CloudUpload, Eye, CheckSquare, Check, CheckCircle2, Building2, Globe } from "lucide-react";
 import { OFFER_LETTER_TEMPLATE, type Template } from "./data";
 import { useUploadThing } from "../../lib/uploadthing-client";
 import { supabase } from "../../lib/supabase/browser";
@@ -187,7 +187,7 @@ function TemplatesContent() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState(urlSearch);
   const [favorites, setFavorites] = useState<Set<TemplateId>>(new Set());
-  const [useStep, setUseStep] = useState<"review" | "recipients" | "send" | null>(null);
+  const [useStep, setUseStep] = useState<"review" | "type_selection" | "recipients" | "send" | null>(null);
   const [selectedForUse, setSelectedForUse] = useState<TemplateId | null>(null);
   const [appTemplates, setAppTemplates] = useState<AppTemplate[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null | undefined>(undefined);
@@ -966,8 +966,8 @@ const generateTemplateFields = (templateContent: string) => {
 
 function TemplateFlowModal({ template, step, setStep, onClose, router, currentUserId }: {
   template: AppTemplate,
-  step: "review" | "recipients" | "send",
-  setStep: (s: "review" | "recipients" | "send" | null) => void,
+  step: "review" | "type_selection" | "recipients" | "send",
+  setStep: (s: "review" | "type_selection" | "recipients" | "send" | null) => void,
   onClose: () => void,
   router: ReturnType<typeof useRouter>,
   currentUserId: string | null | undefined
@@ -1021,6 +1021,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   // Form values for template fields
   const [formValues, setFormValues] = useState<Record<string, string>>(getInitialFormValues);
   const [placeholderValues, setPlaceholderValues] = useState<Record<string, string>>({});
+  const [documentType, setDocumentType] = useState<"internal" | "external" | null>(null);
 
   // Signature Pad State
   const [showSignaturePad, setShowSignaturePad] = useState(false);
@@ -1538,8 +1539,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
       setSendError(null);
       const savedDoc = await persistSharedDocument(newDoc);
       
-      // Trigger real emails to recipients
-      if (savedDoc?.id) {
+      // Trigger real emails to recipients ONLY for external documents
+      if (savedDoc?.id && documentType === "external") {
         console.log("Triggering emails for document:", savedDoc.id);
         const emailPromises = finalRecipients.map(recipient => 
           fetch('/api/send-document', {
@@ -1680,8 +1681,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
     setIsPersisting(false);
   };
 
-  const stepIndex = step === "review" ? 1 : step === "recipients" ? 2 : 3;
-  const stepLabel = step === "review" ? "Review Document" : step === "recipients" ? "Select Recipients" : "Confirm & Send";
+  const stepIndex = step === "review" ? 1 : step === "type_selection" ? 2 : step === "recipients" ? 3 : 4;
+  const stepLabel = step === "review" ? "Review Document" : step === "type_selection" ? "Document Type" : step === "recipients" ? "Select Recipients" : "Confirm & Send";
 
   return (
     <div className="fixed inset-0 z-[100] bg-white flex flex-col h-screen w-screen overflow-hidden text-slate-900">
@@ -1689,7 +1690,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
       <div className="flex items-center justify-between border-b border-slate-100 px-8 py-4 bg-white shrink-0">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => step === "review" ? onClose() : step === "recipients" ? setStep("review") : setStep("recipients")}
+            onClick={() => step === "review" ? onClose() : step === "type_selection" ? setStep("review") : step === "recipients" ? setStep("type_selection") : setStep("recipients")}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-500 hover:text-slate-900 transition-all group"
           >
             <ChevronLeft className="w-4 h-4 transition-transform group-hover:-translate-x-0.5" />
@@ -1700,17 +1701,17 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
           </div>
           <div>
             <h2 className="text-lg font-bold text-slate-900 leading-tight">{template.name}</h2>
-            <p className="text-xs text-slate-500 font-medium tracking-tight">Step {stepIndex}/3: {stepLabel}</p>
+            <p className="text-xs text-slate-500 font-medium tracking-tight">Step {stepIndex}/4: {stepLabel}</p>
           </div>
         </div>
         {/* Step progress dots */}
         <div className="flex items-center gap-2 mx-auto">
-          {["review", "recipients", "send"].map((s, i) => (
+          {["review", "type_selection", "recipients", "send"].map((s, i) => (
             <div key={s} className={`rounded-full transition-all ${stepIndex > i + 1 ? "w-6 h-2 bg-violet-600" : stepIndex === i + 1 ? "w-8 h-2 bg-violet-600" : "w-2 h-2 bg-slate-200"}`} />
           ))}
         </div>
         <div className="flex items-center gap-3">
-          {step !== "send" && (
+          {step !== "send" && step !== "type_selection" && (
             <button
               onClick={() => {
                 if (step === "recipients" && selectedRecipients.length === 0 && !manualEmail) {
@@ -1718,6 +1719,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                   return;
                 }
                 if (step === "review") {
+                  setStep("type_selection");
+                } else if (step === "type_selection") {
                   setStep("recipients");
                 } else {
                   setStep("send");
@@ -2040,7 +2043,47 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
           </div>
         )}
 
-        {/* ── STEP 2: Select Recipients ── */}
+        {/* ── STEP 2: Select Document Type ── */}
+        {step === "type_selection" && (
+          <div className="flex h-[calc(100vh-73px)] items-center justify-center p-6 bg-slate-50 overflow-hidden">
+            <div className="w-full max-w-2xl bg-white rounded-3xl shadow-xl border border-slate-100 p-12 text-center animate-in fade-in zoom-in-95 duration-300">
+              <h2 className="text-3xl font-black text-slate-900 mb-4">Who is signing this document?</h2>
+              <p className="text-slate-500 mb-10 text-lg">Choose the type of recipient for this document.</p>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <button
+                  onClick={() => {
+                    setDocumentType("internal");
+                    setStep("recipients");
+                  }}
+                  className="flex flex-col items-center justify-center p-8 rounded-[2rem] border-2 border-slate-100 hover:border-violet-400 hover:bg-violet-50 transition-all group"
+                >
+                  <div className="w-20 h-20 rounded-full bg-slate-50 group-hover:bg-white flex items-center justify-center mb-6 shadow-sm border border-slate-100 group-hover:border-violet-100">
+                    <Building2 className="w-10 h-10 text-slate-400 group-hover:text-violet-600 transition-colors" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-900 mb-2">Internal</h3>
+                  <p className="text-sm text-slate-500 leading-relaxed font-medium">Send to employees, reviewers, or team members within the organization.</p>
+                </button>
+                
+                <button
+                  onClick={() => {
+                    setDocumentType("external");
+                    setStep("recipients");
+                  }}
+                  className="flex flex-col items-center justify-center p-8 rounded-[2rem] border-2 border-slate-100 hover:border-violet-400 hover:bg-violet-50 transition-all group"
+                >
+                  <div className="w-20 h-20 rounded-full bg-slate-50 group-hover:bg-white flex items-center justify-center mb-6 shadow-sm border border-slate-100 group-hover:border-violet-100">
+                    <Globe className="w-10 h-10 text-slate-400 group-hover:text-violet-600 transition-colors" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-900 mb-2">External</h3>
+                  <p className="text-sm text-slate-500 leading-relaxed font-medium">Send to clients, investors, or partners outside the organization.</p>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── STEP 3: Select Recipients ── */}
         {step === "recipients" && (
           <>
           <div className="flex-1 flex min-h-[calc(100vh-73px)] bg-slate-50">
@@ -2318,7 +2361,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
               )}
           </>
         )}
-        {/* ── STEP 3: Confirm & Send ── */}
+        {/* ── STEP 4: Confirm & Send ── */}
         {step === "send" && (
           <div className="flex-1 flex min-h-[calc(100vh-73px)] bg-slate-50 overflow-hidden">
             {isSent ? (
@@ -2328,10 +2371,10 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                 </div>
                 <div className="max-w-md space-y-4">
                   <h3 className="text-3xl font-black text-slate-900 tracking-tight leading-tight">
-                    {activeCategory === "Reviewer" ? "Sent for Review!" : "Document Sent Successfully!"}
+                    {(activeCategory === "Reviewer" || sendActionType === "review") ? "Sent for Review!" : "Document Sent Successfully!"}
                   </h3>
                   <p className="text-slate-500 font-medium leading-relaxed">
-                    {activeCategory === "Reviewer" 
+                    {(activeCategory === "Reviewer" || sendActionType === "review")
                       ? "Your document has been sent for internal review. You can track its progress in the Documents page." 
                       : "Everything looks great! Your document is on its way to the recipients for signing."}
                   </p>

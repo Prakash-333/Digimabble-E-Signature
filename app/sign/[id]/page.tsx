@@ -3,8 +3,10 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
-import { CheckCircle2, Loader2, FileText, PenLine as Pen, Lock, ShieldCheck, AlertCircle, Clock, X, RotateCcw } from "lucide-react";
+import { CheckCircle2, Loader2, FileText, PenLine as Pen, Lock, ShieldCheck, AlertCircle, Clock, X, RotateCcw, Globe, Building2 } from "lucide-react";
 import { getGuestDocumentMetaData, markFirstLogin, submitGuestSignature } from "../../actions/document-guest";
+import { supabase } from "../../lib/supabase/browser";
+import { normalizeEmail } from "../../lib/documents";
 
 export default function PublicSignPage() {
   const { id } = useParams() as { id: string };
@@ -31,6 +33,9 @@ export default function PublicSignPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawing = useRef(false);
 
+  // Derived State
+  const isReviewMode = document?.category === "Reviewer" || document?.status === "reviewing";
+
   // Load document once to check exists and get basic info
   useEffect(() => {
     if (!id) return;
@@ -46,6 +51,23 @@ export default function PublicSignPage() {
         }
 
         setDocument(data);
+
+        // --- NEW: Platform Auth Check ---
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user && user.email) {
+          const userEmail = normalizeEmail(user.email);
+          const recipients = data.recipients as Array<{ email: string }> || [];
+          const isRecipient = recipients.some(r => normalizeEmail(r.email) === userEmail);
+          
+          if (isRecipient) {
+            console.log("Logged-in platform user is a recipient, bypassing guest login.");
+            setIsAuthenticated(true);
+            // We don't need a timer for platform users as they have a real session
+            setLoading(false);
+            return;
+          }
+        }
+        // ---------------------------------
 
         // Check if we have a valid session in localStorage
         const sessionKey = `sd_session_${id}`;
@@ -229,10 +251,16 @@ export default function PublicSignPage() {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 text-center">
         <div className="h-20 w-20 rounded-full bg-green-50 flex items-center justify-center mb-6">
-          <CheckCircle2 className="h-10 w-10 text-green-500" />
+          <CheckCircle2 className="h-10 w-10 text-green-600" />
         </div>
-        <h1 className="text-2xl font-bold text-slate-900">Successfully Signed!</h1>
-        <p className="mt-2 text-slate-500 max-w-sm">Thank you for your digital signature. The document owner has been notified.</p>
+        <h2 className="text-3xl font-black text-slate-900 tracking-tight mb-2">
+          {isReviewMode ? "Review Submitted!" : "Document Signed!"}
+        </h2>
+        <p className="text-slate-500 font-medium mb-12 max-w-sm">
+          {isReviewMode 
+            ? "Your approval has been recorded. The document owner will be notified."
+            : "Everything looks great! You've successfully completed your part."}
+        </p>
         <button 
           onClick={() => router.push('/')}
           className="mt-8 rounded-full bg-violet-600 px-8 py-3 text-sm font-bold text-white shadow-lg shadow-violet-200"
@@ -379,15 +407,19 @@ export default function PublicSignPage() {
           <div className="border-t border-slate-100 bg-white/80 backdrop-blur-md p-8">
             <div className="mx-auto max-w-2xl flex flex-col sm:flex-row items-center justify-between gap-6">
               <div className="text-center sm:text-left">
-                <p className="text-lg font-bold text-slate-900">Ready to complete?</p>
-                <p className="text-sm text-slate-500">By clicking sign, you certify this is your digital signature.</p>
+                <p className="text-lg font-bold text-slate-900">{isReviewMode ? "Ready to approve?" : "Ready to complete?"}</p>
+                <p className="text-sm text-slate-500">
+                  {isReviewMode 
+                    ? "By clicking approve, you certify your review of this document." 
+                    : "By clicking sign, you certify this is your digital signature."}
+                </p>
               </div>
               <button 
                 onClick={() => setShowSignModal(true)}
                 className="flex items-center gap-3 rounded-2xl bg-violet-600 px-10 py-4 text-base font-bold text-white shadow-xl shadow-violet-200 transition-all hover:bg-violet-700 hover:scale-105 active:scale-95"
               >
-                <Pen className="h-5 w-5" />
-                Sign Document
+                {isReviewMode ? <CheckCircle2 className="h-5 w-5" /> : <Pen className="h-5 w-5" />}
+                {isReviewMode ? "Review & Approve" : "Sign Document"}
               </button>
             </div>
           </div>
@@ -400,8 +432,8 @@ export default function PublicSignPage() {
           <div className="w-full max-w-lg bg-white rounded-[2.5rem] shadow-2xl overflow-hidden">
              <div className="flex items-center justify-between p-8 border-b border-slate-100">
                 <h3 className="text-xl font-bold text-slate-900 flex items-center gap-3">
-                   <Pen className="h-5 w-5 text-violet-600" />
-                   Draw Your Signature
+                   {isReviewMode ? <CheckCircle2 className="h-5 w-5 text-violet-600" /> : <Pen className="h-5 w-5 text-violet-600" />}
+                   {isReviewMode ? "Add Your Approval Signature" : "Draw Your Signature"}
                 </h3>
                 <button onClick={() => setShowSignModal(false)} className="h-10 w-10 flex items-center justify-center rounded-full bg-slate-50 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-all">
                    <X className="h-5 w-5" />
@@ -431,7 +463,7 @@ export default function PublicSignPage() {
                       Clear
                    </button>
                    <p className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-300 text-xs font-medium pointer-events-none select-none uppercase tracking-widest opacity-40">
-                      Sign Here
+                      {isReviewMode ? "Sign Off Here" : "Sign Here"}
                    </p>
                 </div>
                 
@@ -451,7 +483,9 @@ export default function PublicSignPage() {
                    disabled={isSubmitting}
                    className="w-full py-4 rounded-2xl bg-violet-600 text-white font-bold shadow-lg shadow-violet-200 hover:bg-violet-700 active:scale-[0.98] transition-all disabled:opacity-50"
                 >
-                   {isSubmitting ? "Submitting Signature..." : "Confirm & Sign"}
+                   {isSubmitting 
+                      ? (isReviewMode ? "Submitting Review..." : "Submitting Signature...") 
+                      : (isReviewMode ? "Approve & Sign Off" : "Confirm & Sign")}
                 </button>
                 <p className="text-center text-[10px] text-slate-400">
                   By signing, you agree this is a legally binding electronic representation of your signature.
