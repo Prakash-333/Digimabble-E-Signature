@@ -56,32 +56,27 @@ export async function markFirstLogin(id: string) {
 /**
  * Submits a guest signature.
  */
-export async function submitGuestSignature(id: string, signatureDataUrl: string, message?: string) {
+export async function submitGuestSignature(id: string, signatureDataUrl: string, message?: string, editedContent?: string) {
   try {
     const supabase = createSupabaseAdminClient();
     
     // 1. Fetch current recipients
     const { data: doc, error: fetchError } = await supabase
       .from("documents")
-      .select("recipients, category")
+      .select("recipients, category, content")
       .eq("id", id)
       .single();
       
     if (fetchError || !doc) throw new Error("Document not found");
 
-    // 2. Identify the guest recipient (for now assuming first recipient if not specified, 
-    // but in a real app we'd match by email from the portal session)
+    // 2. Identify the guest recipient
     let recipients = doc.recipients as DocumentRecipient[];
     const isReviewDoc = doc.category === "Reviewer";
     const status = isReviewDoc ? "reviewed" : "signed";
     
-    // Update the recipient status
-    // Note: In this version We're updating the first recipient for simplicity, 
-    // or we could match by a specific guest identifier if we had one.
     if (recipients.length > 0) {
       let updated = false;
       recipients = recipients.map((r) => {
-        // Update the first recipient that hasn't signed/reviewed yet
         if (!updated && !["signed", "reviewed", "approved", "completed"].includes(r.status || "")) {
           updated = true;
           return {
@@ -94,7 +89,6 @@ export async function submitGuestSignature(id: string, signatureDataUrl: string,
         return r;
       });
       
-      // Fallback: if all are signed, just update the first one anyway (shouldn't happen often)
       if (!updated) {
         recipients[0] = {
           ...recipients[0],
@@ -105,12 +99,16 @@ export async function submitGuestSignature(id: string, signatureDataUrl: string,
       }
     }
 
-    // 3. Update document status
+    // 3. Update document status and content
     const updatePayload: any = {
       recipients,
       status: status,
     };
     
+    if (editedContent) {
+      updatePayload.content = editedContent;
+    }
+
     if (isReviewDoc) {
       updatePayload.reviewed_at = new Date().toISOString();
     } else {

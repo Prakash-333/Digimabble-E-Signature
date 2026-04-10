@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Bell, CheckCircle2, FileSignature, Eye, Loader2, MoreVertical, ChevronLeft, X, Trash2, Download } from "lucide-react";
+import { Bell, CheckCircle2, FileSignature, Eye, Loader2, MoreVertical, ChevronLeft, X, Trash2, Download, Edit3, Save, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/browser";
+import { highlightHtmlEdits } from "../../lib/diff";
 import {
   getMatchingRecipient,
   isCompletedForRecipient,
@@ -48,6 +49,10 @@ export default function NotificationsPage() {
   const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
   const [rejectingItem, setRejectingItem] = useState<NotificationItem | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [initialContent, setInitialContent] = useState("");
+  const [localEditedContent, setLocalEditedContent] = useState<string | null>(null);
 
   useEffect(() => {
     const loadIncomingRequests = async () => {
@@ -139,7 +144,7 @@ export default function NotificationsPage() {
     [items, seenIds]
   );
 
-  const handleUpdate = async (item: NotificationItem) => {
+  const handleUpdate = async (item: NotificationItem, editedHtml?: string) => {
     const reviewRequest = isReviewRequest(item, item.recipientRole);
     const nextStatus = reviewRequest ? "reviewed" : "signed";
     const patch = reviewRequest
@@ -164,6 +169,10 @@ export default function NotificationsPage() {
         normalizeEmail(r.email) === currentEmail ? { ...r, status: nextStatus } : r
       );
       finalPatch = { ...finalPatch, recipients: updatedRecipients };
+    }
+
+    if (editedHtml) {
+      finalPatch.content = highlightHtmlEdits(initialContent, editedHtml);
     }
 
     const { error } = await supabase.from("documents").update(finalPatch).eq("id", item.id);
@@ -249,10 +258,19 @@ export default function NotificationsPage() {
     
     if (displayContent) {
       setViewingItem({ ...item, content: displayContent });
+      setInitialContent(displayContent);
+      setLocalEditedContent(null);
+      setIsEditMode(false);
     } else if (displayFileUrl) {
       window.open(displayFileUrl, "_blank");
     }
     setOpenMenuId(null);
+  };
+
+  const handleReset = () => {
+    if (!confirm("Are you sure you want to discard all manual edits? This cannot be undone.")) return;
+    setLocalEditedContent(null);
+    setIsEditMode(false);
   };
 
   const handleDownload = (item: NotificationItem) => {
@@ -538,25 +556,85 @@ export default function NotificationsPage() {
                 <p className="text-[11px] text-slate-500 font-medium">{viewingItem.subject}</p>
               </div>
             </div>
-            <button
-              onClick={() => setViewingItem(null)}
-              className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-50 border border-slate-100 text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-all shrink-0"
-            >
-              <X className="w-5 h-5" />
-            </button>
+
+            <div className="flex items-center gap-3">
+              {viewingItem.type === "incoming_request" && !isCompletedForRecipient(viewingItem.recipientStatus || viewingItem.status) && (
+                <button
+                  onClick={() => {
+                    if (isEditMode) {
+                      const contentDiv = document.querySelector('.editable-content');
+                      if (contentDiv) {
+                        setLocalEditedContent(contentDiv.innerHTML);
+                      }
+                    }
+                    setIsEditMode(!isEditMode);
+                  }}
+                  className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-sm ${isEditMode ? 'bg-green-600 text-white shadow-green-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                >
+                  {isEditMode ? <><Save className="h-3.5 w-3.5" /> Stop Editing</> : <><Edit3 className="h-3.5 w-3.5" /> Edit Document</>}
+                </button>
+              )}
+              
+              {localEditedContent && (
+                <button
+                  onClick={handleReset}
+                  className="flex items-center justify-center w-10 h-10 rounded-xl bg-white border border-slate-200 text-slate-500 hover:text-red-600 hover:bg-red-50 transition-all shadow-sm group"
+                  title="Reset all edits"
+                >
+                  <RotateCcw className="h-4 w-4 transition-transform group-hover:rotate-[-45deg]" />
+                </button>
+              )}
+
+              {viewingItem.type === "incoming_request" && !isCompletedForRecipient(viewingItem.recipientStatus || viewingItem.status) && (
+                <button
+                  onClick={async () => {
+                    const contentDiv = document.querySelector('.editable-content');
+                    // Use local draft if available, otherwise grab from DOM
+                    const cleanHtml = isEditMode && contentDiv ? contentDiv.innerHTML : (localEditedContent || (contentDiv ? contentDiv.innerHTML : undefined));
+                    const finalHtml = cleanHtml ? highlightHtmlEdits(initialContent, cleanHtml) : undefined;
+                    
+                    await handleUpdate(viewingItem, finalHtml);
+                    setViewingItem(null);
+                  }}
+                  disabled={processingId === viewingItem.virtualId}
+                  className="flex items-center gap-2 rounded-xl bg-violet-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all"
+                >
+                  {processingId === viewingItem.virtualId ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : isReviewRequest(viewingItem, viewingItem.recipientRole) ? "Approve & Mark Reviewed" : "Sign & Complete"}
+                </button>
+              )}
+              
+              <button
+                onClick={() => setViewingItem(null)}
+                className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-50 border border-slate-100 text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-all shrink-0"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto bg-slate-100/50">
-            <div className="max-w-4xl mx-auto my-8">
+          <div className="flex-1 overflow-y-auto bg-slate-100/50 p-8">
+            <div className="max-w-4xl mx-auto">
               <div
-                className="mx-auto w-[800px] min-h-[1056px] bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200 p-12 md:p-16 lg:p-20 relative text-[15px] text-slate-800 leading-[1.9] tracking-tight"
+                contentEditable={isEditMode}
+                suppressContentEditableWarning
+                className={`editable-content mx-auto w-[800px] min-h-[1056px] bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200 p-12 md:p-16 lg:p-20 relative text-[15px] text-slate-800 leading-[1.9] tracking-tight outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-200 bg-amber-50/20' : ''}`}
                 style={{
                   fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                 }}
                 dangerouslySetInnerHTML={{
-                  __html: (viewingItem.content || "")
-                    .replace(/\n/g, "<br/>")
-                    .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">')
+                  __html: (() => {
+                    const baseHtml = localEditedContent || viewingItem.content || "";
+                    if (isEditMode) return baseHtml.replace(/\n/g, "<br/>");
+                    
+                    // Apply highlighting ONLY if local edits exist to avoid false positives
+                    const highlighted = localEditedContent 
+                      ? highlightHtmlEdits(initialContent, localEditedContent)
+                      : baseHtml;
+                      
+                    return highlighted
+                      .replace(/\n/g, "<br/>")
+                      .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">');
+                  })()
                 }}
               />
             </div>

@@ -3,7 +3,8 @@
 import { Suspense, useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
-import { Search, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2, X, PenTool, Type, CloudUpload, Eye, CheckCircle2, Building2, Globe } from "lucide-react";
+import { Search, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2, X, PenTool, Type, CloudUpload, Eye, CheckCircle2, Building2, Globe, Edit3, Save, FileText, RotateCcw } from "lucide-react";
+import { highlightHtmlEdits } from "../../lib/diff";
 import { OFFER_LETTER_TEMPLATE, type Template } from "./data";
 import { useUploadThing } from "../../lib/uploadthing-client";
 import { supabase } from "../../lib/supabase/browser";
@@ -1028,6 +1029,16 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   const [typedSignature, setTypedSignature] = useState("");
   const [uploadedSignature, setUploadedSignature] = useState<string | null>(null);
   const [isSavingSignature, setIsSavingSignature] = useState(false);
+  
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editedTemplateContent, setEditedTemplateContent] = useState<string | null>(null);
+
+  const handleResetTemplate = () => {
+    if (!confirm("Are you sure you want to discard all manual refinements?")) return;
+    setEditedTemplateContent(null);
+    setIsEditMode(false);
+  };
+  
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawingRef = useRef(false);
 
@@ -1472,7 +1483,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
     }
   });
 
-  const finalizeSend = async (fileUrl: string | null, fileKey: string | null) => {
+  const finalizeSend = async (fileUrl: string | null, fileKey: string | null, actionOverride?: "sign" | "review") => {
     // Generate filled HTML content for viewing
     const isDateKeyLocal = (key: string) => key.endsWith("_DATE") || key === "START_DATE";
     // Use uploadedPreviewHtml when we have an uploaded file OR when we have detectedText (HTML content doc forwarding)
@@ -1511,12 +1522,12 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
         finalRecipients.push({ 
           name: "External Contact", 
           email: manualEmail.trim(), 
-          role: (sendActionType === "review" || activeCategory === "Reviewer") ? "reviewer" : "signer" 
+          role: ((actionOverride || sendActionType) === "review" || activeCategory === "Reviewer") ? "reviewer" : "signer" 
         });
       }
     }
 
-    const isReviewMode = sendActionType === "review" || activeCategory === "Reviewer";
+    const isReviewMode = (actionOverride || sendActionType) === "review" || activeCategory === "Reviewer";
 
     const newDoc = {
       id: `tmp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -1533,7 +1544,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
       fileUrl: fileUrl, // Store the cloud URL
       fileKey: fileKey, // Store the unique key for deletion
       category: activeCategory, // Store the category for reviewer tracking
-      content: filledHtmlContent, // Store the filled HTML content for viewing
+      content: editedTemplateContent ? highlightHtmlEdits(filledHtmlContent, editedTemplateContent) : filledHtmlContent, 
       manualSignaturePos: manualSignaturePos, // Pass manual placement coordinates
       manualSignatureScale: manualSignatureScale, // Pass manual scale
     };
@@ -1582,7 +1593,10 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
     } catch { return iso; }
   };
 
-  const handleSend = async () => {
+  const handleSend = async (actionOverride?: "sign" | "review") => {
+    if (actionOverride) {
+      setSendActionType(actionOverride);
+    }
     setSendError(null);
     setIsPersisting(true);
 
@@ -1600,7 +1614,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
         const file = new File([blob], `${baseName.replace(/\.[^/.]+$/, "")}.${extension}`, { type: mimeType });
         const res = await uploadDoc([file]);
         if (res && res[0]) {
-          await finalizeSend(res[0].url, res[0].key);
+          await finalizeSend(res[0].url, res[0].key, actionOverride);
         } else {
           throw new Error("Upload failed without throwing an error");
         }
@@ -1613,7 +1627,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
 
     // For HTML content documents (no file, just detectedText), skip canvas and send directly
     if (!hasUploadedDocument && template.detectedText) {
-      await finalizeSend(null, null);
+      await finalizeSend(null, null, actionOverride);
       return;
     }
 
@@ -1668,7 +1682,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
 
       const res = await uploadDoc([file]);
       if (res && res[0]) {
-        await finalizeSend(res[0].url, res[0].key);
+        await finalizeSend(res[0].url, res[0].key, actionOverride);
       } else {
         throw new Error("Upload failed to return a file");
       }
@@ -1676,7 +1690,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
     } catch (e) {
       console.error("Template snapshot failed", e);
       // Fallback: send without file url if snapshot fails
-      await finalizeSend(null, null);
+      await finalizeSend(null, null, actionOverride);
       return;
     }
 
@@ -1989,18 +2003,70 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                       </div>
                     </div>
                   ) : (
-                    <>
-                      <div className="p-6">
-                        <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-none mb-2">{template.name}</h1>
-                        <div className="flex items-center gap-2">
-                          <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">{template.category}</span>
-                          <span className="w-1 h-1 rounded-full bg-slate-200" />
-                          <span className="text-xs text-slate-400 font-bold tracking-tight">V2.1.0</span>
+                      <div className="mx-auto max-w-[800px] bg-white shadow-lg p-12 md:p-16 min-h-[1056px] rounded-lg border border-slate-100 flex flex-col relative">
+                        <div className="absolute top-6 left-6 flex items-center gap-3">
+                          <button
+                            onClick={() => onClose()}
+                            className="flex items-center gap-2 px-4 py-2 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-all font-semibold"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                            Back
+                          </button>
                         </div>
-                      </div>
 
-                      {/* Full letter content with replaced placeholders */}
-                      <div className="space-y-6 text-slate-500 leading-[1.8] text-[15px] font-sans antialiased tracking-tight relative z-10 px-4 p-6" style={{ fontFamily: 'inherit' }}>
+                        <div className="absolute top-6 right-6 flex items-center gap-3">
+                          {editedTemplateContent && (
+                            <button
+                              onClick={handleResetTemplate}
+                              className="flex items-center justify-center w-9 h-9 rounded-xl bg-white border border-slate-200 text-slate-500 hover:text-red-600 hover:bg-red-50 transition-all shadow-sm group"
+                              title="Reset all edits"
+                            >
+                              <RotateCcw className="h-4 w-4 transition-transform group-hover:rotate-[-45deg]" />
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => {
+                              if (isEditMode) {
+                                const contentDiv = document.querySelector('.template-preview-content');
+                                if (contentDiv) {
+                                  setEditedTemplateContent(contentDiv.innerHTML);
+                                }
+                              }
+                              setIsEditMode(!isEditMode);
+                            }}
+                            className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-sm ${isEditMode ? 'bg-green-600 text-white shadow-green-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                          >
+                            {isEditMode ? <><Save className="h-3.5 w-3.5" /> Stop Editing</> : <><Edit3 className="h-3.5 w-3.5" /> Edit Content</>}
+                          </button>
+                          
+                          <button
+                            onClick={() => onClose()}
+                            className="h-10 w-10 flex items-center justify-center rounded-full bg-slate-50 text-slate-400 hover:text-slate-900 transition-all"
+                          >
+                            <X className="h-5 w-5" />
+                          </button>
+                        </div>
+
+                        <div className="p-6 mt-12 mb-4 border-b border-slate-50">
+                          <div className="flex items-center gap-3 mb-2">
+                             <span className="text-[10px] font-black bg-red-100 text-red-600 px-2 py-1 rounded-md uppercase tracking-wider">PDF</span>
+                             <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-none">{template.name}</h1>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">{template.category}</span>
+                            <span className="w-1 h-1 rounded-full bg-slate-200" />
+                            <span className="text-xs text-slate-400 font-bold tracking-tight">V2.1.0</span>
+                          </div>
+                        </div>
+
+                        {/* Full letter content with replaced placeholders */}
+                        <div 
+                          contentEditable={isEditMode}
+                          suppressContentEditableWarning
+                          className={`space-y-6 text-slate-500 leading-[1.8] text-[15px] font-sans antialiased tracking-tight relative z-10 px-4 p-6 outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10 rounded-xl' : ''}`} 
+                          style={{ fontFamily: 'inherit' }}
+                        >
                         {(() => {
                           let filledContent = templateContent;
 
@@ -2023,19 +2089,19 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                                 <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 8px;">Signature</div>
                               </div>`
                             );
-                          } else {
-                            filledContent = filledContent.replace(
-                              /\[SIGNATURE\]/g,
-                              `<div style="margin-top: 15px;">
-                                <div style="height: 80px; margin-bottom: -15px;"></div>
-                                <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 11px; letter-spacing: 0.1em; border-top: 2px solid #f1f5f9; display: inline-block; padding-top: 8px;">Signature</div>
-                              </div>`
-                            );
                           }
-                          return <div dangerouslySetInnerHTML={{ __html: filledContent.replace(/\n/g, "<br/>") }} />;
+                          if (editedTemplateContent) {
+                            if (isEditMode) {
+                               return <div className="template-preview-content" dangerouslySetInnerHTML={{ __html: editedTemplateContent.replace(/\n/g, "<br/>") }} />;
+                            }
+                            // Apply highlighting ONLY if manual edits exist to avoid false positives
+                            const highlighted = highlightHtmlEdits(filledContent.replace(/\n/g, "<br/>"), editedTemplateContent);
+                            return <div className="template-preview-content" dangerouslySetInnerHTML={{ __html: highlighted.replace(/\n/g, "<br/>") }} />;
+                          }
+                          return <div className="template-preview-content" dangerouslySetInnerHTML={{ __html: filledContent.replace(/\n/g, "<br/>") }} />;
                         })()}
                       </div>
-                    </>
+                    </div>
                   )}
                 </div>
               </div>
@@ -2525,7 +2591,13 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                     )}
                     <div className="flex flex-col gap-3">
                       <button
-                        onClick={() => setShowSendChoice(true)}
+                        onClick={() => {
+                          if (documentType === "internal") {
+                            setShowSendChoice(true);
+                          } else {
+                            handleSend("sign");
+                          }
+                        }}
                         disabled={isUploadingDoc || isPersisting}
                         className="w-full py-4 rounded-2xl bg-violet-600 text-white font-black text-sm shadow-xl shadow-violet-100 hover:bg-violet-700 hover:-translate-y-1 transition-all active:scale-95 disabled:bg-slate-200 disabled:shadow-none flex items-center justify-center gap-2"
                       >
@@ -2709,9 +2781,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                 <div className="grid grid-cols-2 gap-8">
                   <button
                     onClick={() => {
-                      setSendActionType("review");
                       setShowSendChoice(false);
-                      handleSend();
+                      handleSend("review");
                     }}
                     className="group relative flex flex-col items-center justify-center p-10 rounded-[2.5rem] bg-slate-50 border-2 border-transparent hover:border-violet-400 hover:bg-violet-50/50 transition-all duration-300 shadow-sm hover:shadow-xl hover:shadow-violet-100/50"
                   >
@@ -2724,9 +2795,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
 
                   <button
                     onClick={() => {
-                      setSendActionType("sign");
                       setShowSendChoice(false);
-                      handleSend();
+                      handleSend("sign");
                     }}
                     className="group relative flex flex-col items-center justify-center p-10 rounded-[2.5rem] bg-slate-50 border-2 border-transparent hover:border-violet-400 hover:bg-violet-50/50 transition-all duration-300 shadow-sm hover:shadow-xl hover:shadow-violet-100/50"
                   >

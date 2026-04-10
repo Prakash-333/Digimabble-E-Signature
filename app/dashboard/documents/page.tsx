@@ -6,6 +6,8 @@ import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical,
 import { deleteCloudFiles } from "../../actions/uploadthing";
 import { supabase } from "../../lib/supabase/browser";
 import { getMatchingRecipient, normalizeEmail } from "../../lib/documents";
+import { highlightHtmlEdits } from "../../lib/diff";
+import { Edit3, Save, ShieldCheck, Loader2, RotateCcw } from "lucide-react";
 
 type Recipient = { 
   name: string; 
@@ -107,6 +109,10 @@ export default function DocumentsPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [detailDoc, setDetailDoc] = useState<SentDocument | null>(null);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [initialContent, setInitialContent] = useState("");
+  const [editedContent, setEditedContent] = useState<string | null>(null);
+  const [isPersisting, setIsPersisting] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -297,6 +303,12 @@ export default function DocumentsPage() {
       setOpenMenuId(null);
     };
     void rename();
+  };
+
+  const handleReset = () => {
+    if (!confirm("Are you sure you want to discard all manual edits? This cannot be undone.")) return;
+    setEditedContent(null);
+    setIsEditMode(false);
   };
 
   const handleDownload = (doc: SentDocument) => {
@@ -1013,26 +1025,112 @@ export default function DocumentsPage() {
                 <p className="text-[11px] text-slate-500 font-medium">{viewingDoc.subject}</p>
               </div>
             </div>
-            <button
-              onClick={() => setViewingDoc(null)}
-              className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-50 border border-slate-100 text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-all shrink-0"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-3">
+              {(() => {
+                 const isReviewer = viewingDoc.category?.toLowerCase() === "reviewer" || viewingDoc.recipientRole?.toLowerCase() === "reviewer";
+                 const canEdit = !["signed", "reviewed", "approved", "completed"].includes(viewingDoc.status);
+                 
+                 if (isReviewer && canEdit) {
+                   return (
+                      <button
+                        onClick={() => {
+                          if (isEditMode) {
+                             const contentDiv = document.querySelector('.editable-content');
+                             if (contentDiv) {
+                               setEditedContent(contentDiv.innerHTML);
+                             }
+                          } else {
+                             if (!initialContent) {
+                               setInitialContent(viewingDoc.content || "");
+                             }
+                          }
+                          setIsEditMode(!isEditMode);
+                        }}
+                        className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-sm ${isEditMode ? 'bg-green-600 text-white shadow-green-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                      >
+                        {isEditMode ? <><Save className="h-3.5 w-3.5" /> Stop Editing</> : <><Edit3 className="h-3.5 w-3.5" /> Edit Document</>}
+                      </button>
+                   );
+                 }
+                 return null;
+              })()}
+
+              {editedContent && (
+                <button
+                  onClick={handleReset}
+                  className="flex items-center justify-center w-9 h-9 rounded-xl bg-white border border-slate-200 text-slate-500 hover:text-red-600 hover:bg-red-50 transition-all shadow-sm group"
+                  title="Reset all edits"
+                >
+                  <RotateCcw className="h-4 w-4 transition-transform group-hover:rotate-[-45deg]" />
+                </button>
+              )}
+
+              {isEditMode && (
+                 <button
+                  onClick={async () => {
+                        const contentDiv = document.querySelector('.editable-content');
+                        // Use local draft if available, otherwise grab from DOM
+                        const cleanHtml = isEditMode && contentDiv ? contentDiv.innerHTML : (editedContent || (contentDiv ? contentDiv.innerHTML : initialContent));
+                        const highlighted = highlightHtmlEdits(initialContent || viewingDoc.content || "", cleanHtml);
+                        
+                        setIsPersisting(true);
+                        try {
+                          const { error } = await supabase
+                            .from("documents")
+                            .update({ content: highlighted, status: "reviewed" })
+                            .eq("id", viewingDoc.id);
+                          
+                          if (error) throw error;
+                          
+                          setViewingDoc(null);
+                          setIsEditMode(false);
+                          setDocuments(prev => prev.map(d => d.id === viewingDoc.id ? { ...d, content: highlighted, status: "reviewed" } : d));
+                        } catch (err) {
+                          alert("Failed to save review: " + (err instanceof Error ? err.message : String(err)));
+                        } finally {
+                          setIsPersisting(false);
+                        }
+                  }}
+                  disabled={isPersisting}
+                  className="flex items-center gap-2 rounded-xl bg-violet-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all disabled:opacity-50"
+                >
+                  {isPersisting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><ShieldCheck className="h-3.5 w-3.5" /> Finalize Review</>}
+                </button>
+              )}
+
+              <button
+                onClick={() => setViewingDoc(null)}
+                className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-50 border border-slate-100 text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-all shrink-0"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
 
           {/* Document Content */}
           <div className="flex-1 overflow-y-auto bg-slate-100/50 py-8 px-4 flex">
             <div className="w-[800px] min-h-[1056px] mx-auto bg-white rounded-lg shadow-xl shadow-slate-200/50 border border-slate-200 p-12 md:p-16 shrink-0 relative">
               <div
-                className="document-content text-[15px] text-slate-800 leading-[1.9] tracking-tight"
+                contentEditable={isEditMode}
+                suppressContentEditableWarning
+                className={`editable-content document-content text-[15px] text-slate-800 leading-[1.9] tracking-tight outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10 rounded-xl' : ''}`}
                 style={{
                   fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                 }}
                 dangerouslySetInnerHTML={{
-                  __html: viewingDoc.content.includes("<") 
-                    ? viewingDoc.content.replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">')
-                    : viewingDoc.content.replace(/\n/g, "<br/>")
+                  __html: (() => {
+                    const baseHtml = editedContent || viewingDoc.content || "";
+                    if (isEditMode) return baseHtml.replace(/\n/g, "<br/>");
+                    
+                    // Apply highlighting ONLY if local edits exist to avoid false positives
+                    const highlighted = editedContent 
+                      ? highlightHtmlEdits(initialContent || viewingDoc.content || "", editedContent)
+                      : baseHtml;
+
+                    return highlighted
+                      .replace(/\n/g, "<br/>")
+                      .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">');
+                  })()
                 }}
               />
             </div>
@@ -1071,6 +1169,11 @@ function DocumentDetailModal({
   const [viewingRecipient, setViewingRecipient] = useState<string | null>(null);
   const [refreshedDoc, setRefreshedDoc] = useState<SentDocument>(doc);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [initialContent, setInitialContent] = useState("");
+  const [editedContent, setEditedContent] = useState<string | null>(null);
+  const [isPersisting, setIsPersisting] = useState(false);
 
   // Fetch current user email
   useEffect(() => {
@@ -1521,6 +1624,12 @@ function DocumentDetailModal({
             {/* Sub-modal header */}
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 shrink-0">
               <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setViewingRecipient(null)}
+                  className="flex h-9 w-9 items-center justify-center rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-900 transition-all"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
                 <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-100 text-xs font-bold text-violet-600">
                   {(currentDoc.recipients.find(r => r.email === viewingRecipient)?.name || viewingRecipient || "?").charAt(0).toUpperCase()}
                 </div>
@@ -1540,7 +1649,70 @@ function DocumentDetailModal({
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
+                {(() => {
+                   const viewingR = currentDoc.recipients.find(r => r.email === viewingRecipient);
+                   const isReviewer = viewingR?.role?.toLowerCase() === "reviewer" || currentDoc.category?.toLowerCase() === "reviewer";
+                   const canEdit = !["signed", "reviewed", "approved", "completed"].includes(viewingR?.status || "");
+                   
+                   if (isReviewer && canEdit) {
+                     return (
+                        <button
+                          onClick={() => {
+                            if (isEditMode) {
+                               const contentDiv = document.querySelector('.modal-document-content');
+                               if (contentDiv) {
+                                 setEditedContent(contentDiv.innerHTML);
+                               }
+                            } else {
+                               if (!initialContent) {
+                                 const viewingR = currentDoc.recipients.find(r => r.email === viewingRecipient);
+                                 setInitialContent(viewingR?.signed_content || currentDoc.content || "");
+                               }
+                            }
+                            setIsEditMode(!isEditMode);
+                          }}
+                          className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-sm ${isEditMode ? 'bg-green-600 text-white shadow-green-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                        >
+                          {isEditMode ? <><Save className="h-3.5 w-3.5" /> Save Changes</> : <><Edit3 className="h-3.5 w-3.5" /> Edit Document</>}
+                        </button>
+                     );
+                   }
+                   return null;
+                })()}
+
+                {isEditMode && (
+                   <button
+                    onClick={async () => {
+                      const contentDiv = document.querySelector('.modal-document-content');
+                      const finalHtml = contentDiv ? contentDiv.innerHTML : (editedContent || initialContent);
+                      const highlighted = highlightHtmlEdits(initialContent, finalHtml);
+                      
+                      setIsPersisting(true);
+                      try {
+                        const { error } = await supabase
+                          .from("documents")
+                          .update({ content: highlighted, status: "reviewed", reviewed_at: new Date().toISOString() })
+                          .eq("id", currentDoc.id);
+                        
+                        if (error) throw error;
+                        
+                        // Update local state if shared across
+                        setViewingRecipient(null);
+                        setIsEditMode(false);
+                      } catch (err) {
+                        alert("Failed to save review: " + (err instanceof Error ? err.message : String(err)));
+                      } finally {
+                        setIsPersisting(false);
+                      }
+                    }}
+                    disabled={isPersisting}
+                    className="flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all disabled:opacity-50"
+                  >
+                    {isPersisting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><ShieldCheck className="h-3.5 w-3.5" /> Finalize Review</>}
+                  </button>
+                )}
+
                 {(() => {
                   const viewingR = currentDoc.recipients.find(r => r.email === viewingRecipient);
                   const openUrl = viewingR?.signed_file_url || currentDoc.fileUrl;
@@ -1591,14 +1763,23 @@ function DocumentDetailModal({
                   return (
                     <div className="w-[800px] min-h-[1056px] mx-auto bg-white rounded-xl border border-slate-200 shadow-sm p-12 md:p-16 relative origin-top max-w-full">
                       <div
-                        className="document-content text-[14px] text-slate-800 leading-[1.8] tracking-tight"
+                        contentEditable={isEditMode}
+                        suppressContentEditableWarning
+                        className={`modal-document-content document-content text-[14px] text-slate-800 leading-[1.8] tracking-tight outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10 rounded-xl' : ''}`}
                         style={{
                           fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                         }}
                         dangerouslySetInnerHTML={{
-                          __html: displayContent
-                            .replace(/\n/g, "<br/>")
-                            .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">')
+                          __html: (() => {
+                            const baseHtml = editedContent || displayContent || "";
+                            if (isEditMode) return baseHtml.replace(/\n/g, "<br/>");
+                            
+                            // Apply highlighting instantly when stopping edit
+                            const highlighted = highlightHtmlEdits(initialContent || displayContent || "", baseHtml);
+                            return highlighted
+                              .replace(/\n/g, "<br/>")
+                              .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">');
+                          })()
                         }}
                       />
                     </div>

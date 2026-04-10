@@ -3,8 +3,9 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
-import { CheckCircle2, Loader2, FileText, PenLine as Pen, Lock, ShieldCheck, AlertCircle, Clock, X, RotateCcw } from "lucide-react";
+import { CheckCircle2, Loader2, FileText, PenLine as Pen, Lock, ShieldCheck, AlertCircle, Clock, X, RotateCcw, Edit3, Save, Eye as EyeIcon } from "lucide-react";
 import { getGuestDocumentMetaData, markFirstLogin, submitGuestSignature } from "../../actions/document-guest";
+import { highlightHtmlEdits } from "../../lib/diff";
 import { supabase } from "../../lib/supabase/browser";
 import { normalizeEmail } from "../../lib/documents";
 
@@ -45,6 +46,10 @@ export default function PublicSignPage() {
   // Signature Pad Refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawing = useRef(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [initialContent, setInitialContent] = useState<string>("");
 
   // Derived State
   const isReviewMode = document?.category === "Reviewer" || document?.status === "reviewing";
@@ -64,6 +69,7 @@ export default function PublicSignPage() {
         }
 
         setDocument(data);
+        setInitialContent(data.content || "");
 
         // --- NEW: Platform Auth Check ---
         const { data: { user } } = await supabase.auth.getUser();
@@ -238,8 +244,15 @@ export default function PublicSignPage() {
     
     setIsSubmitting(true);
     try {
+      let finalContent = document?.content;
+      
+      if (isReviewMode && contentRef.current) {
+        const editedHtml = contentRef.current.innerHTML;
+        finalContent = highlightHtmlEdits(initialContent, editedHtml);
+      }
+
       const signatureDataUrl = canvas.toDataURL("image/png");
-      const { success, error: subError } = await submitGuestSignature(id, signatureDataUrl, signMessage);
+      const { success, error: subError } = await submitGuestSignature(id, signatureDataUrl, signMessage, finalContent);
       
       if (!success) throw new Error(subError);
       
@@ -402,9 +415,24 @@ export default function PublicSignPage() {
       <main className="flex-1 overflow-hidden p-6 md:p-8">
         <div className="mx-auto h-full max-w-5xl rounded-[2.5rem] border border-slate-200 bg-white shadow-2xl overflow-hidden flex flex-col">
           <div className="flex-1 overflow-y-auto bg-slate-50 p-6 md:p-12">
-             <div className="mx-auto max-w-[800px] bg-white shadow-sm p-12 min-h-full rounded-2xl border border-slate-100">
+              <div className="mx-auto max-w-[800px] bg-white shadow-sm p-12 min-h-full rounded-2xl border border-slate-100 relative">
+                {isReviewMode && (
+                  <button 
+                    onClick={() => setIsEditMode(!isEditMode)}
+                    className={`absolute top-6 right-6 flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-sm ${isEditMode ? 'bg-green-600 text-white shadow-green-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    {isEditMode ? <><Save className="h-3.5 w-3.5" /> Stop Editing</> : <><Edit3 className="h-3.5 w-3.5" /> Edit Document</>}
+                  </button>
+                )}
+                
                 {document?.content ? (
-                  <div className="prose prose-slate max-w-none" dangerouslySetInnerHTML={{ __html: document.content }} />
+                  <div 
+                    ref={contentRef}
+                    contentEditable={isEditMode}
+                    suppressContentEditableWarning
+                    className={`prose prose-slate max-w-none outline-none transition-all duration-300 ${isEditMode ? 'p-6 rounded-2xl bg-amber-50/30 ring-2 ring-amber-200 shadow-inner min-h-[400px]' : ''}`} 
+                    dangerouslySetInnerHTML={{ __html: document.content }} 
+                  />
                 ) : document?.file_url ? (
                   <div className="flex flex-col items-center justify-center py-40">
                     <FileText className="h-16 w-16 text-slate-200 mb-4" />
