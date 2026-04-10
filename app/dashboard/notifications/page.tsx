@@ -311,22 +311,6 @@ export default function NotificationsPage() {
 
   return (
     <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex items-center gap-4">
-        <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-600 text-white shadow-lg shadow-violet-200">
-          <Bell className="h-6 w-6" />
-          {pendingCount > 0 && (
-            <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-black text-white">
-              {pendingCount}
-            </span>
-          )}
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Notifications</h1>
-          <p className="text-slate-500 text-sm">
-            Incoming signing and review requests for {currentEmail || "your account"}
-          </p>
-        </div>
-      </div>
 
       {loading ? (
         <div className="flex items-center justify-center rounded-[2rem] border border-slate-200 bg-white p-10 text-sm text-slate-500 shadow-sm">

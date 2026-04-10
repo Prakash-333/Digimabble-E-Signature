@@ -187,7 +187,7 @@ function TemplatesContent() {
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState(urlSearch);
-  const [favorites, setFavorites] = useState<Set<TemplateId>>(new Set());
+  const [starred, setStarred] = useState<Set<TemplateId>>(new Set());
   const [useStep, setUseStep] = useState<"review" | "type_selection" | "recipients" | "send" | null>(null);
   const [selectedForUse, setSelectedForUse] = useState<TemplateId | null>(null);
   const [appTemplates, setAppTemplates] = useState<AppTemplate[]>([]);
@@ -462,8 +462,8 @@ function TemplatesContent() {
     let filtered = appTemplates;
 
     // Filter by category
-    if (selectedCategory === "Favourites") {
-      filtered = filtered.filter(tpl => favorites.has(tpl.id));
+    if (selectedCategory === "Starred") {
+      filtered = filtered.filter(tpl => starred.has(tpl.id));
     } else if (selectedCategory !== "All") {
       filtered = filtered.filter(tpl => tpl.category === selectedCategory);
     }
@@ -478,7 +478,7 @@ function TemplatesContent() {
     }
 
     return filtered;
-  }, [searchQuery, selectedCategory, appTemplates, favorites]);
+  }, [searchQuery, selectedCategory, appTemplates, starred]);
 
   const selectedForPreview = useMemo(
     () => appTemplates.find((tpl) => tpl.id === previewId) ?? null,
@@ -567,7 +567,7 @@ function TemplatesContent() {
 
         {/* Category Filter Buttons */}
         <div className="flex flex-wrap gap-2">
-          {["All", "Favourites", "Legal", "Sales", "HR"].map((label) => (
+          {["All", "Starred", "Legal", "Sales", "HR"].map((label) => (
             <button
               key={label}
               className={`rounded-full px-4 py-1.5 text-xs font-medium transition-all ${selectedCategory === label
@@ -698,19 +698,19 @@ function TemplatesContent() {
                           type="button"
                           className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors flex items-center gap-2"
                           onClick={() => {
-                            setFavorites(prev => {
-                              const newFavorites = new Set(prev);
-                              if (newFavorites.has(tpl.id)) {
-                                newFavorites.delete(tpl.id);
+                            setStarred(prev => {
+                              const newStarred = new Set(prev);
+                              if (newStarred.has(tpl.id)) {
+                                newStarred.delete(tpl.id);
                               } else {
-                                newFavorites.add(tpl.id);
+                                newStarred.add(tpl.id);
                               }
-                              return newFavorites;
+                              return newStarred;
                             });
                             setOpenMenuId(null);
                           }}
                         >
-                          {favorites.has(tpl.id) ? "Remove Favourite" : "Add to Favourite"}
+                          {starred.has(tpl.id) ? "Remove Starred" : "Add to Starred"}
                         </button>
                         <button
                           type="button"

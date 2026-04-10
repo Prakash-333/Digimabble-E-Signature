@@ -4,7 +4,7 @@ import Head from "next/head";
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   LayoutDashboard,
   FileText,
@@ -12,10 +12,11 @@ import {
   FolderOpen,
   Folder,
   BarChart3,
+  User,
+  LogOut,
   Settings,
   Menu,
-  Bell,
-  LogOut
+  Bell
 } from "lucide-react";
 import { supabase } from "../lib/supabase/browser";
 import { getMatchingRecipient, isCompletedForRecipient, normalizeEmail, type SharedDocumentRecord } from "../lib/documents";
@@ -24,7 +25,6 @@ import { getHiddenNotificationIds, getSeenNotificationIds, markNotificationsSeen
 // Same navItems...
 const navItems = [
   { href: "/dashboard", label: "Dashboard", section: "MAIN", icon: LayoutDashboard },
-  { href: "/dashboard/notifications", label: "Notifications", section: "MAIN", icon: Bell },
   { href: "/dashboard/templates", label: "Templates", section: "DOCUMENTS", icon: FileText },
   { href: "/dashboard/sign-document", label: "Sign Document", section: "DOCUMENTS", icon: FileSignature },
   { href: "/dashboard/documents", label: "Shared Documents", section: "DOCUMENTS", icon: FolderOpen },
@@ -45,6 +45,18 @@ export default function DashboardLayout({
   const [notificationCount, setNotificationCount] = useState(0);
   const [pendingIds, setPendingIds] = useState<string[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const profileDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (profileDropdownRef.current && !profileDropdownRef.current.contains(event.target as Node)) {
+        setIsProfileOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
 
   useEffect(() => {
@@ -360,7 +372,7 @@ export default function DashboardLayout({
             </h1>
           </div>
 
-          <div className="flex items-center gap-3 text-xs">
+          <div className="flex items-center gap-3 text-xs relative" ref={profileDropdownRef}>
             <button
               onClick={handleNotificationClick}
               title="Notifications"
@@ -377,10 +389,67 @@ export default function DashboardLayout({
                 </span>
               )}
             </button>
-            <button onClick={handleLogout} className="inline-flex items-center rounded-full border border-violet-600 bg-white px-5 py-2 text-sm font-semibold text-violet-600 shadow-sm hover:bg-red-600 hover:!text-white hover:border-red-600 transition-all active:scale-95 group">
-              <LogOut className="h-4 w-4 mr-2 transition-colors text-violet-600 group-hover:!text-white" />
-              <span className="text-violet-600 group-hover:!text-white">Logout</span>
+            
+            <button 
+              onClick={() => setIsProfileOpen(!isProfileOpen)}
+              className="flex items-center rounded-full border border-slate-200 bg-white p-1 hover:border-violet-300 transition-all active:scale-95 shadow-sm"
+              aria-label="User menu"
+            >
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-600 text-[13px] font-bold text-white shadow-sm ring-2 ring-violet-50">
+                {userLabel
+                  .split(" ")
+                  .map((p) => p[0])
+                  .join("")
+                  .slice(0, 1)
+                  .toUpperCase() || "U"}
+              </div>
             </button>
+
+            {isProfileOpen && (
+              <div className="absolute right-0 top-full mt-3 w-52 overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl shadow-slate-200/50 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="px-3 py-2.5 mb-1.5 border-b border-slate-50">
+                  <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">Account</p>
+                  <p className="text-sm font-semibold text-slate-700 truncate">{userLabel}</p>
+                </div>
+                
+                <Link 
+                  href="/dashboard/settings" 
+                  onClick={() => setIsProfileOpen(false)}
+                  className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-600 hover:bg-violet-50 hover:text-violet-700 transition-all group"
+                >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-50 group-hover:bg-violet-100 transition-colors">
+                    <Settings className="h-4 w-4 text-slate-400 group-hover:text-violet-600" />
+                  </div>
+                  Profile
+                </Link>
+                
+                <Link 
+                  href="/dashboard/my-documents" 
+                  onClick={() => setIsProfileOpen(false)}
+                  className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-600 hover:bg-violet-50 hover:text-violet-700 transition-all group"
+                >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-50 group-hover:bg-violet-100 transition-colors">
+                    <Folder className="h-4 w-4 text-slate-400 group-hover:text-violet-600" />
+                  </div>
+                  My Documents
+                </Link>
+                
+                <div className="my-1.5 border-t border-slate-100" />
+                
+                <button 
+                  onClick={() => {
+                    handleLogout();
+                    setIsProfileOpen(false);
+                  }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 transition-all group"
+                >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-50 group-hover:bg-red-100 transition-colors">
+                    <LogOut className="h-4 w-4 text-red-600" />
+                  </div>
+                  Logout
+                </button>
+              </div>
+            )}
           </div>
         </header>
 
