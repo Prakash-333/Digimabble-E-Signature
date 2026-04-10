@@ -4,49 +4,54 @@
  */
 export function highlightHtmlEdits(originalHtml: string, newHtml: string): string {
   if (!originalHtml || !newHtml) return newHtml;
-
-  // For a simple implementation, we compare word by word.
-  // In a real app, a more robust HTML-aware diffing library would be used.
-  
-  const originalText = originalHtml.replace(/<[^>]*>?/gm, ' ');
-  const newText = newHtml.replace(/<[^>]*>?/gm, ' ');
-
-  const originalWords = originalText.split(/\s+/).filter(Boolean);
-  const newWords = newText.split(/\s+/).filter(Boolean);
-
-  const originalSet = new Set(originalWords);
-  
-  // We'll use a simple strategy: if a word in newHtml doesn't exist in originalHtml, 
-  // or if its position shifted significantly, we highlight it.
-  // To keep HTML structure intact while highlighting, we can use a more surgical approach.
-  
-  // However, for a "light" implementation that "just works" for a demo:
-  // We will return the newHtml but wrap text that differs.
-  
-  // Let's try a better approach: 
-  // We'll walk through the newHtml and wrap any word that isn't in the original set.
-  
-  // To avoid breaking HTML tags, we process the text nodes.
   if (typeof document === 'undefined') return newHtml; // Guard for SSR
 
+  // Pre-process HTML to ensure block elements and breaks have spaces around them
+  // This prevents `textContent` from mashing words together at line breaks (e.g., "paid<br>on")
+  const spacedHtml = originalHtml
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<\/?(div|p|h[1-6]|li|ul|tr|td|th|section|article)[^>]*>/gi, ' ');
+
+  // Use DOM to extract clean text and decode entities from original HTML
+  const tempDiv = document.createElement('div');
+  tempDiv.innerHTML = spacedHtml;
+  const originalText = tempDiv.textContent || '';
+
+  /**
+   * Granular tokenizer: splits by whitespace and individual punctuation characters.
+   * This prevents punctuation from "sticking" to words and causing false misses.
+   */
+  const tokenize = (text: string) => text.split(/(\s+|[^\w\s])/).filter(t => t && t.trim());
+  const originalSet = new Set(tokenize(originalText));
+  
   const parser = new DOMParser();
   const doc = parser.parseFromString(newHtml, 'text/html');
   
   const walk = (node: Node) => {
     if (node.nodeType === Node.TEXT_NODE) {
       const text = node.textContent || '';
-      const words = text.split(/(\s+)/); // Preserve whitespace
+      // Split the new text using the same granular logic to identify new tokens
+      const segments = text.split(/(\s+|[^\w\s])/); 
       
       const newFragment = document.createDocumentFragment();
       
-      words.forEach(word => {
-        if (word.trim() && !originalSet.has(word.trim())) {
+      segments.forEach(segment => {
+        if (!segment) return;
+        
+        // Always preserve whitespace exactly as it is
+        if (/^\s+$/.test(segment)) {
+          newFragment.appendChild(document.createTextNode(segment));
+          return;
+        }
+
+        // Check if this specific token (word or single punctuation) exists in the original
+        if (segment.trim() && !originalSet.has(segment.trim())) {
           const span = document.createElement('span');
           span.className = 'bg-yellow-100/80 px-0.5 rounded shadow-sm border-b border-yellow-200';
-          span.textContent = word;
+          span.textContent = segment;
           newFragment.appendChild(span);
         } else {
-          newFragment.appendChild(document.createTextNode(word));
+          newFragment.appendChild(document.createTextNode(segment));
         }
       });
       
@@ -62,3 +67,4 @@ export function highlightHtmlEdits(originalHtml: string, newHtml: string): strin
   walk(doc.body);
   return doc.body.innerHTML;
 }
+

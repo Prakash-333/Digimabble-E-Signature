@@ -548,9 +548,6 @@ export default function NotificationsPage() {
                 <ChevronLeft className="w-4 h-4 transition-transform group-hover:-translate-x-0.5" />
                 <span className="text-sm font-semibold">Back</span>
               </button>
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-50 text-sm font-semibold text-red-600">
-                PDF
-              </div>
               <div>
                 <h2 className="text-base font-bold text-slate-900 leading-tight">{viewingItem.name}</h2>
                 <p className="text-[11px] text-slate-500 font-medium">{viewingItem.subject}</p>

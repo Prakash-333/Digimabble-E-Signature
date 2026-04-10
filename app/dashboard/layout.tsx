@@ -24,6 +24,7 @@ import { getHiddenNotificationIds, getSeenNotificationIds, markNotificationsSeen
 // Same navItems...
 const navItems = [
   { href: "/dashboard", label: "Dashboard", section: "MAIN", icon: LayoutDashboard },
+  { href: "/dashboard/notifications", label: "Notifications", section: "MAIN", icon: Bell },
   { href: "/dashboard/templates", label: "Templates", section: "DOCUMENTS", icon: FileText },
   { href: "/dashboard/sign-document", label: "Sign Document", section: "DOCUMENTS", icon: FileSignature },
   { href: "/dashboard/documents", label: "Shared Documents", section: "DOCUMENTS", icon: FolderOpen },
