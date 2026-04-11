@@ -82,7 +82,7 @@ export async function submitGuestSignature(id: string, signatureDataUrl: string,
           return {
             ...r,
             status: status,
-            signed_content: signatureDataUrl,
+            signed_content: editedContent || signatureDataUrl,
             sign_message: message || r.sign_message
           };
         }
@@ -93,7 +93,7 @@ export async function submitGuestSignature(id: string, signatureDataUrl: string,
         recipients[0] = {
           ...recipients[0],
           status: status,
-          signed_content: signatureDataUrl,
+          signed_content: editedContent || signatureDataUrl,
           sign_message: message || recipients[0].sign_message
         };
       }

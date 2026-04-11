@@ -90,9 +90,14 @@ export default function NotificationsPage() {
       const outgoing: NotificationItem[] = [];
 
       ((rows ?? []) as SharedDocumentRecord[]).forEach((row) => {
+        // Skip external documents unless they are completed/signed
+        const isCompleted = ["signed", "reviewed", "approved", "completed"].includes(row.status);
+        if ((row.sender as any)?.isExternal && !isCompleted) return;
+
         if (row.owner_id !== currentUser.id) {
           const virtualId = row.id;
           if (hiddenIds.has(virtualId)) return;
+          
           const recipient = getMatchingRecipient(row.recipients, email);
           if (!recipient) return;
           incoming.push({

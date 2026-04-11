@@ -1,9 +1,8 @@
-/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
-import { CheckCircle2, Loader2, FileText, PenLine as Pen, Lock, ShieldCheck, AlertCircle, Clock, X, RotateCcw, Edit3, Save, Eye as EyeIcon } from "lucide-react";
+import { CheckCircle2, Loader2, FileText, PenLine as Pen, Lock, ShieldCheck, AlertCircle, Clock, X, RotateCcw, Edit3, Save, Eye as EyeIcon, RotateCw, PenTool } from "lucide-react";
 import { getGuestDocumentMetaData, markFirstLogin, submitGuestSignature } from "../../actions/document-guest";
 import { highlightHtmlEdits } from "../../lib/diff";
 import { supabase } from "../../lib/supabase/browser";
@@ -22,6 +21,85 @@ interface DocumentData {
   recipients?: Array<{ email: string; name: string }>;
 }
 
+interface ResizableWrapperProps {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  isSelected: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+  onResizeStart: (e: React.PointerEvent) => void;
+  onDragStart: (e: React.PointerEvent) => void;
+  children: React.ReactNode;
+}
+
+const ResizableWrapper = ({
+  x,
+  y,
+  width,
+  height,
+  isSelected,
+  onSelect,
+  onDelete,
+  onResizeStart,
+  onDragStart,
+  children,
+}: ResizableWrapperProps) => {
+  return (
+    <div
+      className={`absolute rounded-md border-2 border-dashed group flex items-center justify-center cursor-grab active:cursor-grabbing select-none transition-all ${
+        isSelected ? "border-violet-500 bg-violet-50/50" : "border-slate-400 hover:border-violet-400"
+      }`}
+      style={{
+        left: `${x}px`,
+        top: `${y}px`,
+        width: `${width}px`,
+        height: `${height}px`,
+        zIndex: 100,
+      }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect();
+      }}
+      onPointerDown={onDragStart}
+    >
+      {children}
+      {/* Delete button (Top-right) */}
+      <button
+        type="button"
+        className="absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center hover:bg-red-600 transition-all active:scale-90 opacity-0 group-hover:opacity-100"
+        style={{ zIndex: 110 }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete();
+        }}
+      >
+        <X className="h-2.5 w-2.5" />
+      </button>
+
+      {/* Resize handle (Bottom-right) */}
+      <div
+        className="absolute -right-2 -bottom-2 w-5 h-5 cursor-nwse-resize bg-violet-600 rounded-full shadow-md hover:bg-violet-500 transition-all border-2 border-white flex items-center justify-center"
+        style={{ zIndex: 110 }}
+        onPointerDown={onResizeStart}
+      >
+        <svg
+          className="w-2.5 h-2.5 text-white"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={3}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M22 22L12 22L22 12Z" fill="currentColor" />
+        </svg>
+      </div>
+    </div>
+  );
+};
+
 export default function PublicSignPage() {
   const { id } = useParams() as { id: string };
   const router = useRouter();
@@ -35,7 +113,6 @@ export default function PublicSignPage() {
   const [accessPasswordInput, setAccessPasswordInput] = useState("");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [timeRemaining, setTimeRemaining] = useState<string | null>(null);
 
   // Signing State
   const [showSignModal, setShowSignModal] = useState(false);
@@ -43,16 +120,46 @@ export default function PublicSignPage() {
   const [isSigned, setIsSigned] = useState(false);
   const [signMessage, setSignMessage] = useState("");
   
+  // Drag and Drop Signature State
+  const [savedSignature, setSavedSignature] = useState<string | null>(null);
+  const [signatureX, setSignatureX] = useState(50);
+  const [signatureY, setSignatureY] = useState(50);
+  const [signatureScale, setSignatureScale] = useState(1);
+  const [signaturePlaced, setSignaturePlaced] = useState(false);
+  const [isSelected, setIsSelected] = useState(false);
+
+  const signatureWidthBase = 180;
+  const signatureHeightBase = 64;
+  const signatureWidthPx = Math.round(signatureWidthBase * signatureScale);
+  const signatureHeightPx = Math.round(signatureHeightBase * signatureScale);
+
   // Signature Pad Refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawing = useRef(false);
   const contentRef = useRef<HTMLDivElement>(null);
+  const previewStageRef = useRef<HTMLDivElement>(null);
 
   const [isEditMode, setIsEditMode] = useState(false);
   const [initialContent, setInitialContent] = useState<string>("");
 
   // Derived State
   const isReviewMode = document?.category === "Reviewer" || document?.status === "reviewing";
+
+  // Dragging Logic Refs
+  const dragRef = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startSigX: number;
+    startSigY: number;
+  } | null>(null);
+
+  const sigResizeRef = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startScale: number;
+  } | null>(null);
 
   // Load document once to check exists and get basic info
   useEffect(() => {
@@ -81,7 +188,6 @@ export default function PublicSignPage() {
           if (isRecipient) {
             console.log("Logged-in platform user is a recipient, bypassing guest login.");
             setIsAuthenticated(true);
-            // We don't need a timer for platform users as they have a real session
             setLoading(false);
             return;
           }
@@ -93,25 +199,7 @@ export default function PublicSignPage() {
         const savedSession = localStorage.getItem(sessionKey);
         
         if (savedSession === "active") {
-          // If we have a first login time, verify the 10-min rule
-          if (data.access_first_login) {
-            const firstLogin = new Date(data.access_first_login);
-            const now = new Date();
-            const diffMs = now.getTime() - firstLogin.getTime();
-            const diffMins = diffMs / 1000 / 60;
-
-            if (diffMins < 10) {
-              setIsAuthenticated(true);
-              startTimer(firstLogin);
-            } else {
-              setError("Your session has expired (10-minute limit reached).");
-              localStorage.removeItem(sessionKey);
-            }
-          } else {
-             // If active session but no first login timestamp in DB somehow, 
-             // but we'll assume it's okay and treat as authenticated
-             setIsAuthenticated(true);
-          }
+          setIsAuthenticated(true);
         }
       } catch (err: unknown) {
         console.error("Load error:", err);
@@ -123,32 +211,6 @@ export default function PublicSignPage() {
 
     loadDocumentInitial();
   }, [id]);
-
-  const startTimer = (startTime: Date) => {
-    const update = () => {
-       const now = new Date();
-       const diffMs = now.getTime() - startTime.getTime();
-       const remainingMs = (10 * 60 * 1000) - diffMs;
-       
-       if (remainingMs <= 0) {
-         setIsAuthenticated(false);
-         setError("Your session has expired.");
-         setTimeRemaining(null);
-         return false;
-       } else {
-         const mins = Math.floor(remainingMs / 1000 / 60);
-         const secs = Math.floor((remainingMs / 1000) % 60);
-         setTimeRemaining(`${mins}:${secs.toString().padStart(2, '0')}`);
-         return true;
-       }
-    };
-
-    update();
-    const interval = setInterval(() => {
-       if (!update()) clearInterval(interval);
-    }, 1000);
-    return () => clearInterval(interval);
-  };
 
   const handlePortalLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -167,23 +229,10 @@ export default function PublicSignPage() {
           const { data: now, error: updateError } = await markFirstLogin(id);
           if (updateError) throw new Error(updateError);
           firstLoginTime = now;
-        } else {
-          // Check if existing first login is older than 10 mins
-          const firstLogin = new Date(firstLoginTime);
-          const now = new Date();
-          const diffMs = now.getTime() - firstLogin.getTime();
-          if (diffMs > 10 * 60 * 1000) {
-            setLoginError("This session has already expired.");
-            setIsLoggingIn(false);
-            return;
-          }
         }
 
         localStorage.setItem(`sd_session_${id}`, "active");
         setIsAuthenticated(true);
-        if (firstLoginTime) {
-          startTimer(new Date(firstLoginTime));
-        }
       } catch (err: unknown) {
         setLoginError("Failed to start session. Please try again.");
       }
@@ -193,6 +242,71 @@ export default function PublicSignPage() {
     setIsLoggingIn(false);
   };
 
+  // Robust Global Pointer Listeners for Drag and Resize
+  useEffect(() => {
+    const handlePointerMove = (e: PointerEvent) => {
+      // Handle Dragging
+      if (dragRef.current) {
+        const drag = dragRef.current;
+        const stage = previewStageRef.current;
+        if (!stage) return;
+        const rect = stage.getBoundingClientRect();
+        const dx = e.clientX - drag.startClientX;
+        const dy = e.clientY - drag.startClientY;
+
+        const maxX = Math.max(0, Math.floor(rect.width - signatureWidthPx));
+        const maxY = Math.max(0, Math.floor(rect.height - signatureHeightPx));
+
+        setSignatureX(Math.min(Math.max(0, Math.round(drag.startSigX + dx)), maxX));
+        setSignatureY(Math.min(Math.max(0, Math.round(drag.startSigY + dy)), maxY));
+      }
+
+      // Handle Resizing
+      if (sigResizeRef.current) {
+        const resize = sigResizeRef.current;
+        const dx = e.clientX - resize.startClientX;
+        const newScale = Math.min(2.5, Math.max(0.4, resize.startScale + dx / 180));
+        setSignatureScale(newScale);
+      }
+    };
+
+    const handlePointerUp = () => {
+      dragRef.current = null;
+      sigResizeRef.current = null;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [signatureWidthPx, signatureHeightPx]);
+
+  const handleSignatureDragStart = (event: React.PointerEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsSelected(true);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startSigX: signatureX,
+      startSigY: signatureY,
+    };
+  };
+
+  const handleResizeStart = (event: React.PointerEvent) => {
+    event.stopPropagation();
+    event.preventDefault();
+    sigResizeRef.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startScale: signatureScale,
+    };
+  };
+
   // Signature Pad Handlers
   const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
     isDrawing.current = true;
@@ -200,14 +314,11 @@ export default function PublicSignPage() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
     const rect = canvas.getBoundingClientRect();
     const x = ('touches' in e) ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
     const y = ('touches' in e) ? e.touches[0].clientY - rect.top : e.clientY - rect.top;
-
     ctx.beginPath();
     ctx.moveTo(x, y);
-    e.preventDefault();
   };
 
   const draw = (e: React.MouseEvent | React.TouchEvent) => {
@@ -216,20 +327,17 @@ export default function PublicSignPage() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
     const rect = canvas.getBoundingClientRect();
     const x = ('touches' in e) ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
     const y = ('touches' in e) ? e.touches[0].clientY - rect.top : e.clientY - rect.top;
-
     ctx.lineTo(x, y);
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
     ctx.stroke();
-    e.preventDefault();
   };
 
-  const endDrawing = () => {
-    isDrawing.current = false;
-  };
-
+  const endDrawing = () => { isDrawing.current = false; };
   const clearCanvas = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -238,26 +346,43 @@ export default function PublicSignPage() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   };
 
-  const handleFinalSign = async () => {
+  const saveToLocalSignature = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const signatureDataUrl = canvas.toDataURL("image/png");
+    setSavedSignature(signatureDataUrl);
+    setShowSignModal(false);
     
+    // Auto-place on document
+    setSignaturePlaced(true);
+    setSignatureX(50);
+    setSignatureY(50);
+  };
+
+  const handleFinalSign = async () => {
+    if (!savedSignature || !signaturePlaced) {
+      alert("Please place your signature on the document first.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      let finalContent = document?.content;
+      let finalContent = document?.content || "";
       
       if (isReviewMode && contentRef.current) {
         const editedHtml = contentRef.current.innerHTML;
         finalContent = highlightHtmlEdits(initialContent, editedHtml);
       }
 
-      const signatureDataUrl = canvas.toDataURL("image/png");
-      const { success, error: subError } = await submitGuestSignature(id, signatureDataUrl, signMessage, finalContent);
+      // Bake signature into HTML
+      const sigHtml = `<div style="position: absolute; left: ${signatureX}px; top: ${signatureY}px; width: ${signatureWidthPx}px; height: ${signatureHeightPx}px; z-index: 50; pointer-events: none;"><img src="${savedSignature}" alt="Signature" style="width: 100%; height: 100%; object-fit: contain;" /></div>`;
+      finalContent += sigHtml;
+
+      const { success, error: subError } = await submitGuestSignature(id, savedSignature, signMessage, finalContent);
       
       if (!success) throw new Error(subError);
       
       setIsSigned(true);
-      setShowSignModal(false);
     } catch (err: unknown) {
       alert("Failed to submit signature: " + (err instanceof Error ? err.message : String(err)));
     } finally {
@@ -299,16 +424,15 @@ export default function PublicSignPage() {
     );
   }
 
-  // Error State (Expired or Not Found)
+  // Error State (Not Found)
   if (error) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 text-center">
         <div className="h-20 w-20 rounded-full bg-red-50 flex items-center justify-center mb-6">
-          <Clock className="h-10 w-10 text-red-500" />
+          <AlertCircle className="h-10 w-10 text-red-500" />
         </div>
-        <h1 className="text-2xl font-bold text-slate-900">Access Expired</h1>
+        <h1 className="text-2xl font-bold text-slate-900">Document Unavailable</h1>
         <p className="mt-2 text-slate-500 max-w-sm">{error}</p>
-        <p className="mt-4 text-sm text-slate-400">For security, document portals are valid only for 10 minutes after first login.</p>
         <button 
           onClick={() => router.push('/')}
           className="mt-8 rounded-full bg-violet-600 px-8 py-3 text-sm font-bold text-white shadow-lg shadow-violet-200"
@@ -380,7 +504,7 @@ export default function PublicSignPage() {
           </div>
           
           <p className="text-center text-xs text-slate-400 mt-8">
-            This portal is secure and encrypted. Session expires 10 mins after login.
+            This portal is secure and encrypted for document access.
           </p>
         </div>
       </div>
@@ -389,18 +513,14 @@ export default function PublicSignPage() {
 
   // Document View (Authenticated)
   return (
-    <div className="flex min-h-screen flex-col bg-slate-50">
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
+    <div className="flex h-screen flex-col bg-slate-50 overflow-hidden">
+      <header className="flex-shrink-0 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 z-20">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-600 text-sm font-bold text-white shadow-lg shadow-violet-100">
             S
           </div>
           <div>
             <p className="text-sm font-bold tracking-tight text-slate-900 uppercase">SMARTDOCS</p>
-            <div className="flex items-center gap-1.5 text-[10px] text-red-500 font-bold uppercase">
-               <Clock className="h-3 w-3" />
-               Session Expires In: {timeRemaining}
-            </div>
           </div>
         </div>
         <div className="text-right">
@@ -412,14 +532,18 @@ export default function PublicSignPage() {
         </div>
       </header>
 
-      <main className="flex-1 overflow-hidden p-6 md:p-8">
-        <div className="mx-auto h-full max-w-5xl rounded-[2.5rem] border border-slate-200 bg-white shadow-2xl overflow-hidden flex flex-col">
-          <div className="flex-1 overflow-y-auto bg-slate-50 p-6 md:p-12">
-              <div className="mx-auto max-w-[800px] bg-white shadow-sm p-12 min-h-full rounded-2xl border border-slate-100 relative">
+      <main className="flex-1 overflow-hidden p-2 md:p-4 flex flex-col items-center">
+        <div className="w-full max-w-[98vw] flex-1 flex flex-col rounded-3xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
+          {/* Scrollable Document Area */}
+          <div className="flex-1 overflow-y-auto bg-slate-100 p-4 md:p-8 min-h-0">
+              <div 
+                ref={previewStageRef}
+                className="mx-auto max-w-[900px] bg-white shadow-sm p-8 md:p-16 min-h-full rounded-2xl border border-slate-100 relative"
+              >
                 {isReviewMode && (
                   <button 
                     onClick={() => setIsEditMode(!isEditMode)}
-                    className={`absolute top-6 right-6 flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-sm ${isEditMode ? 'bg-green-600 text-white shadow-green-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                    className={`absolute top-6 right-6 flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-sm z-10 ${isEditMode ? 'bg-green-600 text-white shadow-green-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
                   >
                     {isEditMode ? <><Save className="h-3.5 w-3.5" /> Stop Editing</> : <><Edit3 className="h-3.5 w-3.5" /> Edit Document</>}
                   </button>
@@ -436,7 +560,7 @@ export default function PublicSignPage() {
                 ) : document?.file_url ? (
                   <div className="flex flex-col items-center justify-center py-40">
                     <FileText className="h-16 w-16 text-slate-200 mb-4" />
-                    <p className="text-slate-500 font-medium text-center">This document is a PDF. Click sign below to add your digital endorsement.</p>
+                    <p className="text-slate-500 font-medium text-center">This document is a PDF. Click buttons below to add your endorsement.</p>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center py-40">
@@ -444,26 +568,81 @@ export default function PublicSignPage() {
                     <p className="text-slate-500 font-medium">Document content unavailable.</p>
                   </div>
                 )}
+
+                {/* Placed Signature */}
+                {signaturePlaced && savedSignature && (
+                  <ResizableWrapper
+                    x={signatureX}
+                    y={signatureY}
+                    width={signatureWidthPx}
+                    height={signatureHeightPx}
+                    isSelected={isSelected}
+                    onSelect={() => setIsSelected(true)}
+                    onDelete={() => setSignaturePlaced(false)}
+                    onResizeStart={handleResizeStart}
+                    onDragStart={handleSignatureDragStart}
+                  >
+                    <div className="w-full h-full flex items-center justify-center pointer-events-none">
+                      <img src={savedSignature} alt="Signature" className="max-w-full max-h-full object-contain" />
+                    </div>
+                  </ResizableWrapper>
+                )}
              </div>
           </div>
           
-          <div className="border-t border-slate-100 bg-white/80 backdrop-blur-md p-8">
-            <div className="mx-auto max-w-2xl flex flex-col sm:flex-row items-center justify-between gap-6">
+          {/* Fixed Footer */}
+          <div className="flex-shrink-0 border-t border-slate-100 bg-white/95 backdrop-blur-md p-4 md:p-6">
+            <div className="mx-auto max-w-5xl flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="text-center sm:text-left">
-                <p className="text-lg font-bold text-slate-900">{isReviewMode ? "Ready to approve?" : "Ready to complete?"}</p>
-                <p className="text-sm text-slate-500">
-                  {isReviewMode 
-                    ? "By clicking approve, you certify your review of this document." 
-                    : "By clicking sign, you certify this is your digital signature."}
+                <p className="text-base font-bold text-slate-900">{isReviewMode ? "Feedback or approval?" : "Ready to complete?"}</p>
+                <p className="text-xs text-slate-500">
+                  {savedSignature 
+                    ? "Drag and resize your signature on the document above."
+                    : "Create your signature first, then place it on the document."}
                 </p>
               </div>
-              <button 
-                onClick={() => setShowSignModal(true)}
-                className="flex items-center gap-3 rounded-2xl bg-violet-600 px-10 py-4 text-base font-bold text-white shadow-xl shadow-violet-200 transition-all hover:bg-violet-700 hover:scale-105 active:scale-95"
-              >
-                {isReviewMode ? <CheckCircle2 className="h-5 w-5" /> : <Pen className="h-5 w-5" />}
-                {isReviewMode ? "Review & Approve" : "Sign Document"}
-              </button>
+              <div className="flex items-center gap-3">
+                {!savedSignature ? (
+                  <button 
+                    onClick={() => setShowSignModal(true)}
+                    className="flex items-center gap-3 rounded-2xl bg-violet-600 px-8 py-4 text-base font-bold text-white shadow-xl shadow-violet-200 transition-all hover:bg-violet-700 active:scale-95"
+                  >
+                    <Pen className="h-5 w-5" />
+                    Create Signature
+                  </button>
+                ) : (
+                  <>
+                    {!signaturePlaced && (
+                      <button 
+                        onClick={() => {
+                          setSignaturePlaced(true);
+                          setSignatureX(50);
+                          setSignatureY(50);
+                        }}
+                        className="flex items-center gap-3 rounded-2xl bg-blue-600 px-8 py-4 text-base font-bold text-white shadow-xl shadow-blue-200 transition-all hover:bg-blue-700 active:scale-95"
+                      >
+                        <PenTool className="h-5 w-5" />
+                        Place on Doc
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => setShowSignModal(true)}
+                      className="flex h-12 w-12 items-center justify-center rounded-2xl border-2 border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all"
+                      title="Change Signature"
+                    >
+                      <RotateCw className="h-5 w-5" />
+                    </button>
+                    <button 
+                      onClick={handleFinalSign}
+                      disabled={isSubmitting || !signaturePlaced}
+                      className="flex items-center gap-3 rounded-2xl bg-violet-600 px-10 py-4 text-base font-bold text-white shadow-xl shadow-violet-200 transition-all hover:bg-violet-700 active:scale-95 disabled:opacity-50"
+                    >
+                      {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <ShieldCheck className="h-5 w-5" />}
+                      Submit Final
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -471,12 +650,12 @@ export default function PublicSignPage() {
 
       {/* Signature Modal */}
       {showSignModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
           <div className="w-full max-w-lg bg-white rounded-[2.5rem] shadow-2xl overflow-hidden">
              <div className="flex items-center justify-between p-8 border-b border-slate-100">
                 <h3 className="text-xl font-bold text-slate-900 flex items-center gap-3">
-                   {isReviewMode ? <CheckCircle2 className="h-5 w-5 text-violet-600" /> : <Pen className="h-5 w-5 text-violet-600" />}
-                   {isReviewMode ? "Add Your Approval Signature" : "Draw Your Signature"}
+                   <Pen className="h-5 w-5 text-violet-600" />
+                   Create Your Signature
                 </h3>
                 <button onClick={() => setShowSignModal(false)} className="h-10 w-10 flex items-center justify-center rounded-full bg-slate-50 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-all">
                    <X className="h-5 w-5" />
@@ -505,9 +684,6 @@ export default function PublicSignPage() {
                       <RotateCcw className="h-3 w-3" />
                       Clear
                    </button>
-                   <p className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-300 text-xs font-medium pointer-events-none select-none uppercase tracking-widest opacity-40">
-                      {isReviewMode ? "Sign Off Here" : "Sign Here"}
-                   </p>
                 </div>
                 
                 <div className="space-y-4">
@@ -522,17 +698,11 @@ export default function PublicSignPage() {
                 </div>
                 
                 <button 
-                   onClick={handleFinalSign}
-                   disabled={isSubmitting}
-                   className="w-full py-4 rounded-2xl bg-violet-600 text-white font-bold shadow-lg shadow-violet-200 hover:bg-violet-700 active:scale-[0.98] transition-all disabled:opacity-50"
+                   onClick={saveToLocalSignature}
+                   className="w-full py-4 rounded-2xl bg-violet-600 text-white font-bold shadow-lg shadow-violet-200 hover:bg-violet-700 active:scale-[0.98] transition-all"
                 >
-                   {isSubmitting 
-                      ? (isReviewMode ? "Submitting Review..." : "Submitting Signature...") 
-                      : (isReviewMode ? "Approve & Sign Off" : "Confirm & Sign")}
+                   Save Signature
                 </button>
-                <p className="text-center text-[10px] text-slate-400">
-                  By signing, you agree this is a legally binding electronic representation of your signature.
-                </p>
              </div>
           </div>
         </div>

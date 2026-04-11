@@ -1538,7 +1538,11 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
         role: r.role || (isReviewMode ? "reviewer" : "signer"), 
         status: "pending" 
       })),
-      sender: { fullName: formValues.SENDER_NAME || "User", workEmail: formValues.SENDER_EMAIL || "user@example.com" },
+      sender: { 
+        fullName: formValues.SENDER_NAME || "User", 
+        workEmail: formValues.SENDER_EMAIL || "user@example.com",
+        isExternal: documentType === "external"
+      },
       sentAt: new Date().toISOString(),
       status: isReviewMode ? "reviewing" : (fileUrl ? "waiting" : "pending"),
       fileUrl: fileUrl, // Store the cloud URL
@@ -2441,7 +2445,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                   </h3>
                   <p className="text-slate-500 font-medium leading-relaxed">
                     {(activeCategory === "Reviewer" || sendActionType === "review")
-                      ? "Your document has been sent for internal review. You can track its progress in the Documents page." 
+                      ? "Your document has been sent for review. You can track its progress in the Documents page." 
                       : "Everything looks great! Your document is on its way to the recipients for signing."}
                   </p>
                   <div className="pt-6">
@@ -2591,13 +2595,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                     )}
                     <div className="flex flex-col gap-3">
                       <button
-                        onClick={() => {
-                          if (documentType === "internal") {
-                            setShowSendChoice(true);
-                          } else {
-                            handleSend("sign");
-                          }
-                        }}
+                        onClick={() => setShowSendChoice(true)}
                         disabled={isUploadingDoc || isPersisting}
                         className="w-full py-4 rounded-2xl bg-violet-600 text-white font-black text-sm shadow-xl shadow-violet-100 hover:bg-violet-700 hover:-translate-y-1 transition-all active:scale-95 disabled:bg-slate-200 disabled:shadow-none flex items-center justify-center gap-2"
                       >
@@ -2763,7 +2761,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
         {/* Send Choice Modal Overlay */}
         {showSendChoice && (
           <div className="fixed inset-0 z-[400] flex items-center justify-center bg-violet-900/10 backdrop-blur-xl animate-in fade-in duration-300">
-            <div className="relative w-full max-w-2xl mx-4 bg-white rounded-[3rem] shadow-2xl border border-white overflow-hidden animate-in zoom-in-95 duration-300">
+            <div className="relative w-full max-w-lg mx-4 bg-white rounded-3xl shadow-2xl border border-white overflow-hidden animate-in zoom-in-95 duration-300">
               <button
                 onClick={() => setShowSendChoice(false)}
                 className="absolute top-6 right-6 w-12 h-12 flex items-center justify-center rounded-full bg-slate-50 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all z-10"
@@ -2771,25 +2769,25 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
               >
                 <X className="w-6 h-6" />
               </button>
-              <div className="px-12 py-12 text-center space-y-10">
+              <div className="px-8 py-8 text-center space-y-6">
                 <div className="space-y-3">
-                  <div className="mx-auto w-16 h-1 w-12 bg-slate-100 rounded-full mb-6" />
-                  <h3 className="text-3xl font-black text-slate-900 tracking-tight">How would you like to proceed?</h3>
+                  <div className="mx-auto w-12 h-1 bg-slate-100 rounded-full mb-4" />
+                  <h3 className="text-2xl font-black text-slate-900 tracking-tight">How to proceed?</h3>
                   <p className="text-slate-500 font-medium text-sm">Choose the next step for this document workflow to begin.</p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-8">
+                <div className="grid grid-cols-2 gap-4">
                   <button
                     onClick={() => {
                       setShowSendChoice(false);
                       handleSend("review");
                     }}
-                    className="group relative flex flex-col items-center justify-center p-10 rounded-[2.5rem] bg-slate-50 border-2 border-transparent hover:border-violet-400 hover:bg-violet-50/50 transition-all duration-300 shadow-sm hover:shadow-xl hover:shadow-violet-100/50"
+                    className="group relative flex flex-col items-center justify-center p-6 rounded-2xl bg-slate-50 border-2 border-transparent hover:border-violet-400 hover:bg-violet-50/50 transition-all duration-300 shadow-sm hover:shadow-xl hover:shadow-violet-100/50"
                   >
-                    <div className="w-20 h-20 rounded-3xl bg-white border border-slate-100 flex items-center justify-center text-slate-400 mb-6 shadow-sm group-hover:scale-110 group-hover:bg-violet-600 group-hover:text-white transition-all ring-8 ring-slate-100/30">
-                      <Eye className="w-10 h-10" />
+                    <div className="w-14 h-14 rounded-2xl bg-white border border-slate-100 flex items-center justify-center text-slate-400 mb-4 shadow-sm group-hover:scale-110 group-hover:bg-violet-600 group-hover:text-white transition-all ring-8 ring-slate-100/30">
+                      <Eye className="w-6 h-6" />
                     </div>
-                    <span className="text-xl font-extrabold text-slate-900 mb-2">Internal Review</span>
+                    <span className="text-lg font-extrabold text-slate-900 mb-1">Review</span>
                     <span className="text-xs text-slate-500 font-bold leading-relaxed text-center opacity-80 uppercase tracking-tighter">Verified by Team</span>
                   </button>
 
@@ -2798,12 +2796,12 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                       setShowSendChoice(false);
                       handleSend("sign");
                     }}
-                    className="group relative flex flex-col items-center justify-center p-10 rounded-[2.5rem] bg-slate-50 border-2 border-transparent hover:border-violet-400 hover:bg-violet-50/50 transition-all duration-300 shadow-sm hover:shadow-xl hover:shadow-violet-100/50"
+                    className="group relative flex flex-col items-center justify-center p-6 rounded-2xl bg-slate-50 border-2 border-transparent hover:border-violet-400 hover:bg-violet-50/50 transition-all duration-300 shadow-sm hover:shadow-xl hover:shadow-violet-100/50"
                   >
-                    <div className="w-20 h-20 rounded-3xl bg-white border border-slate-100 flex items-center justify-center text-slate-400 mb-6 shadow-sm group-hover:scale-110 group-hover:bg-violet-600 group-hover:text-white transition-all ring-8 ring-slate-100/30">
-                      <CheckCircle2 className="w-10 h-10" />
+                    <div className="w-14 h-14 rounded-2xl bg-white border border-slate-100 flex items-center justify-center text-slate-400 mb-4 shadow-sm group-hover:scale-110 group-hover:bg-violet-600 group-hover:text-white transition-all ring-8 ring-slate-100/30">
+                      <CheckCircle2 className="w-6 h-6" />
                     </div>
-                    <span className="text-xl font-extrabold text-slate-900 mb-2">Send for Sign</span>
+                    <span className="text-lg font-extrabold text-slate-900 mb-1">Sign</span>
                     <span className="text-xs text-slate-500 font-bold leading-relaxed text-center opacity-80 uppercase tracking-tighter">Direct to Signers</span>
                   </button>
                 </div>

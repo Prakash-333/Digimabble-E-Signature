@@ -18,6 +18,7 @@ type DocumentStatusRow = {
   status: "draft" | "waiting" | "reviewing" | "reviewed" | "approved" | "signed" | "completed" | "rejected";
   sent_at?: string | null;
   recipients?: { status?: string; email?: string; name?: string; role?: string }[];
+  sender?: any;
 };
 
 type DateRange = "7" | "30" | "90" | "all";
@@ -74,7 +75,7 @@ export default function DashboardPage() {
           .eq("owner_id", user.id),
         supabase
           .from("documents")
-          .select("id, status, recipients, sent_at")
+          .select("id, status, recipients, sent_at, sender")
           .eq("owner_id", user.id),
         supabase
           .from("documents")
@@ -84,7 +85,7 @@ export default function DashboardPage() {
           .limit(200),
         supabase
           .from("documents")
-          .select("id, name, status, sent_at, recipients, owner_id")
+          .select("id, name, status, sent_at, recipients, owner_id, sender")
           .eq("owner_id", user.id)
           .order("sent_at", { ascending: false })
           .limit(5),
@@ -112,9 +113,16 @@ export default function DashboardPage() {
 
       setPersonalCount(personalDocs);
       setCompanyCount(companyDocs);
-      setAllSentDocs(sent);
+      
+      const isCompleted = (row: any) => ["signed", "reviewed", "approved", "completed"].includes(row.status);
+      
+      setAllSentDocs(((sent ?? []) as DocumentStatusRow[]).filter(row => 
+        !(row.sender as any)?.isExternal || isCompleted(row)
+      ));
 
-      const recent = (recentRows ?? []).map((row: DocumentStatusRow & { name?: string; owner_id: string }) => ({
+      const recent = (recentRows ?? [])
+        .filter((row: DocumentStatusRow) => !(row.sender as any)?.isExternal || isCompleted(row))
+        .map((row: DocumentStatusRow & { name?: string; owner_id: string }) => ({
         id: row.id,
         name: row.name || "Untitled Document",
         status: row.status,
@@ -133,6 +141,10 @@ export default function DashboardPage() {
           if (row.owner_id !== user.id) {
             // Incoming Request
             if (hiddenIds.has(row.id) || seenIds.has(row.id)) return;
+            
+            // Skip external documents unless they are completed/signed
+            if ((row.sender as any)?.isExternal && !["signed", "reviewed", "approved", "completed"].includes(row.status)) return;
+
             const isRecipient = Boolean(getMatchingRecipient(row.recipients, userEmail));
             if (isRecipient && !isCompletedForRecipient(row.status)) {
               count++;

@@ -62,8 +62,13 @@ const mapRowToSentDocument = (row: DocumentRow, currentUserId: string, currentUs
           role: recipient.role || "Signer",
           status: recipient.status || "pending",
         };
+        
+        const isBuggedContent = recipient.signed_content?.startsWith("data:image");
+        
         if (recipient.signed_file_url) mapped.signed_file_url = recipient.signed_file_url;
-        if (recipient.signed_content) mapped.signed_content = recipient.signed_content;
+        if (recipient.signed_content) {
+          mapped.signed_content = isBuggedContent ? (row.content || "") : recipient.signed_content;
+        }
         if (typeof recipient.reject_reason === "string") mapped.reject_reason = recipient.reject_reason;
         if (typeof recipient.sign_message === "string") mapped.sign_message = recipient.sign_message;
         return mapped;
@@ -73,7 +78,11 @@ const mapRowToSentDocument = (row: DocumentRow, currentUserId: string, currentUs
   const isOwner = row.owner_id === currentUserId;
   const matchingRecipient = getMatchingRecipient(recipients, currentUserEmail);
 
-  if (!isOwner && !matchingRecipient) {
+  // Hide external documents unless they are signed/completed
+  const isExternal = (row.sender as any)?.isExternal;
+  const isCompleted = ["signed", "reviewed", "approved", "completed"].includes(row.status);
+  
+  if ((isExternal && !isCompleted) || (!isOwner && !matchingRecipient)) {
     return [];
   }
 
@@ -1239,16 +1248,19 @@ function DocumentDetailModal({
         if (freshDoc) {
           const typedSender = (freshDoc.sender ?? {}) as { fullName?: string; workEmail?: string };
           const rawRecipients = freshDoc.recipients as Array<{ name: string; email: string; role: string; status?: string; signed_file_url?: string; signed_content?: string; reject_reason?: string | null; sign_message?: string | null }> | null;
-          const mappedRecipients = (rawRecipients ?? []).map((r) => ({
-            name: r.name || "",
-            email: r.email || "",
-            role: r.role || "",
-            status: r.status,
-            signed_file_url: r.signed_file_url,
-            signed_content: r.signed_content,
-            reject_reason: r.reject_reason,
-            sign_message: r.sign_message,
-          }));
+          const mappedRecipients = (rawRecipients ?? []).map((r) => {
+            const isBuggedContent = r.signed_content?.startsWith("data:image");
+            return {
+              name: r.name || "",
+              email: r.email || "",
+              role: r.role || "",
+              status: r.status,
+              signed_file_url: r.signed_file_url,
+              signed_content: isBuggedContent ? (freshDoc.content || "") : r.signed_content,
+              reject_reason: r.reject_reason,
+              sign_message: r.sign_message,
+            };
+          });
 
           setRefreshedDoc({
             id: freshDoc.id,
