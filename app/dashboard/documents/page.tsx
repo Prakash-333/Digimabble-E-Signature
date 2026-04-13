@@ -1292,6 +1292,9 @@ function DocumentDetailModal({
   const isSingleRecipient = currentDoc.recipients.length <= 1;
 
   const getRoleLabel = (r: { role: string }) => {
+    // If the whole document is in review category, the recipient is a reviewer
+    if (currentDoc.category === "Reviewer" || currentDoc.status === "reviewing") return "Reviewer";
+    
     const role = r.role?.toLowerCase();
     if (role === "reviewer") return "Reviewer";
     return "Signer";

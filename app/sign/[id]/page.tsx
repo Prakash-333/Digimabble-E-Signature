@@ -4,7 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { CheckCircle2, Loader2, FileText, PenLine as Pen, Lock, ShieldCheck, AlertCircle, Clock, X, RotateCcw, Edit3, Save, Eye as EyeIcon, RotateCw, PenTool } from "lucide-react";
 import { getGuestDocumentMetaData, markFirstLogin, submitGuestSignature } from "../../actions/document-guest";
-import { highlightHtmlEdits } from "../../lib/diff";
+import { highlightHtmlEdits, saveSelection, restoreSelection, stripHighlights } from "../../lib/diff";
 import { supabase } from "../../lib/supabase/browser";
 import { normalizeEmail } from "../../lib/documents";
 
@@ -141,6 +141,7 @@ export default function PublicSignPage() {
 
   const [isEditMode, setIsEditMode] = useState(false);
   const [initialContent, setInitialContent] = useState<string>("");
+  const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Derived State
   const isReviewMode = document?.category === "Reviewer" || document?.status === "reviewing";
@@ -211,6 +212,13 @@ export default function PublicSignPage() {
 
     loadDocumentInitial();
   }, [id]);
+
+  // Auto-enable edit mode for reviewers
+  useEffect(() => {
+    if (isAuthenticated && isReviewMode) {
+      setIsEditMode(true);
+    }
+  }, [isAuthenticated, isReviewMode]);
 
   const handlePortalLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -360,7 +368,7 @@ export default function PublicSignPage() {
   };
 
   const handleFinalSign = async () => {
-    if (!savedSignature || !signaturePlaced) {
+    if (!isReviewMode && (!savedSignature || !signaturePlaced)) {
       alert("Please place your signature on the document first.");
       return;
     }
@@ -371,22 +379,90 @@ export default function PublicSignPage() {
       
       if (isReviewMode && contentRef.current) {
         const editedHtml = contentRef.current.innerHTML;
-        finalContent = highlightHtmlEdits(initialContent, editedHtml);
+        // Only apply diff highlighting if content changed and it's not already highlighted
+        if (editedHtml !== initialContent) {
+           finalContent = highlightHtmlEdits(initialContent, editedHtml);
+        } else {
+           finalContent = editedHtml;
+        }
       }
 
-      // Bake signature into HTML
-      const sigHtml = `<div style="position: absolute; left: ${signatureX}px; top: ${signatureY}px; width: ${signatureWidthPx}px; height: ${signatureHeightPx}px; z-index: 50; pointer-events: none;"><img src="${savedSignature}" alt="Signature" style="width: 100%; height: 100%; object-fit: contain;" /></div>`;
-      finalContent += sigHtml;
+      // Bake signature into HTML only if placed
+      if (signaturePlaced && savedSignature) {
+        const sigHtml = `<div style="position: absolute; left: ${signatureX}px; top: ${signatureY}px; width: ${signatureWidthPx}px; height: ${signatureHeightPx}px; z-index: 50; pointer-events: none;"><img src="${savedSignature}" alt="Signature" style="width: 100%; height: 100%; object-fit: contain;" /></div>`;
+        finalContent += sigHtml;
+      }
 
-      const { success, error: subError } = await submitGuestSignature(id, savedSignature, signMessage, finalContent);
+      const { success, error: subError } = await submitGuestSignature(id, savedSignature || "", signMessage, finalContent);
       
       if (!success) throw new Error(subError);
       
       setIsSigned(true);
     } catch (err: unknown) {
-      alert("Failed to submit signature: " + (err instanceof Error ? err.message : String(err)));
+      alert("Failed to submit: " + (err instanceof Error ? err.message : String(err)));
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const applyReviewHighlights = () => {
+    if (!contentRef.current) return;
+
+    const node = contentRef.current;
+    
+    // Save cursor position before update
+    const savedSel = saveSelection(node);
+    
+    // Clean current HTML of existing highlight spans to avoid nesting
+    const currentHtml = node.innerHTML;
+    const cleanHtml = stripHighlights(currentHtml);
+    
+    // Generate new highlights
+    const highlighted = highlightHtmlEdits(initialContent, cleanHtml);
+    
+    // Only update if visually different to avoid flicker
+    if (highlighted !== currentHtml) {
+      node.innerHTML = highlighted;
+      restoreSelection(node, savedSel);
+    }
+    
+    return highlighted;
+  };
+
+  const handleDocumentInput = () => {
+    if (!isReviewMode) return;
+
+    if (highlightTimeoutRef.current) {
+      clearTimeout(highlightTimeoutRef.current);
+    }
+
+    highlightTimeoutRef.current = setTimeout(() => {
+      applyReviewHighlights();
+    }, 500); // 500ms lively feedback
+  };
+
+  const handleToggleEdit = () => {
+    const nextMode = !isEditMode;
+    
+    if (nextMode) {
+      // Entering Edit Mode: Just switch
+      setIsEditMode(true);
+    } else {
+      // Stopping Edit Mode: Force a sync to state so highlights persist on re-render
+      if (contentRef.current) {
+        const highlighted = applyReviewHighlights();
+        setDocument(prev => prev ? { ...prev, content: highlighted } : null);
+      }
+      setIsEditMode(false);
+    }
+  };
+
+  const handleResetChanges = () => {
+    if (!window.confirm("Are you sure you want to reset all changes? This will restore the original document content.")) return;
+    
+    setDocument(prev => prev ? { ...prev, content: initialContent } : null);
+    if (contentRef.current) {
+      contentRef.current.innerHTML = initialContent;
     }
   };
 
@@ -541,18 +617,29 @@ export default function PublicSignPage() {
                 className="mx-auto max-w-[900px] bg-white shadow-sm p-8 md:p-16 min-h-full rounded-2xl border border-slate-100 relative"
               >
                 {isReviewMode && (
-                  <button 
-                    onClick={() => setIsEditMode(!isEditMode)}
-                    className={`absolute top-6 right-6 flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-sm z-10 ${isEditMode ? 'bg-green-600 text-white shadow-green-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                  >
-                    {isEditMode ? <><Save className="h-3.5 w-3.5" /> Stop Editing</> : <><Edit3 className="h-3.5 w-3.5" /> Edit Document</>}
-                  </button>
+                  <div className="absolute top-6 right-6 flex items-center gap-3 z-10">
+                    <button 
+                      onClick={handleResetChanges}
+                      className="flex items-center gap-2 rounded-xl bg-white border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-all shadow-sm"
+                      title="Reset all changes"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      Reset
+                    </button>
+                    <button 
+                      onClick={handleToggleEdit}
+                      className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-sm ${isEditMode ? 'bg-green-600 text-white shadow-green-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      {isEditMode ? <><Save className="h-3.5 w-3.5" /> Stop Editing</> : <><Edit3 className="h-3.5 w-3.5" /> Edit Document</>}
+                    </button>
+                  </div>
                 )}
                 
                 {document?.content ? (
                   <div 
                     ref={contentRef}
                     contentEditable={isEditMode}
+                    onInput={handleDocumentInput}
                     suppressContentEditableWarning
                     className={`prose prose-slate max-w-none outline-none transition-all duration-300 ${isEditMode ? 'p-6 rounded-2xl bg-amber-50/30 ring-2 ring-amber-200 shadow-inner min-h-[400px]' : ''}`} 
                     dangerouslySetInnerHTML={{ __html: document.content }} 
@@ -570,7 +657,7 @@ export default function PublicSignPage() {
                 )}
 
                 {/* Placed Signature */}
-                {signaturePlaced && savedSignature && (
+                {!isReviewMode && signaturePlaced && savedSignature && (
                   <ResizableWrapper
                     x={signatureX}
                     y={signatureY}
@@ -594,52 +681,67 @@ export default function PublicSignPage() {
           <div className="flex-shrink-0 border-t border-slate-100 bg-white/95 backdrop-blur-md p-4 md:p-6">
             <div className="mx-auto max-w-5xl flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="text-center sm:text-left">
-                <p className="text-base font-bold text-slate-900">{isReviewMode ? "Feedback or approval?" : "Ready to complete?"}</p>
+                <p className="text-base font-bold text-slate-900">{isReviewMode ? "Ready to submit your review?" : "Ready to complete?"}</p>
                 <p className="text-xs text-slate-500">
-                  {savedSignature 
-                    ? "Drag and resize your signature on the document above."
-                    : "Create your signature first, then place it on the document."}
+                  {isReviewMode 
+                    ? "You can edit the document content above before submitting."
+                    : savedSignature 
+                      ? "Drag and resize your signature on the document above."
+                      : "Create your signature first, then place it on the document."}
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                {!savedSignature ? (
+                {isReviewMode ? (
                   <button 
-                    onClick={() => setShowSignModal(true)}
-                    className="flex items-center gap-3 rounded-2xl bg-violet-600 px-8 py-4 text-base font-bold text-white shadow-xl shadow-violet-200 transition-all hover:bg-violet-700 active:scale-95"
+                    onClick={handleFinalSign}
+                    disabled={isSubmitting}
+                    className="flex items-center gap-3 rounded-2xl bg-violet-600 px-10 py-4 text-base font-bold text-white shadow-xl shadow-violet-200 transition-all hover:bg-violet-700 active:scale-95 disabled:opacity-50"
                   >
-                    <Pen className="h-5 w-5" />
-                    Create Signature
+                    {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <ShieldCheck className="h-5 w-5" />}
+                    Submit Review
                   </button>
                 ) : (
                   <>
-                    {!signaturePlaced && (
+                    {!savedSignature ? (
                       <button 
-                        onClick={() => {
-                          setSignaturePlaced(true);
-                          setSignatureX(50);
-                          setSignatureY(50);
-                        }}
-                        className="flex items-center gap-3 rounded-2xl bg-blue-600 px-8 py-4 text-base font-bold text-white shadow-xl shadow-blue-200 transition-all hover:bg-blue-700 active:scale-95"
+                        onClick={() => setShowSignModal(true)}
+                        className="flex items-center gap-3 rounded-2xl bg-violet-600 px-8 py-4 text-base font-bold text-white shadow-xl shadow-violet-200 transition-all hover:bg-violet-700 active:scale-95"
                       >
-                        <PenTool className="h-5 w-5" />
-                        Place on Doc
+                        <Pen className="h-5 w-5" />
+                        Create Signature
                       </button>
+                    ) : (
+                      <>
+                        {!signaturePlaced && (
+                          <button 
+                            onClick={() => {
+                              setSignaturePlaced(true);
+                              setSignatureX(50);
+                              setSignatureY(50);
+                            }}
+                            className="flex items-center gap-3 rounded-2xl bg-blue-600 px-8 py-4 text-base font-bold text-white shadow-xl shadow-blue-200 transition-all hover:bg-blue-700 active:scale-95"
+                          >
+                            <PenTool className="h-5 w-5" />
+                            Place on Doc
+                          </button>
+                        )}
+                        <button 
+                          onClick={() => setShowSignModal(true)}
+                          className="flex h-12 w-12 items-center justify-center rounded-2xl border-2 border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all"
+                          title="Change Signature"
+                        >
+                          <RotateCw className="h-5 w-5" />
+                        </button>
+                        <button 
+                          onClick={handleFinalSign}
+                          disabled={isSubmitting || !signaturePlaced}
+                          className="flex items-center gap-3 rounded-2xl bg-violet-600 px-10 py-4 text-base font-bold text-white shadow-xl shadow-violet-200 transition-all hover:bg-violet-700 active:scale-95 disabled:opacity-50"
+                        >
+                          {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <ShieldCheck className="h-5 w-5" />}
+                          Submit Final
+                        </button>
+                      </>
                     )}
-                    <button 
-                      onClick={() => setShowSignModal(true)}
-                      className="flex h-12 w-12 items-center justify-center rounded-2xl border-2 border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all"
-                      title="Change Signature"
-                    >
-                      <RotateCw className="h-5 w-5" />
-                    </button>
-                    <button 
-                      onClick={handleFinalSign}
-                      disabled={isSubmitting || !signaturePlaced}
-                      className="flex items-center gap-3 rounded-2xl bg-violet-600 px-10 py-4 text-base font-bold text-white shadow-xl shadow-violet-200 transition-all hover:bg-violet-700 active:scale-95 disabled:opacity-50"
-                    >
-                      {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <ShieldCheck className="h-5 w-5" />}
-                      Submit Final
-                    </button>
                   </>
                 )}
               </div>

@@ -1535,7 +1535,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
       subject: isReviewMode ? `Please review: ${template.name}` : `Please sign: ${template.name}`,
       recipients: finalRecipients.map((r) => ({ 
         ...r, 
-        role: r.role || (isReviewMode ? "reviewer" : "signer"), 
+        role: isReviewMode ? "reviewer" : (r.role || "signer"), 
         status: "pending" 
       })),
       sender: { 
@@ -1547,7 +1547,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
       status: isReviewMode ? "reviewing" : (fileUrl ? "waiting" : "pending"),
       fileUrl: fileUrl, // Store the cloud URL
       fileKey: fileKey, // Store the unique key for deletion
-      category: activeCategory, // Store the category for reviewer tracking
+      category: isReviewMode ? "Reviewer" : activeCategory, // Store the category for reviewer tracking
       content: editedTemplateContent ? highlightHtmlEdits(filledHtmlContent, editedTemplateContent) : filledHtmlContent, 
       manualSignaturePos: manualSignaturePos, // Pass manual placement coordinates
       manualSignatureScale: manualSignatureScale, // Pass manual scale

@@ -2,6 +2,86 @@
  * A simple utility to highlight differences between two HTML strings.
  * It wraps "new" or "different" words in a highlight span.
  */
+
+export interface SavedSelection {
+  start: number;
+  end: number;
+}
+
+/**
+ * Saves the current cursor position within a contentEditable element.
+ * Calculates position based on text nodes only to remain stable across DOM changes.
+ */
+export function saveSelection(containerNode: Node): SavedSelection | null {
+  if (typeof window === "undefined") return null;
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    const range = sel.getRangeAt(0);
+    const preSelectionRange = range.cloneRange();
+    preSelectionRange.selectNodeContents(containerNode);
+    preSelectionRange.setEnd(range.startContainer, range.startOffset);
+    const start = preSelectionRange.toString().length;
+
+    return {
+      start: start,
+      end: start + range.toString().length,
+    };
+  }
+  return null;
+}
+
+/**
+ * Restores a previously saved cursor position within a contentEditable element.
+ */
+export function restoreSelection(containerNode: Node, savedSel: SavedSelection | null) {
+  if (!savedSel || typeof window === "undefined" || typeof document === "undefined") return;
+
+  let charIndex = 0;
+  const range = document.createRange();
+  range.setStart(containerNode, 0);
+  range.collapse(true);
+  const nodeStack: Node[] = [containerNode];
+  let node: Node | undefined;
+  let foundStart = false;
+  let stop = false;
+
+  while (!stop && (node = nodeStack.pop())) {
+    if (node.nodeType === 3) {
+      const textNode = node as Text;
+      const nextCharIndex = charIndex + textNode.length;
+      if (!foundStart && savedSel.start >= charIndex && savedSel.start <= nextCharIndex) {
+        range.setStart(textNode, savedSel.start - charIndex);
+        foundStart = true;
+      }
+      if (foundStart && savedSel.end >= charIndex && savedSel.end <= nextCharIndex) {
+        range.setEnd(textNode, savedSel.end - charIndex);
+        stop = true;
+      }
+      charIndex = nextCharIndex;
+    } else {
+      let i = node.childNodes.length;
+      while (i--) {
+        nodeStack.push(node.childNodes[i]);
+      }
+    }
+  }
+
+  const sel = window.getSelection();
+  if (sel) {
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+}
+
+/**
+ * Cleanly removes highlight spans from an HTML string without deleting content.
+ */
+export function stripHighlights(html: string): string {
+  if (!html) return "";
+  // Removes only the <span> tags with our specific styling classes
+  return html.replace(/<span class="bg-yellow-100\/80[^>]*>(.*?)<\/span>/g, "$1");
+}
+
 export function highlightHtmlEdits(originalHtml: string, newHtml: string): string {
   if (!originalHtml || !newHtml) return newHtml;
   if (typeof document === 'undefined') return newHtml; // Guard for SSR
@@ -47,7 +127,7 @@ export function highlightHtmlEdits(originalHtml: string, newHtml: string): strin
         // Check if this specific token (word or single punctuation) exists in the original
         if (segment.trim() && !originalSet.has(segment.trim())) {
           const span = document.createElement('span');
-          span.className = 'bg-yellow-100/80 px-0.5 rounded shadow-sm border-b border-yellow-200';
+          span.className = 'bg-yellow-100/80 px-0.5 rounded shadow-sm border-b border-yellow-200 animate-in fade-in zoom-in-95 duration-500';
           span.textContent = segment;
           newFragment.appendChild(span);
         } else {
