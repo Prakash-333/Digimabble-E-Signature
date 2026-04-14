@@ -649,7 +649,7 @@ export default function DocumentsPage() {
     return (
       <div className="px-4 py-6 md:px-10 md:py-10">
         <h1 className="text-xl font-semibold tracking-tight text-slate-900">
-          My documents
+          Shared documents
         </h1>
         <p className="mt-2 text-sm text-slate-600">Loading...</p>
       </div>

@@ -43,7 +43,7 @@ type TemplateRow = {
   updated_at: string;
 };
 
-type Recipient = { name: string; email: string; role?: string };
+type Recipient = { name: string; email: string; role?: string; company?: string };
 
 type RecipientContactRow = {
   id: string;
@@ -622,9 +622,9 @@ function TemplatesContent() {
               <div className={viewMode === "grid" ? "contents" : "flex h-16 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-slate-50"}>
                 {viewMode === "grid" ? null : getTemplatePreview(tpl)}
               </div>
-              <div className={viewMode === "grid" ? "px-4 pb-3 pt-4" : "min-w-0 flex-1"}>
-                  <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3 min-w-0">
+              <div className={viewMode === "grid" ? "px-1.5 pb-1.5 pt-2" : "min-w-0 flex-1"}>
+                  <div className="flex items-start justify-between gap-1.5">
+                  <div className="flex items-start gap-2 min-w-0">
                     <div
                       className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-semibold ${getTemplateKind(tpl) === "pdf" ? "bg-red-100 text-red-600" : getTemplateKind(tpl) === "image" ? "bg-emerald-100 text-emerald-600" : getTemplateKind(tpl) === "word" ? "bg-blue-100 text-blue-600" : tpl.color}`}
                     >
@@ -747,12 +747,12 @@ function TemplatesContent() {
                   </div>
                 </div>
                 {viewMode === "grid" && (
-                  <div className="mt-4 h-48 overflow-hidden rounded-3xl border border-slate-200/60 bg-white shadow-sm">
+                  <div className="mt-1.5 h-48 overflow-hidden rounded-2xl border border-slate-200/60 bg-white shadow-sm">
                     {getTemplatePreview(tpl)}
                   </div>
                 )}
               </div>
-              <div className={viewMode === "grid" ? "border-t border-slate-200 bg-white/50 px-4 py-3" : "shrink-0"}>
+              <div className={viewMode === "grid" ? "border-t border-slate-200 bg-white/50 px-1.5 py-1.5" : "shrink-0"}>
                 <div className={`flex items-center ${viewMode === "grid" ? "justify-end text-[11px] text-slate-500" : "gap-2"}`}>
                   <button
                     onClick={() => {
@@ -1345,7 +1345,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
         acc[row.category] = [...(acc[row.category] ?? []), { 
           name: row.name, 
           email: row.email,
-          role: row.category === "Reviewer" ? "reviewer" : "signer"
+          role: row.category === "Reviewer" ? "reviewer" : "signer",
+          company: row.category
         }];
         return acc;
       }, createEmptyRecipientGroups(categoryNames));
@@ -1395,7 +1396,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
       [activeCategory]: [...(prev[activeCategory] ?? []), { 
         name, 
         email, 
-        role: activeCategory === "Reviewer" ? "reviewer" : "signer" 
+        role: activeCategory === "Reviewer" ? "reviewer" : "signer",
+        company: activeCategory
       }],
     }));
 
@@ -1522,7 +1524,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
         finalRecipients.push({ 
           name: "External Contact", 
           email: manualEmail.trim(), 
-          role: ((actionOverride || sendActionType) === "review" || activeCategory === "Reviewer") ? "reviewer" : "signer" 
+          role: ((actionOverride || sendActionType) === "review" || activeCategory === "Reviewer") ? "reviewer" : "signer",
+          company: "External"
         });
       }
     }
@@ -1761,7 +1764,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
       </div>
 
       {/* Content Area */}
-      <div className="flex-1 overflow-y-auto bg-slate-50">
+      <div className={`flex-1 ${step === "review" || step === "send" ? "overflow-hidden" : "overflow-y-auto"} bg-slate-50`}>
 
         {/* ── STEP 1: Review ── */}
         {step === "review" && (
@@ -1907,7 +1910,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
             </div>
 
             {/* Main Area: Document Preview */}
-            <div className="flex-1 overflow-y-auto p-6 flex justify-center bg-slate-100/30 custom-scrollbar">
+            <div className="flex-1 overflow-y-auto p-0 bg-slate-50/50 custom-scrollbar">
               <div 
                 ref={previewContainerRef}
                 onMouseMove={(e) => {
@@ -1933,10 +1936,9 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                     setIsPlacingSignature(false);
                   }
                 }}
-                className={`w-full max-w-4xl h-fit transition-all relative ${isPlacingSignature ? "cursor-crosshair ring-4 ring-violet-400 ring-offset-4 ring-offset-slate-100" : ""}`}
+                className={`w-full max-w-[1200px] mx-auto h-fit transition-all relative ${isPlacingSignature ? "cursor-crosshair ring-4 ring-violet-400 ring-offset-4 ring-offset-slate-100" : ""}`}
               >
-                <p className="text-sm font-bold text-slate-700 mb-4">Live preview</p>
-                <div className="bg-white rounded-2xl shadow-lg shadow-slate-200 border border-slate-200 overflow-hidden relative">
+                <div className="relative">
                   {/* Manual Placement Render */}
                   {manualSignaturePos && savedSignature && (
                     <div 
@@ -1966,8 +1968,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                     </div>
                   )}
                   {hasUploadedDocument && template.fileDataUrl ? (
-                    <div className="bg-slate-100/50 p-4 md:p-12 min-h-screen overflow-y-auto custom-scrollbar flex justify-center">
-                      <div className="w-full max-w-[816px] bg-white shadow-2xl rounded-sm p-16 text-left relative" style={{ minHeight: '1056px', aspectRatio: '1/1.414' }}>
+                    <div className="bg-slate-100/50 p-0 min-h-screen overflow-y-auto custom-scrollbar flex justify-center">
+                      <div className="w-full bg-white shadow-2xl rounded-sm p-8 text-left relative" style={{ minHeight: '1056px', aspectRatio: '1/1.414' }}>
                         {/* Simulation of a real document page */}
                         {(template.mimeType?.startsWith("image/") && !template.detectedText) ? (
                           <img
@@ -2007,7 +2009,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                       </div>
                     </div>
                   ) : (
-                      <div className="mx-auto max-w-[800px] bg-white shadow-lg p-12 md:p-16 min-h-[1056px] rounded-lg border border-slate-100 flex flex-col relative">
+                      <div className="w-full max-w-[1200px] mx-auto bg-white shadow-lg p-6 md:p-10 min-h-[1056px] rounded-lg border border-slate-100 flex flex-col relative">
                         <div className="absolute top-6 left-6 flex items-center gap-3">
                           <button
                             onClick={() => onClose()}
@@ -2052,30 +2054,19 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                           </button>
                         </div>
 
-                        <div className="p-6 mt-12 mb-4 border-b border-slate-50">
-                          <div className="flex items-center gap-3 mb-2">
-                             <span className="text-[10px] font-black bg-red-100 text-red-600 px-2 py-1 rounded-md uppercase tracking-wider">PDF</span>
-                             <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-none">{template.name}</h1>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">{template.category}</span>
-                            <span className="w-1 h-1 rounded-full bg-slate-200" />
-                            <span className="text-xs text-slate-400 font-bold tracking-tight">V2.1.0</span>
-                          </div>
-                        </div>
 
                         {/* Full letter content with replaced placeholders */}
                         <div 
                           contentEditable={isEditMode}
                           suppressContentEditableWarning
-                          className={`space-y-6 text-slate-500 leading-[1.8] text-[15px] font-sans antialiased tracking-tight relative z-10 px-4 p-6 outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10 rounded-xl' : ''}`} 
+                          className={`text-slate-900 leading-relaxed text-[16px] font-serif antialiased tracking-tight relative z-10 outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10 rounded-xl' : ''}`} 
                           style={{ fontFamily: 'inherit' }}
                         >
                         {(() => {
                           let filledContent = templateContent;
 
                           // First handle standard bold tags for safety
-                          filledContent = filledContent.replace(/<strong>/g, '<span class="font-bold text-slate-500">').replace(/<\/strong>/g, '</span>');
+                          filledContent = filledContent.replace(/<strong>/g, '<span class="font-bold text-slate-900">').replace(/<\/strong>/g, '</span>');
 
                           Object.keys(formValues).forEach(key => {
                             const val = formValues[key] || `<span style="font-family: inherit;">[${key}]</span>`;
@@ -2161,7 +2152,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
             <div className="w-80 bg-white border-r border-slate-200 flex flex-col">
               <div className="p-6 border-b border-slate-100">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">Select Recipients</h3>
+                  <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">Add a recipient role</h3>
                   <button
                     type="button"
                     onClick={() => {
@@ -2174,7 +2165,6 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                     <Plus className="h-4 w-4" />
                   </button>
                 </div>
-                <p className="text-xs text-slate-500 font-medium mt-1">Select a recipient role</p>
               </div>
 
               <div className="p-4 border-b border-slate-100 bg-slate-50/50">
@@ -2433,7 +2423,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
         )}
         {/* ── STEP 4: Confirm & Send ── */}
         {step === "send" && (
-          <div className="flex-1 flex min-h-[calc(100vh-73px)] bg-slate-50 overflow-hidden">
+          <div className="flex-1 flex h-[calc(100vh-73px)] bg-slate-50 overflow-hidden text-left">
             {isSent ? (
               <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-white animate-in fade-in duration-500">
                 <div className="w-24 h-24 rounded-[2.5rem] bg-violet-50 flex items-center justify-center mb-6 shadow-sm border border-violet-100">
@@ -2527,7 +2517,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                   <div className="flex-1 overflow-y-auto custom-scrollbar">
                     <div className="p-8 border-b border-slate-100">
                       <div className="flex items-center gap-3 mb-2">
-                        <div className="w-8 h-8 rounded-xl bg-violet-600 flex items-center justify-center text-white text-xs font-black shadow-lg shadow-violet-200">3</div>
+                        <div className="w-8 h-8 rounded-xl bg-violet-600 flex items-center justify-center text-white text-xs font-black shadow-lg shadow-violet-200">4</div>
                         <h3 className="text-2xl font-black text-slate-900 tracking-tight">Confirm & Send</h3>
                       </div>
                       <p className="text-slate-500 text-xs font-medium">Finalize and dispatch your document.</p>
@@ -2562,13 +2552,27 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                         </h4>
                         <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
                           {selectedRecipients.map(r => (
-                            <div key={r.email} className="flex items-center gap-4 p-4 bg-white border border-slate-100 rounded-2xl shadow-sm hover:border-violet-200 transition-colors">
-                              <div className="w-10 h-10 rounded-xl bg-violet-50 flex items-center justify-center text-violet-600 text-sm font-black shrink-0">
-                                {r.name.charAt(0).toUpperCase()}
+                            <div key={r.email} className="flex items-start gap-4 p-5 bg-white border border-slate-100 rounded-3xl shadow-sm hover:border-violet-200 transition-all hover:shadow-md group">
+                              <div className="w-12 h-12 rounded-2xl bg-violet-50 flex items-center justify-center text-violet-600 text-lg font-black shrink-0 group-hover:bg-violet-600 group-hover:text-white transition-colors uppercase">
+                                {r.name.charAt(0)}
                               </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-bold text-slate-900 truncate">{r.name}</p>
-                                <p className="text-[10px] text-slate-400 font-medium truncate">{r.email}</p>
+                              <div className="flex-1 min-w-0 space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-sm font-black text-slate-900 truncate">{r.name}</p>
+                                  <span className="text-[9px] font-black text-violet-600 bg-violet-50 px-2 py-0.5 rounded-lg uppercase tracking-widest">{r.role || "Signer"}</span>
+                                </div>
+                                <p className="text-[11px] text-slate-500 font-bold truncate">ID: {r.email}</p>
+                                <div className="pt-2 flex flex-wrap gap-2 text-[10px]">
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="text-slate-400 font-bold uppercase tracking-tighter">Designation</span>
+                                    <span className="text-slate-700 font-extrabold">{r.role === 'reviewer' ? 'Reviewer' : 'Signer'}</span>
+                                  </div>
+                                  <div className="w-px h-6 bg-slate-100 mx-1" />
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="text-slate-400 font-bold uppercase tracking-tighter">Company</span>
+                                    <span className="text-slate-700 font-extrabold">{r.company || "General"}</span>
+                                  </div>
+                                </div>
                               </div>
                             </div>
                           ))}
