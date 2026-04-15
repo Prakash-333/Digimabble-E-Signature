@@ -40,6 +40,34 @@ interface PlacedField {
   value?: string;
 }
 
+const DEFAULT_FIELD_SIZE: Record<string, { width: number; height: number }> = {
+  stamp: { width: 180, height: 64 },
+  initial: { width: 100, height: 36 },
+  date: { width: 140, height: 36 },
+  name: { width: 180, height: 40 },
+  first_name: { width: 160, height: 40 },
+  last_name: { width: 160, height: 40 },
+  email: { width: 220, height: 40 },
+  company: { width: 180, height: 40 },
+  title: { width: 160, height: 40 },
+  text: { width: 180, height: 44 },
+  checkbox: { width: 24, height: 24 },
+};
+
+const MIN_FIELD_SIZE: Record<string, { width: number; height: number }> = {
+  stamp: { width: 110, height: 40 },
+  initial: { width: 72, height: 28 },
+  date: { width: 100, height: 28 },
+  name: { width: 110, height: 32 },
+  first_name: { width: 110, height: 32 },
+  last_name: { width: 110, height: 32 },
+  email: { width: 150, height: 32 },
+  company: { width: 110, height: 32 },
+  title: { width: 100, height: 32 },
+  text: { width: 110, height: 36 },
+  checkbox: { width: 20, height: 20 },
+};
+
 const DRAGGABLE_FIELDS = [
   // Group 1
   { type: "initial", label: "Initial", icon: <span className="font-bold text-[10px] text-slate-700 max-w-5 border-b border-slate-700">DS</span>, group: 1 },
@@ -72,6 +100,31 @@ const formatStatus = (s: string | null) => {
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
+const getFieldSize = (field: Pick<PlacedField, "type" | "width" | "height">) => {
+  const fallback = DEFAULT_FIELD_SIZE[field.type] || { width: 180, height: 40 };
+  return {
+    width: field.width ?? fallback.width,
+    height: field.height ?? fallback.height,
+  };
+};
+
+const clampFieldPosition = (field: PlacedField, x: number, y: number, stage: HTMLDivElement | null) => {
+  if (!stage) {
+    return {
+      x: Math.max(0, Math.round(x)),
+      y: Math.max(0, Math.round(y)),
+    };
+  }
+
+  const rect = stage.getBoundingClientRect();
+  const { width, height } = getFieldSize(field);
+
+  return {
+    x: Math.min(Math.max(0, Math.round(x)), Math.max(0, Math.floor(rect.width - width))),
+    y: Math.min(Math.max(0, Math.round(y)), Math.max(0, Math.floor(rect.height - height))),
+  };
+};
+
 export default function NotificationsPage() {
   const router = useRouter();
   const [items, setItems] = useState<NotificationItem[]>([]);
@@ -101,7 +154,9 @@ export default function NotificationsPage() {
 
   const previewStageRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; startClientX: number; startClientY: number; startX: number; startY: number } | null>(null);
-  const resizeRef = useRef<{ id: string; startClientX: number; startClientY: number; startScale: number } | null>(null);
+  const resizeRef = useRef<{ id: string; startClientX: number; startClientY: number; startWidth: number; startHeight: number } | null>(null);
+  const movedFieldRef = useRef<string | null>(null);
+  const skipFieldClickRef = useRef<string | null>(null);
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
@@ -109,24 +164,20 @@ export default function NotificationsPage() {
         const { id, startClientX, startClientY, startX, startY } = dragRef.current;
         const dx = e.clientX - startClientX;
         const dy = e.clientY - startClientY;
+        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+          movedFieldRef.current = id;
+        }
         
         setPlacedFields(prev => {
           const field = prev.find(f => f.id === id);
           if (!field) return prev;
-          let maxX = Infinity;
-          let maxY = Infinity;
-          if (previewStageRef.current) {
-            const rect = previewStageRef.current.getBoundingClientRect();
-            // Estimate size. Text blocks are flexible, stamp is explicit.
-            maxX = rect.width - (field.width || 120);
-            maxY = rect.height - (field.height || 40);
-          }
+          const nextPos = clampFieldPosition(field, startX + dx, startY + dy, previewStageRef.current);
           return prev.map(f => {
             if (f.id === id) {
               return {
                 ...f,
-                x: Math.min(Math.max(0, Math.round(startX + dx)), Math.max(0, maxX)),
-                y: Math.min(Math.max(0, Math.round(startY + dy)), Math.max(0, maxY))
+                x: nextPos.x,
+                y: nextPos.y
               };
             }
             return f;
@@ -134,28 +185,81 @@ export default function NotificationsPage() {
         });
       }
       if (resizeRef.current) {
-        const { id, startClientX, startScale } = resizeRef.current;
+        const { id, startClientX, startClientY, startHeight, startWidth } = resizeRef.current;
         const dx = e.clientX - startClientX;
-        const newScale = Math.min(2.5, Math.max(0.4, startScale + dx / 180));
+        const dy = e.clientY - startClientY;
+        movedFieldRef.current = id;
         
         setPlacedFields(prev => prev.map(f => {
-          if (f.id === id) {
-             return {
-               ...f,
-               scale: newScale,
-               width: Math.round(180 * newScale),
-               height: Math.round(64 * newScale)
-             };
-          }
-          return f;
+          if (f.id !== id) return f;
+
+          const minSize = MIN_FIELD_SIZE[f.type] || { width: 80, height: 28 };
+          const width = Math.max(minSize.width, Math.round(startWidth + dx));
+          const height = Math.max(
+            minSize.height,
+            Math.round(
+              f.type === "checkbox"
+                ? startHeight + Math.max(dx, dy)
+                : startHeight + dy
+            )
+          );
+          const resizedField = {
+            ...f,
+            width,
+            height,
+          };
+          const nextPos = clampFieldPosition(resizedField, resizedField.x, resizedField.y, previewStageRef.current);
+
+          return {
+            ...resizedField,
+            x: nextPos.x,
+            y: nextPos.y,
+          };
         }));
       }
     };
-    const onUp = () => { dragRef.current = null; resizeRef.current = null; };
+    const onUp = () => {
+      if (movedFieldRef.current) {
+        skipFieldClickRef.current = movedFieldRef.current;
+      }
+      dragRef.current = null;
+      resizeRef.current = null;
+      movedFieldRef.current = null;
+    };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
   }, []);
+
+  const addPlacedField = (type: string, value?: string, position?: { x: number; y: number }) => {
+    const defaultSize = DEFAULT_FIELD_SIZE[type] || { width: 180, height: 40 };
+    const fieldId = crypto.randomUUID();
+    const baseField: PlacedField = {
+      id: fieldId,
+      type,
+      x: position?.x ?? 50,
+      y: position?.y ?? 50,
+      width: defaultSize.width,
+      height: defaultSize.height,
+      scale: 1,
+      value,
+    };
+    const nextPos = clampFieldPosition(baseField, baseField.x, baseField.y, previewStageRef.current);
+
+    setPlacedFields(prev => [...prev, { ...baseField, x: nextPos.x, y: nextPos.y }]);
+    setSelectedFieldId(fieldId);
+  };
+
+  const promptFieldValue = (field: PlacedField, label?: string) => {
+    if (field.type === "initial" || field.type === "checkbox" || field.type === "stamp") return;
+    const defaultVal = field.type === "date"
+      ? new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
+      : "";
+    const val = window.prompt(`Enter ${label || "Value"}:`, field.value || defaultVal);
+    if (val === null) return;
+
+    setPlacedFields(prev => prev.map(p => p.id === field.id ? { ...p, value: val } : p));
+  };
 
   const resetSigningState = () => {
     setPlacedFields([]);
@@ -174,13 +278,14 @@ export default function NotificationsPage() {
     setIsSigning(true);
     try {
       const fieldsHtml = placedFields.map(f => {
+        const { width, height } = getFieldSize(f);
         if (f.type === "stamp" && savedSignature) {
-          return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;width:${f.width || 180}px;height:${f.height || 64}px;z-index:50;pointer-events:none;"><img src="${savedSignature}" alt="Signature" style="width:100%;height:100%;object-fit:contain;" /></div>`;
+          return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;width:${width}px;height:${height}px;z-index:50;pointer-events:none;"><img src="${savedSignature}" alt="Signature" style="width:100%;height:100%;object-fit:contain;" /></div>`;
         }
         if (f.type === "checkbox") {
-           return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;width:20px;height:20px;z-index:50;pointer-events:none;border:2px solid #000;display:flex;align-items:center;justify-content:center;background:#fff;font-weight:bold;font-size:16px;">✓</div>`;
+           return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;width:${width}px;height:${height}px;z-index:50;pointer-events:none;display:flex;align-items:center;justify-content:center;background:transparent;font-weight:bold;font-size:${Math.max(14, Math.round(height * 0.8))}px;">✓</div>`;
         }
-        return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;z-index:50;font-size:14px;color:#0f172a;white-space:pre-wrap;font-family:inherit;">${f.value || ""}</div>`;
+        return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;width:${width}px;min-height:${height}px;z-index:50;pointer-events:none;display:flex;align-items:center;font-size:14px;color:#0f172a;white-space:pre-wrap;font-family:inherit;overflow-wrap:anywhere;">${f.value || ""}</div>`;
       }).join("");
 
       const baseHtml = item.content || "";
@@ -814,14 +919,13 @@ export default function NotificationsPage() {
                         </span>
                       ) : (
                         <>
-                          {placedFields.length === 0 ? (
-                            <button
-                              onClick={() => setPlacedFields(prev => [...prev, { id: crypto.randomUUID(), type: "stamp", x: 80, y: 80, width: 180, height: 64, scale: 1 }])}
-                              className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all"
-                            >
-                              <PenTool className="h-3.5 w-3.5" /> Sign on Document
-                            </button>
-                          ) : (
+                          <button
+                            onClick={() => addPlacedField("stamp", "", { x: 80, y: 80 })}
+                            className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all"
+                          >
+                            <PenTool className="h-3.5 w-3.5" /> Sign on Document
+                          </button>
+                          {placedFields.length > 0 && (
                             <>
                               <button
                                 onClick={() => setPlacedFields([])}
@@ -870,15 +974,7 @@ export default function NotificationsPage() {
                         draggable
                         onDragStart={(e) => e.dataTransfer.setData("fieldType", f.type)}
                         onClick={() => {
-                          const isTextBased = !["stamp", "checkbox", "initial"].includes(f.type);
-                          const defaultVal = f.type === "date" ? new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "";
-                          let val = defaultVal;
-                          if (isTextBased) {
-                            const input = window.prompt(`Enter ${f.label}:`, defaultVal);
-                            if (input === null) return;
-                            val = input;
-                          }
-                          setPlacedFields(prev => [...prev, { id: crypto.randomUUID(), type: f.type, x: 50, y: Math.max(50, previewStageRef.current ? previewStageRef.current.parentElement!.parentElement!.scrollTop + 50 : 50), width: f.type === "stamp" ? 180 : undefined, height: f.type === "stamp" ? 64 : undefined, scale: 1, value: val }]);
+                          addPlacedField(f.type, "");
                         }}
                         className="flex items-center gap-3 rounded-xl border border-transparent hover:border-slate-200 bg-white p-2 hover:bg-slate-50 transition-colors cursor-grab active:cursor-grabbing select-none"
                       >
@@ -898,15 +994,7 @@ export default function NotificationsPage() {
                         draggable
                         onDragStart={(e) => e.dataTransfer.setData("fieldType", f.type)}
                         onClick={() => {
-                          const isTextBased = !["stamp", "checkbox", "initial"].includes(f.type);
-                          const defaultVal = f.type === "date" ? new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "";
-                          let val = defaultVal;
-                          if (isTextBased) {
-                            const input = window.prompt(`Enter ${f.label}:`, defaultVal);
-                            if (input === null) return;
-                            val = input;
-                          }
-                          setPlacedFields(prev => [...prev, { id: crypto.randomUUID(), type: f.type, x: 50, y: Math.max(50, previewStageRef.current ? previewStageRef.current.parentElement!.parentElement!.scrollTop + 50 : 50), width: undefined, height: undefined, scale: 1, value: val }]);
+                          addPlacedField(f.type, "");
                         }}
                         className="flex items-center gap-3 rounded-xl border border-transparent hover:border-slate-200 bg-white p-2 hover:bg-slate-50 transition-colors cursor-grab active:cursor-grabbing select-none"
                       >
@@ -926,15 +1014,7 @@ export default function NotificationsPage() {
                         draggable
                         onDragStart={(e) => e.dataTransfer.setData("fieldType", f.type)}
                         onClick={() => {
-                          const isTextBased = !["stamp", "checkbox", "initial"].includes(f.type);
-                          const defaultVal = f.type === "date" ? new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "";
-                          let val = defaultVal;
-                          if (isTextBased) {
-                            const input = window.prompt(`Enter ${f.label}:`, defaultVal);
-                            if (input === null) return;
-                            val = input;
-                          }
-                          setPlacedFields(prev => [...prev, { id: crypto.randomUUID(), type: f.type, x: 50, y: Math.max(50, previewStageRef.current ? previewStageRef.current.parentElement!.parentElement!.scrollTop + 50 : 50), width: undefined, height: undefined, scale: 1, value: val }]);
+                          addPlacedField(f.type, "");
                         }}
                         className="flex items-center gap-3 rounded-xl border border-transparent hover:border-slate-200 bg-white p-2 hover:bg-slate-50 transition-colors cursor-grab active:cursor-grabbing select-none"
                       >
@@ -956,29 +1036,16 @@ export default function NotificationsPage() {
                 if (!type) return;
                 if (!previewStageRef.current) return;
                 const rect = previewStageRef.current.getBoundingClientRect();
-                const scrollY = previewStageRef.current.parentElement!.parentElement!.scrollTop;
-                const scrollX = previewStageRef.current.parentElement!.parentElement!.scrollLeft;
                 const x = Math.max(0, e.clientX - rect.left);
                 const y = Math.max(0, e.clientY - rect.top);
-                
-                const isTextBased = !["stamp", "checkbox", "initial"].includes(type);
-                const draggedDef = DRAGGABLE_FIELDS.find(f => f.type === type);
-                const defaultVal = type === "date" ? new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "";
-                let val = defaultVal;
-                          
-                if (isTextBased) {
-                  const input = window.prompt(`Enter ${draggedDef?.label || "Value"}:`, defaultVal);
-                  if (input === null) return;
-                  val = input;
-                }
-                          
-                setPlacedFields(prev => [...prev, { id: crypto.randomUUID(), type, x, y, width: type === "stamp" ? 180 : undefined, height: type === "stamp" ? 64 : undefined, scale: 1, value: val }]);
+
+                addPlacedField(type, "", { x, y });
               }}
             >
               <div className="max-w-4xl mx-auto flex justify-center">
                 <div className="relative w-[800px]" ref={previewStageRef}>
                   <div
-                    className="relative editable-content w-full min-h-[1056px] bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200 p-12 md:p-16 lg:p-20 text-[15px] text-slate-800 leading-[1.9] tracking-tight outline-none"
+                    className="relative editable-content w-full min-h-[1056px] bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200 p-12 md:p-16 text-[15px] text-slate-800 leading-[1.9] tracking-tight outline-none"
                     style={{ fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}
                     onClick={() => setSelectedFieldId(null)}
                     contentEditable={isEditMode}
@@ -999,16 +1066,22 @@ export default function NotificationsPage() {
                   {/* Draggable Placed Fields */}
                   {placedFields.map(field => {
                     const isSelected = selectedFieldId === field.id;
-                    const w = field.width || 120;
-                    const h = field.height || 40;
+                    const { width: w, height: h } = getFieldSize(field);
 
                     if (field.type === "stamp") {
                       return (
                         <div
                           key={field.id}
-                          className={`absolute rounded border-2 border-dashed group cursor-grab active:cursor-grabbing select-none transition-all ${isSelected ? 'border-violet-500 bg-violet-50/30' : 'border-slate-400 hover:border-violet-400'}`}
+                          className={`absolute rounded group cursor-grab active:cursor-grabbing select-none transition-all ${isSelected ? 'border-2 border-dashed border-violet-500 bg-violet-50/20' : 'border-2 border-dashed border-transparent'}`}
                           style={{ left: `${field.x}px`, top: `${field.y}px`, width: `${w}px`, height: `${h}px`, zIndex: 100 }}
-                          onClick={e => { e.stopPropagation(); setSelectedFieldId(field.id); }}
+                          onClick={e => {
+                            e.stopPropagation();
+                            if (skipFieldClickRef.current === field.id) {
+                              skipFieldClickRef.current = null;
+                              return;
+                            }
+                            setSelectedFieldId(field.id);
+                          }}
                           onPointerDown={e => {
                             e.preventDefault(); e.stopPropagation();
                             setSelectedFieldId(field.id);
@@ -1024,7 +1097,7 @@ export default function NotificationsPage() {
                           )}
                           <button
                             type="button"
-                            className="absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all"
+                            className={`absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center hover:bg-red-600 transition-all ${isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
                             style={{ zIndex: 110 }}
                             onClick={e => { e.stopPropagation(); setPlacedFields(prev => prev.filter(p => p.id !== field.id)); }}
                           >
@@ -1032,10 +1105,10 @@ export default function NotificationsPage() {
                           </button>
                           <div
                             className="absolute -right-2 -bottom-2 w-5 h-5 cursor-nwse-resize bg-violet-600 rounded-full shadow-md hover:bg-violet-500 border-2 border-white flex items-center justify-center"
-                            style={{ zIndex: 110 }}
+                            style={{ zIndex: 110, opacity: isSelected ? 1 : 0, pointerEvents: isSelected ? "auto" : "none" }}
                             onPointerDown={e => {
                               e.stopPropagation(); e.preventDefault();
-                              resizeRef.current = { id: field.id, startClientX: e.clientX, startClientY: e.clientY, startScale: field.scale || 1 };
+                              resizeRef.current = { id: field.id, startClientX: e.clientX, startClientY: e.clientY, startWidth: w, startHeight: h };
                             }}
                           >
                             <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
@@ -1050,13 +1123,18 @@ export default function NotificationsPage() {
                       return (
                         <div
                           key={field.id}
-                          className={`absolute rounded border-2 border-dashed group cursor-grab active:cursor-grabbing transition-all w-6 h-6 flex items-center justify-center ${isSelected ? 'border-violet-500 bg-violet-50/10' : 'border-slate-300 hover:border-violet-400 bg-white'}`}
-                          style={{ left: `${field.x}px`, top: `${field.y}px`, zIndex: 100 }}
+                          className={`absolute rounded group cursor-grab active:cursor-grabbing select-none transition-all flex items-center justify-center ${isSelected ? 'border-2 border-dashed border-violet-500 bg-violet-50/10' : 'border-2 border-dashed border-transparent bg-transparent'}`}
+                          style={{ left: `${field.x}px`, top: `${field.y}px`, zIndex: 100, width: `${w}px`, height: `${h}px` }}
                           onClick={e => {
                             e.stopPropagation();
+                            if (skipFieldClickRef.current === field.id) {
+                              skipFieldClickRef.current = null;
+                              return;
+                            }
                             setSelectedFieldId(field.id);
                           }}
                           onPointerDown={e => {
+                            e.preventDefault();
                             e.stopPropagation();
                             setSelectedFieldId(field.id);
                             dragRef.current = { id: field.id, startClientX: e.clientX, startClientY: e.clientY, startX: field.x, startY: field.y };
@@ -1067,11 +1145,24 @@ export default function NotificationsPage() {
                           </span>
                           <button
                             type="button"
-                            className="absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all z-10"
+                            className={`absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center hover:bg-red-600 transition-all z-10 ${isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
                             onClick={e => { e.stopPropagation(); setPlacedFields(prev => prev.filter(p => p.id !== field.id)); }}
                           >
                             <X className="h-2.5 w-2.5" />
                           </button>
+                          <div
+                            className="absolute -right-2 -bottom-2 w-5 h-5 cursor-nwse-resize bg-violet-600 rounded-full shadow-md hover:bg-violet-500 border-2 border-white flex items-center justify-center"
+                            style={{ zIndex: 110, opacity: isSelected ? 1 : 0, pointerEvents: isSelected ? "auto" : "none" }}
+                            onPointerDown={e => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              resizeRef.current = { id: field.id, startClientX: e.clientX, startClientY: e.clientY, startWidth: w, startHeight: h };
+                            }}
+                          >
+                            <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M22 22L12 22L22 12Z" fill="currentColor" />
+                            </svg>
+                          </div>
                         </div>
                       );
                     }
@@ -1082,35 +1173,55 @@ export default function NotificationsPage() {
                     return (
                       <div
                         key={field.id}
-                        className={`absolute rounded border-2 border-dashed group cursor-grab active:cursor-grabbing transition-all min-w-[120px] max-w-[400px] whitespace-pre-wrap ${isSelected ? 'border-violet-500 bg-violet-50/10' : 'border-slate-300 hover:border-violet-400 bg-white/50'}`}
-                        style={{ left: `${field.x}px`, top: `${field.y}px`, zIndex: 100 }}
+                        className={`absolute rounded group cursor-grab active:cursor-grabbing select-none transition-all whitespace-pre-wrap ${isSelected ? 'border-2 border-dashed border-violet-500 bg-violet-50/10' : 'border-2 border-dashed border-transparent bg-transparent'}`}
+                        style={{ left: `${field.x}px`, top: `${field.y}px`, width: `${w}px`, height: `${h}px`, zIndex: 100 }}
                         onClick={e => { 
                           e.stopPropagation(); 
-                          setSelectedFieldId(field.id);
-                          if (!["initial"].includes(field.type)) {
-                            const defaultVal = field.type === "date" ? new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "";
-                            const val = window.prompt(`Enter ${draggedDef?.label || "Value"}:`, field.value || defaultVal);
-                            if (val !== null) {
-                              setPlacedFields(prev => prev.map(p => p.id === field.id ? { ...p, value: val } : p));
-                            }
+                          if (skipFieldClickRef.current === field.id) {
+                            skipFieldClickRef.current = null;
+                            return;
                           }
+                          setSelectedFieldId(field.id);
                         }}
                         onPointerDown={e => {
+                          e.preventDefault();
                           e.stopPropagation();
                           setSelectedFieldId(field.id);
                           dragRef.current = { id: field.id, startClientX: e.clientX, startClientY: e.clientY, startX: field.x, startY: field.y };
                         }}
+                        onDoubleClick={e => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          skipFieldClickRef.current = null;
+                          setSelectedFieldId(field.id);
+                          promptFieldValue(field, draggedDef?.label || "Value");
+                        }}
                       >
-                        <div className="w-full text-slate-800 font-medium px-2 py-1.5 cursor-pointer">
+                        <div
+                          className="flex h-full w-full items-center text-slate-800 font-medium px-2 py-1.5 cursor-grab active:cursor-grabbing"
+                        >
                           {field.value ? field.value : <span className="text-slate-400 font-normal italic">[{draggedDef?.label || "Empty"}]</span>}
                         </div>
                         <button
                           type="button"
-                          className="absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all z-10"
+                          className={`absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center hover:bg-red-600 transition-all z-10 ${isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
                           onClick={e => { e.stopPropagation(); setPlacedFields(prev => prev.filter(p => p.id !== field.id)); }}
                         >
                           <X className="h-2.5 w-2.5" />
                         </button>
+                        <div
+                          className="absolute -right-2 -bottom-2 w-5 h-5 cursor-nwse-resize bg-violet-600 rounded-full shadow-md hover:bg-violet-500 border-2 border-white flex items-center justify-center"
+                          style={{ zIndex: 110, opacity: isSelected ? 1 : 0, pointerEvents: isSelected ? "auto" : "none" }}
+                          onPointerDown={e => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            resizeRef.current = { id: field.id, startClientX: e.clientX, startClientY: e.clientY, startWidth: w, startHeight: h };
+                          }}
+                        >
+                          <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M22 22L12 22L22 12Z" fill="currentColor" />
+                          </svg>
+                        </div>
                       </div>
                     );
                   })}

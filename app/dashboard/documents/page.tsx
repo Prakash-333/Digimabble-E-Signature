@@ -566,17 +566,12 @@ export default function DocumentsPage() {
     }
     else if (activeFilter === "received") {
       if (doc.direction === "sent") {
-        const hasRejection = doc.recipients.some(r => r.status === "rejected");
-        if (hasRejection) return false;
-        const anyCompleted = doc.recipients.some(r => ["signed", "reviewed", "approved", "completed"].includes(r.status || ""));
-        if (!anyCompleted) return false;
+        const hasApprovedReview = doc.recipients.some(r => ["reviewed", "approved"].includes(r.status || ""));
+        if (!hasApprovedReview && !["reviewed", "approved"].includes(doc.status)) return false;
       } else {
-        // The original logic only showed documents where direction === "sent". 
-        // We ensure recipients looking at the shared docs don't accidentally see their pending docs in 'received'
-        // unless they themselves signed it, but typically this tab is for Senders receiving signatures.
         const myRecipient = doc.recipientRole ? doc.recipients.find(r => r.role?.toLowerCase() === doc.recipientRole?.toLowerCase()) : doc.recipients.find(r => r.email === currentUserEmail);
         const myStatus = myRecipient?.status || doc.status;
-        if (!["signed", "reviewed", "approved", "completed"].includes(myStatus)) return false;
+        if (!["reviewed", "approved"].includes(myStatus)) return false;
       }
     }
 
@@ -672,7 +667,7 @@ export default function DocumentsPage() {
       </div>
 
       <div className="mt-6 flex flex-wrap gap-2">
-        {[{ value: "all", label: "All" }, { value: "pending", label: "Pending" }, { value: "approved", label: "Signed" }, { value: "rejected", label: "Changes Required" }, { value: "received", label: "Received" }].map((tag) => (
+        {[{ value: "all", label: "All" }, { value: "pending", label: "Pending" }, { value: "approved", label: "Signed" }, { value: "rejected", label: "Changes Required" }, { value: "received", label: "Approved" }].map((tag) => (
           <button
             key={tag.value}
             onClick={() => setActiveFilter(tag.value)}

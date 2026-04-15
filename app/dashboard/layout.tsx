@@ -202,14 +202,14 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="flex bg-slate-50 min-h-screen w-full overflow-x-hidden">
+    <div className="flex h-screen bg-slate-50 w-full overflow-hidden">
       <Head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400..700&display=swap" rel="stylesheet" />
       </Head>
       {/* Sidebar */}
-      <aside className={`sticky top-0 h-screen flex-shrink-0 overflow-y-auto overflow-x-hidden bg-white border-r border-slate-200 text-slate-700 transition-all duration-300 flex flex-col ${isSidebarCollapsed ? "w-20" : "w-72"}`}>
+      <aside className={`h-screen flex-shrink-0 overflow-y-auto overflow-x-hidden bg-white border-r border-slate-200 text-slate-700 transition-all duration-300 flex flex-col ${isSidebarCollapsed ? "w-20" : "w-72"}`}>
         <div className={`flex items-center ${isSidebarCollapsed ? "justify-center px-0 py-4" : "gap-3 px-5 py-5"}`}>
           {!isSidebarCollapsed ? (
             <>
@@ -357,7 +357,7 @@ export default function DashboardLayout({
       </aside>
 
       {/* Main area */}
-      <div className="flex flex-1 flex-col overflow-x-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {/* Top bar */}
         <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-4 md:px-6">
           <div className="flex items-center gap-3">
@@ -453,7 +453,7 @@ export default function DashboardLayout({
           </div>
         </header>
 
-        <main className="flex-1 bg-slate-50 p-4 pt-0">{children}</main>
+        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-slate-50 p-4 pt-0">{children}</main>
       </div>
     </div>
   );
