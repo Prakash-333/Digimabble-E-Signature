@@ -188,7 +188,7 @@ function TemplatesContent() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState(urlSearch);
   const [starred, setStarred] = useState<Set<TemplateId>>(new Set());
-  const [useStep, setUseStep] = useState<"review" | "type_selection" | "recipients" | "send" | null>(null);
+  const [useStep, setUseStep] = useState<"review" | "type_selection" | "recipients" | "internal_recipients" | "external_recipients" | "send" | null>(null);
   const [selectedForUse, setSelectedForUse] = useState<TemplateId | null>(null);
   const [appTemplates, setAppTemplates] = useState<AppTemplate[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null | undefined>(undefined);
@@ -966,8 +966,8 @@ const generateTemplateFields = (templateContent: string) => {
 
 function TemplateFlowModal({ template, step, setStep, onClose, router, currentUserId }: {
   template: AppTemplate,
-  step: "review" | "type_selection" | "recipients" | "send",
-  setStep: (s: "review" | "type_selection" | "recipients" | "send" | null) => void,
+  step: "review" | "type_selection" | "recipients" | "internal_recipients" | "external_recipients" | "send",
+  setStep: (s: "review" | "type_selection" | "recipients" | "internal_recipients" | "external_recipients" | "send" | null) => void,
   onClose: () => void,
   router: ReturnType<typeof useRouter>,
   currentUserId: string | null | undefined
@@ -1226,20 +1226,17 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   }, [detectedPlaceholders]);
 
   // Step 2: recipients
-  const [selectedRecipients, setSelectedRecipients] = useState<Recipient[]>([]);
-  const [isSent, setIsSent] = useState(false);
-  const [isPlacingSignature, setIsPlacingSignature] = useState(false);
-  const [manualSignaturePos, setManualSignaturePos] = useState<{ x: number; y: number } | null>(null);
-  const [manualSignatureScale, setManualSignatureScale] = useState(1.0);
-  const [isDraggingSignature, setIsDraggingSignature] = useState(false);
-  const previewContainerRef = useRef<HTMLDivElement>(null);
-  const [sendError, setSendError] = useState<string | null>(null);
-  const [isPersisting, setIsPersisting] = useState(false);
-  const [manualEmail, setManualEmail] = useState("");
-  const [activeCategory, setActiveCategory] = useState<string>("Companies");
-  const [categoryNames, setCategoryNames] = useState<string[]>([...RECIPIENT_CATEGORIES]);
+  const [internalSelectedRecipients, setInternalSelectedRecipients] = useState<Recipient[]>([]);
+  const [externalSelectedRecipients, setExternalSelectedRecipients] = useState<Recipient[]>([]);
+  const [internalManualEmail, setInternalManualEmail] = useState("");
+  const [externalManualEmail, setExternalManualEmail] = useState("");
+  const [internalActiveCategory, setInternalActiveCategory] = useState<string>("Employees");
+  const [externalActiveCategory, setExternalActiveCategory] = useState<string>("Companies");
+
+  const [internalCategoryNames, setInternalCategoryNames] = useState<string[]>(["Employees", "Reviewer"]);
+  const [externalCategoryNames, setExternalCategoryNames] = useState<string[]>(["Companies", "Investors", "Clients"]);
   const [recipientSearch, setRecipientSearch] = useState("");
-  const [recipientsByCategory, setRecipientsByCategory] = useState<Record<string, Recipient[]>>(createEmptyRecipientGroups);
+  const [recipientsByCategory, setRecipientsByCategory] = useState<Record<string, Recipient[]>>(createEmptyRecipientGroups());
   const [newRecipientName, setNewRecipientName] = useState("");
   const [newRecipientEmail, setNewRecipientEmail] = useState("");
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -1248,8 +1245,19 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   const [showSendChoice, setShowSendChoice] = useState(false);
   const [sendActionType, setSendActionType] = useState<"review" | "sign" | null>(null);
 
+  // Dynamic state selectors
+  const selectedRecipients = documentType === "internal" ? internalSelectedRecipients : externalSelectedRecipients;
+  const setSelectedRecipients = documentType === "internal" ? setInternalSelectedRecipients : setExternalSelectedRecipients;
+  const manualEmail = documentType === "internal" ? internalManualEmail : externalManualEmail;
+  const setManualEmail = documentType === "internal" ? setInternalManualEmail : setExternalManualEmail;
+  const activeCategory = documentType === "internal" ? internalActiveCategory : externalActiveCategory;
+  const setActiveCategory = documentType === "internal" ? setInternalActiveCategory : setExternalActiveCategory;
+  const categoryNames = documentType === "internal" ? internalCategoryNames : externalCategoryNames;
+  const setCategoryNames = documentType === "internal" ? setInternalCategoryNames : setExternalCategoryNames;
+
   // Categories for the sidebar
   const categories = categoryNames;
+
   const activeRecipients = activeCategory === "Manual" ? [] : (recipientsByCategory[activeCategory] ?? []);
   const filteredRecipients = activeRecipients.filter(
     (r) =>
@@ -1298,32 +1306,35 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   }, [currentUserId]);
 
   useEffect(() => {
-    if (!currentUserId) return;
+    if (!currentUserId || !documentType) return;
 
-    const storedCategoryNames = getScopedStorageItem(CATEGORY_STORAGE_KEY, currentUserId);
+    const storageKey = `${CATEGORY_STORAGE_KEY}.${documentType}`;
+    const storedCategoryNames = getScopedStorageItem(storageKey, currentUserId);
     if (!storedCategoryNames) return;
 
     try {
       const parsed = JSON.parse(storedCategoryNames);
-      if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string" && item.trim())) {
-        setCategoryNames(Array.from(new Set(parsed.map((item) => item.trim()))));
+      if (Array.isArray(parsed) && parsed.every((item: any) => typeof item === "string" && item.trim())) {
+        const uniqueNames = Array.from(new Set(parsed.map((item: string) => item.trim())));
+        setCategoryNames(uniqueNames);
       }
     } catch {
       // Ignore malformed stored categories.
     }
-  }, [currentUserId]);
+  }, [currentUserId, documentType, setCategoryNames]);
 
   useEffect(() => {
-    if (!currentUserId) return;
-    setScopedStorageItem(CATEGORY_STORAGE_KEY, currentUserId, JSON.stringify(categoryNames));
-  }, [categoryNames, currentUserId]);
+    if (!currentUserId || !documentType) return;
+    const storageKey = `${CATEGORY_STORAGE_KEY}.${documentType}`;
+    setScopedStorageItem(storageKey, currentUserId, JSON.stringify(categoryNames));
+  }, [categoryNames, currentUserId, documentType]);
 
   useEffect(() => {
     if (activeCategory === "Manual") return;
     if (!categoryNames.includes(activeCategory)) {
-      setActiveCategory(categoryNames[0] ?? "Manual");
+      setActiveCategory(documentType === "internal" ? "Employees" : (categoryNames[0] ?? "Manual"));
     }
-  }, [activeCategory, categoryNames]);
+  }, [activeCategory, categoryNames, documentType, setActiveCategory]);
 
   useEffect(() => {
     if (!currentUserId) return;
@@ -1704,8 +1715,13 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
     setIsPersisting(false);
   };
 
-  const stepIndex = step === "review" ? 1 : step === "type_selection" ? 2 : step === "recipients" ? 3 : 4;
-  const stepLabel = step === "review" ? "Review Document" : step === "type_selection" ? "Document Type" : step === "recipients" ? "Select Recipients" : "Confirm & Send";
+  const stepIndex = step === "review" ? 1 : step === "type_selection" ? 2 : (step === "recipients" || step === "internal_recipients" || step === "external_recipients") ? 3 : 4;
+  const stepLabel = step === "review" ? "Review Document" 
+    : step === "type_selection" ? "Document Type" 
+    : step === "internal_recipients" ? "Internal Recipients" 
+    : step === "external_recipients" ? "External Recipients" 
+    : step === "recipients" ? "Select Recipients" 
+    : "Confirm & Send";
 
   return (
     <div className="fixed inset-0 z-[100] bg-white flex flex-col h-screen w-screen overflow-hidden text-slate-900">
@@ -1713,7 +1729,12 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
       <div className="flex items-center justify-between border-b border-slate-100 px-8 py-4 bg-white shrink-0">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => step === "review" ? onClose() : step === "type_selection" ? setStep("review") : step === "recipients" ? setStep("type_selection") : setStep("recipients")}
+            onClick={() => 
+              step === "review" ? onClose() 
+              : step === "type_selection" ? setStep("review") 
+              : (step === "recipients" || step === "internal_recipients" || step === "external_recipients") ? setStep("type_selection") 
+              : setStep(documentType === "internal" ? "internal_recipients" : "external_recipients")
+            }
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-500 hover:text-slate-900 transition-all group"
           >
             <ChevronLeft className="w-4 h-4 transition-transform group-hover:-translate-x-0.5" />
@@ -1737,7 +1758,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
           {step !== "send" && step !== "type_selection" && (
             <button
               onClick={() => {
-                if (step === "recipients" && selectedRecipients.length === 0 && !manualEmail) {
+                if ((step === "recipients" || step === "internal_recipients" || step === "external_recipients") && selectedRecipients.length === 0 && !manualEmail) {
                   alert("Please select at least one recipient");
                   return;
                 }
@@ -1747,8 +1768,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                   setStep("send");
                 }
               }}
-              disabled={step === "recipients" && selectedRecipients.length === 0 && !manualEmail}
-              className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-white text-sm font-bold transition-all shadow-md ${step === "recipients" && selectedRecipients.length === 0 && !manualEmail ? "bg-violet-300 cursor-not-allowed" : "bg-violet-600 hover:bg-violet-700"}`}
+              disabled={(step === "recipients" || step === "internal_recipients" || step === "external_recipients") && selectedRecipients.length === 0 && !manualEmail}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-white text-sm font-bold transition-all shadow-md ${(step === "recipients" || step === "internal_recipients" || step === "external_recipients") && selectedRecipients.length === 0 && !manualEmail ? "bg-violet-300 cursor-not-allowed" : "bg-violet-600 hover:bg-violet-700"}`}
             >
               Continue →
             </button>
@@ -2115,7 +2136,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                 <button
                   onClick={() => {
                     setDocumentType("internal");
-                    setStep("recipients");
+                    setStep("internal_recipients");
                   }}
                   className="flex flex-col items-center justify-center p-8 rounded-[2rem] border-2 border-slate-100 hover:border-violet-400 hover:bg-violet-50 transition-all group"
                 >
@@ -2129,7 +2150,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                 <button
                   onClick={() => {
                     setDocumentType("external");
-                    setStep("recipients");
+                    setStep("external_recipients");
                   }}
                   className="flex flex-col items-center justify-center p-8 rounded-[2rem] border-2 border-slate-100 hover:border-violet-400 hover:bg-violet-50 transition-all group"
                 >
@@ -2145,7 +2166,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
         )}
 
         {/* ── STEP 3: Select Recipients ── */}
-        {step === "recipients" && (
+        {(step === "recipients" || step === "internal_recipients" || step === "external_recipients") && (
           <>
           <div className="flex-1 flex min-h-[calc(100vh-73px)] bg-slate-50">
             {/* Left Sidebar: Categories */}
@@ -2613,7 +2634,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                         )}
                       </button>
                       <button
-                        onClick={() => setStep("recipients")}
+                        onClick={() => setStep(documentType === "internal" ? "internal_recipients" : "external_recipients")}
                         className="w-full py-4 rounded-2xl text-slate-400 font-bold text-sm hover:bg-slate-100 hover:text-slate-600 transition-all active:scale-95"
                       >
                         Back to Recipients
