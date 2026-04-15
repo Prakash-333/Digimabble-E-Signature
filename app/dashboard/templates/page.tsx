@@ -2227,12 +2227,12 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                       </div>
                     );
                   })}
-                  {/* Manual Entry Toggle */}
+                  {/* Direct Invite Toggle */}
                   <button
                     onClick={() => setActiveCategory("Manual")}
                     className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all duration-200 group ${activeCategory === "Manual" ? "bg-violet-100 text-violet-700 shadow-sm" : "text-slate-500 hover:bg-violet-50 hover:text-violet-600"}`}
                   >
-                    <span className={`text-sm font-bold ${activeCategory === "Manual" ? "text-violet-700" : "text-slate-600 group-hover:text-violet-600"}`}>Manual Entry</span>
+                    <span className={`text-sm font-bold ${activeCategory === "Manual" ? "text-violet-700" : "text-slate-600 group-hover:text-violet-600"}`}>Direct Invite</span>
                     <div className={`w-2 h-2 rounded-full ${activeCategory === "Manual" ? "bg-violet-500" : "bg-slate-300"}`} />
                   </button>
                 </div>
