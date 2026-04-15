@@ -368,7 +368,7 @@ export default function DashboardLayout({
               <Menu className="h-5 w-5" />
             </button>
             <h1 className="text-xl font-bold text-slate-900 ml-2">
-              {pathname.includes("/settings") ? "Settings" : (navItems.find(item => item.href === pathname || (item.href !== "/dashboard" && pathname.startsWith(item.href)))?.label || "Dashboard")}
+              {pathname.includes("/settings") ? "Settings" : pathname.includes("/notifications") ? "Notifications" : (navItems.find(item => item.href === pathname || (item.href !== "/dashboard" && pathname.startsWith(item.href)))?.label || "Dashboard")}
             </h1>
           </div>
 
