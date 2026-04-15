@@ -290,7 +290,7 @@ export default function DashboardPage() {
                 statusColor = "bg-green-100 text-green-700";
                 StatusIcon = CheckCircle2;
               } else if (doc.status === "reviewed" || doc.status === "approved") {
-                statusLabel = doc.status === "reviewed" ? "Reviewed" : "Approved";
+                statusLabel = "Approved";
                 statusColor = "bg-green-100 text-green-700";
                 StatusIcon = CheckCircle2;
               } else if (doc.status === "reviewing") {

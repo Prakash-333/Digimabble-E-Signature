@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bell, CheckCircle2, FileSignature, Eye, Loader2, MoreVertical, ChevronLeft, X, Trash2, Download, Edit3, Save, RotateCcw, MessageSquare, PenTool, ShieldCheck } from "lucide-react";
+import { Bell, CheckCircle2, FileSignature, Eye, Loader2, MoreVertical, ChevronLeft, X, Trash2, Download, Edit3, Save, RotateCcw, MessageSquare, PenTool, ShieldCheck, User, Calendar, Building2, Type as TypeIcon, Square, CheckSquare, Mail, Tag } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/browser";
 import { highlightHtmlEdits } from "../../lib/diff";
@@ -29,6 +29,34 @@ type NotificationItem = SharedDocumentRecord & {
   recipientName: string | null;
 };
 
+interface PlacedField {
+  id: string;
+  type: string;
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  scale?: number;
+  value?: string;
+}
+
+const DRAGGABLE_FIELDS = [
+  // Group 1
+  { type: "initial", label: "Initial", icon: <span className="font-bold text-[10px] text-slate-700 max-w-5 border-b border-slate-700">DS</span>, group: 1 },
+  { type: "stamp", label: "Stamp", icon: <Square className="h-4 w-4 text-slate-700" />, group: 1 },
+  { type: "date", label: "Date Signed", icon: <Calendar className="h-4 w-4 text-slate-700" />, group: 1 },
+  // Group 2
+  { type: "name", label: "Name", icon: <User className="h-4 w-4 text-slate-700" />, group: 2 },
+  { type: "first_name", label: "First Name", icon: <User className="h-4 w-4 text-slate-700" />, group: 2 },
+  { type: "last_name", label: "Last Name", icon: <User className="h-4 w-4 text-slate-700" />, group: 2 },
+  { type: "email", label: "Email Address", icon: <Mail className="h-4 w-4 text-slate-700" />, group: 2 },
+  { type: "company", label: "Company", icon: <Building2 className="h-4 w-4 text-slate-700" />, group: 2 },
+  { type: "title", label: "Title", icon: <Tag className="h-4 w-4 text-slate-700" />, group: 2 },
+  // Group 3
+  { type: "text", label: "Text", icon: <TypeIcon className="h-4 w-4 text-slate-700" />, group: 3 },
+  { type: "checkbox", label: "Checkbox", icon: <CheckSquare className="h-4 w-4 text-slate-700" />, group: 3 },
+] as const;
+
 const formatDateTime = (value: string) =>
   new Date(value).toLocaleString("en-US", {
     month: "short",
@@ -37,6 +65,12 @@ const formatDateTime = (value: string) =>
     hour: "2-digit",
     minute: "2-digit",
   });
+
+const formatStatus = (s: string | null) => {
+  if (!s) return "";
+  if (s.toLowerCase() === "reviewed") return "Approved";
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
 
 export default function NotificationsPage() {
   const router = useRouter();
@@ -57,75 +91,100 @@ export default function NotificationsPage() {
   const [initialContent, setInitialContent] = useState("");
   const [localEditedContent, setLocalEditedContent] = useState<string | null>(null);
 
-  // Signature state for signing requests
+  // Signing form state
   const [savedSignature, setSavedSignature] = useState<string | null>(null);
-  const [signaturePlaced, setSignaturePlaced] = useState(false);
-  const [signatureX, setSignatureX] = useState(50);
-  const [signatureY, setSignatureY] = useState(50);
-  const [signatureScale, setSignatureScale] = useState(1);
-  const [sigIsSelected, setSigIsSelected] = useState(false);
+  const [placedFields, setPlacedFields] = useState<PlacedField[]>([]);
+  const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
   const [showConfirmSend, setShowConfirmSend] = useState(false);
   const [signMessage, setSignMessage] = useState("");
   const [isSigning, setIsSigning] = useState(false);
 
   const previewStageRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ startClientX: number; startClientY: number; startSigX: number; startSigY: number } | null>(null);
-  const sigResizeRef = useRef<{ startClientX: number; startClientY: number; startScale: number } | null>(null);
-
-  const sigWidthBase = 180;
-  const sigHeightBase = 64;
-  const sigWidthPx = Math.round(sigWidthBase * signatureScale);
-  const sigHeightPx = Math.round(sigHeightBase * signatureScale);
+  const dragRef = useRef<{ id: string; startClientX: number; startClientY: number; startX: number; startY: number } | null>(null);
+  const resizeRef = useRef<{ id: string; startClientX: number; startClientY: number; startScale: number } | null>(null);
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
       if (dragRef.current) {
-        let maxX = Infinity;
-        let maxY = Infinity;
-        if (previewStageRef.current) {
-          const rect = previewStageRef.current.getBoundingClientRect();
-          maxX = rect.width - sigWidthPx;
-          maxY = rect.height - sigHeightPx;
-        }
-
-        const dx = e.clientX - dragRef.current.startClientX;
-        const dy = e.clientY - dragRef.current.startClientY;
-        setSignatureX(Math.min(Math.max(0, Math.round(dragRef.current.startSigX + dx)), Math.max(0, maxX)));
-        setSignatureY(Math.min(Math.max(0, Math.round(dragRef.current.startSigY + dy)), Math.max(0, maxY)));
+        const { id, startClientX, startClientY, startX, startY } = dragRef.current;
+        const dx = e.clientX - startClientX;
+        const dy = e.clientY - startClientY;
+        
+        setPlacedFields(prev => {
+          const field = prev.find(f => f.id === id);
+          if (!field) return prev;
+          let maxX = Infinity;
+          let maxY = Infinity;
+          if (previewStageRef.current) {
+            const rect = previewStageRef.current.getBoundingClientRect();
+            // Estimate size. Text blocks are flexible, stamp is explicit.
+            maxX = rect.width - (field.width || 120);
+            maxY = rect.height - (field.height || 40);
+          }
+          return prev.map(f => {
+            if (f.id === id) {
+              return {
+                ...f,
+                x: Math.min(Math.max(0, Math.round(startX + dx)), Math.max(0, maxX)),
+                y: Math.min(Math.max(0, Math.round(startY + dy)), Math.max(0, maxY))
+              };
+            }
+            return f;
+          });
+        });
       }
-      if (sigResizeRef.current) {
-        const dx = e.clientX - sigResizeRef.current.startClientX;
-        setSignatureScale(Math.min(2.5, Math.max(0.4, sigResizeRef.current.startScale + dx / 180)));
+      if (resizeRef.current) {
+        const { id, startClientX, startScale } = resizeRef.current;
+        const dx = e.clientX - startClientX;
+        const newScale = Math.min(2.5, Math.max(0.4, startScale + dx / 180));
+        
+        setPlacedFields(prev => prev.map(f => {
+          if (f.id === id) {
+             return {
+               ...f,
+               scale: newScale,
+               width: Math.round(180 * newScale),
+               height: Math.round(64 * newScale)
+             };
+          }
+          return f;
+        }));
       }
     };
-    const onUp = () => { dragRef.current = null; sigResizeRef.current = null; };
+    const onUp = () => { dragRef.current = null; resizeRef.current = null; };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
-  }, [sigWidthPx, sigHeightPx]);
+  }, []);
 
   const resetSigningState = () => {
-    // Don't clear savedSignature — it's the user's persistent saved signature
-    setSignaturePlaced(false);
-    setSignatureX(50);
-    setSignatureY(50);
-    setSignatureScale(1);
-    setSigIsSelected(false);
+    setPlacedFields([]);
+    setSelectedFieldId(null);
     setShowConfirmSend(false);
     setSignMessage("");
     setIsSigning(false);
   };
 
   const handleFinalSign = async (item: NotificationItem) => {
-    if (!savedSignature || !signaturePlaced) {
-      alert("Please place your signature on the document first.");
+    // If they were using "Sign on Document" but just placed fields
+    if (placedFields.length === 0) {
+      alert("Please place required signing fields on the document first.");
       return;
     }
     setIsSigning(true);
     try {
-      const sigHtml = `<div style="position:absolute;left:${signatureX}px;top:${signatureY}px;width:${sigWidthPx}px;height:${sigHeightPx}px;z-index:50;pointer-events:none;"><img src="${savedSignature}" alt="Signature" style="width:100%;height:100%;object-fit:contain;" /></div>`;
+      const fieldsHtml = placedFields.map(f => {
+        if (f.type === "stamp" && savedSignature) {
+          return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;width:${f.width || 180}px;height:${f.height || 64}px;z-index:50;pointer-events:none;"><img src="${savedSignature}" alt="Signature" style="width:100%;height:100%;object-fit:contain;" /></div>`;
+        }
+        if (f.type === "checkbox") {
+           return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;width:20px;height:20px;z-index:50;pointer-events:none;border:2px solid #000;display:flex;align-items:center;justify-content:center;background:#fff;font-weight:bold;font-size:16px;">✓</div>`;
+        }
+        return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;z-index:50;font-size:14px;color:#0f172a;white-space:pre-wrap;font-family:inherit;">${f.value || ""}</div>`;
+      }).join("");
+
       const baseHtml = item.content || "";
-      const finalContent = baseHtml + sigHtml;
+      const finalContent = baseHtml + fieldsHtml;
 
       if (currentUserId) {
         markNotificationSeen(currentUserId, item.virtualId);
@@ -384,6 +443,7 @@ export default function NotificationsPage() {
       setInitialContent(displayContent);
       setLocalEditedContent(null);
       setIsEditMode(false);
+      resetSigningState();
     } else if (displayFileUrl) {
       window.open(displayFileUrl, "_blank");
     }
@@ -474,7 +534,7 @@ export default function NotificationsPage() {
                             : "bg-amber-50 text-amber-700"
                         }`}
                       >
-                        {item.type === "outgoing_update" ? item.recipientStatus : completed ? (item.recipientStatus || item.status) : "Pending"}
+                        {item.type === "outgoing_update" ? formatStatus(item.recipientStatus) : completed ? formatStatus(item.recipientStatus || item.status) : "Pending"}
                       </span>
                     </div>
                     <h2 className="text-lg font-bold text-slate-900">{item.name}</h2>
@@ -491,7 +551,7 @@ export default function NotificationsPage() {
                       <p className="text-sm text-slate-600">
                         <span className="font-semibold text-slate-900">{item.recipientName || item.recipientEmail}</span>
                         {" "}
-                        has {item.recipientStatus} this document.
+                        has {formatStatus(item.recipientStatus).toLowerCase()} this document.
                       </p>
                     )}
                     
@@ -658,7 +718,7 @@ export default function NotificationsPage() {
           <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-white shrink-0 shadow-sm">
             <div className="flex items-center gap-4">
               <button
-                onClick={() => setViewingItem(null)}
+                onClick={() => { setViewingItem(null); resetSigningState(); }}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-all group"
               >
                 <ChevronLeft className="w-4 h-4 transition-transform group-hover:-translate-x-0.5" />
@@ -735,9 +795,9 @@ export default function NotificationsPage() {
                         onClick={async () => {
                           const contentDiv = document.querySelector('.editable-content');
                           const cleanHtml = isEditMode && contentDiv ? contentDiv.innerHTML : (localEditedContent || (contentDiv ? contentDiv.innerHTML : undefined));
-                          const finalHtml = cleanHtml ? highlightHtmlEdits(initialContent, cleanHtml) : undefined;
                           await handleUpdate(viewingItem, finalHtml);
                           setViewingItem(null);
+                          resetSigningState();
                         }}
                         disabled={processingId === viewingItem.virtualId}
                         className="flex items-center gap-2 rounded-xl bg-green-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-green-200 hover:bg-green-700 transition-all disabled:opacity-60"
@@ -752,29 +812,33 @@ export default function NotificationsPage() {
                         <span className="text-xs text-slate-500 italic">
                           No saved signature. Go to <strong>Create Sign</strong> first.
                         </span>
-                      ) : !signaturePlaced ? (
-                        <button
-                          onClick={() => { setSignaturePlaced(true); setSignatureX(80); setSignatureY(80); }}
-                          className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all"
-                        >
-                          <PenTool className="h-3.5 w-3.5" /> Sign on Document
-                        </button>
                       ) : (
                         <>
-                          <button
-                            onClick={() => setSignaturePlaced(false)}
-                            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-500 hover:bg-slate-50 transition-all shadow-sm"
-                            title="Remove placed signature"
-                          >
-                            <RotateCcw className="h-3.5 w-3.5" /> Remove
-                          </button>
-                          <button
-                            onClick={() => setShowConfirmSend(true)}
-                            disabled={isSigning}
-                            className="flex items-center gap-2 rounded-xl bg-green-600 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-green-200 hover:bg-green-700 transition-all disabled:opacity-50"
-                          >
-                            <ShieldCheck className="h-3.5 w-3.5" /> Send
-                          </button>
+                          {placedFields.length === 0 ? (
+                            <button
+                              onClick={() => setPlacedFields(prev => [...prev, { id: crypto.randomUUID(), type: "stamp", x: 80, y: 80, width: 180, height: 64, scale: 1 }])}
+                              className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all"
+                            >
+                              <PenTool className="h-3.5 w-3.5" /> Sign on Document
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => setPlacedFields([])}
+                                className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-500 hover:bg-slate-50 transition-all shadow-sm"
+                                title="Remove all placed fields"
+                              >
+                                <RotateCcw className="h-3.5 w-3.5" /> Clear All
+                              </button>
+                              <button
+                                onClick={() => setShowConfirmSend(true)}
+                                disabled={isSigning}
+                                className="flex items-center gap-2 rounded-xl bg-green-600 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-green-200 hover:bg-green-700 transition-all disabled:opacity-50"
+                              >
+                                <ShieldCheck className="h-3.5 w-3.5" /> Send
+                              </button>
+                            </>
+                          )}
                         </>
                       )}
                     </>
@@ -791,65 +855,266 @@ export default function NotificationsPage() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto bg-slate-100/50 p-8">
-            <div className="max-w-4xl mx-auto flex justify-center">
-              <div className="relative w-[800px]" ref={previewStageRef}>
-                <div
-                  className="relative editable-content w-full min-h-[1056px] bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200 p-12 md:p-16 lg:p-20 text-[15px] text-slate-800 leading-[1.9] tracking-tight outline-none"
-                  style={{ fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}
-                  onClick={() => setSigIsSelected(false)}
-                  contentEditable={isEditMode}
-                  suppressContentEditableWarning={true}
-                  dangerouslySetInnerHTML={{
-                    __html: (() => {
-                      const baseHtml = localEditedContent || viewingItem.content || "";
-                      const highlighted = (!isEditMode && localEditedContent)
-                        ? highlightHtmlEdits(initialContent, localEditedContent)
-                        : baseHtml;
-                      return highlighted
-                        .replace(/\n/g, "<br/>")
-                        .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">');
-                    })()
-                  }}
-                />
+          <div className="flex-1 flex overflow-hidden">
+            {viewingItem.type === "incoming_request" && !isReviewRequest(viewingItem, viewingItem.recipientRole) && !isCompletedForRecipient(viewingItem.recipientStatus || viewingItem.status) && (
+              <div className="w-64 border-r border-slate-200 bg-white p-6 overflow-y-auto shrink-0 flex flex-col gap-4 z-10 shadow-sm relative">
+                <div className="text-sm font-bold text-slate-800 tracking-wide uppercase">Add Fields</div>
+                <div className="text-xs text-slate-500 mb-2 leading-relaxed">Click or drag fields to place them on the document.</div>
                 
-                {/* Draggable Signature */}
-                {signaturePlaced && savedSignature && (
-                  <div
-                    className={`absolute rounded border-2 border-dashed group cursor-grab active:cursor-grabbing select-none transition-all ${sigIsSelected ? 'border-violet-500 bg-violet-50/30' : 'border-slate-400 hover:border-violet-400'}`}
-                    style={{ left: `${signatureX}px`, top: `${signatureY}px`, width: `${sigWidthPx}px`, height: `${sigHeightPx}px`, zIndex: 100 }}
-                    onClick={e => { e.stopPropagation(); setSigIsSelected(true); }}
-                    onPointerDown={e => {
-                      e.preventDefault(); e.stopPropagation();
-                      setSigIsSelected(true);
-                      dragRef.current = { startClientX: e.clientX, startClientY: e.clientY, startSigX: signatureX, startSigY: signatureY };
-                    }}
-                  >
-                    <img src={savedSignature} alt="Signature" className="w-full h-full object-contain pointer-events-none" />
-                    {/* Delete */}
-                    <button
-                      type="button"
-                      className="absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all"
-                      style={{ zIndex: 110 }}
-                      onClick={e => { e.stopPropagation(); setSignaturePlaced(false); }}
-                    >
-                      <X className="h-2.5 w-2.5" />
-                    </button>
-                    {/* Resize handle */}
-                    <div
-                      className="absolute -right-2 -bottom-2 w-5 h-5 cursor-nwse-resize bg-violet-600 rounded-full shadow-md hover:bg-violet-500 border-2 border-white flex items-center justify-center"
-                      style={{ zIndex: 110 }}
-                      onPointerDown={e => {
-                        e.stopPropagation(); e.preventDefault();
-                        sigResizeRef.current = { startClientX: e.clientX, startClientY: e.clientY, startScale: signatureScale };
-                      }}
-                    >
-                      <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M22 22L12 22L22 12Z" fill="currentColor" />
-                      </svg>
-                    </div>
+                <div className="flex flex-col gap-6">
+                  {/* Group 1 */}
+                  <div className="flex flex-col gap-1">
+                    {DRAGGABLE_FIELDS.filter(f => f.group === 1).map((f) => (
+                      <div
+                        key={f.type}
+                        draggable
+                        onDragStart={(e) => e.dataTransfer.setData("fieldType", f.type)}
+                        onClick={() => {
+                          const isTextBased = !["stamp", "checkbox", "initial"].includes(f.type);
+                          const defaultVal = f.type === "date" ? new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "";
+                          let val = defaultVal;
+                          if (isTextBased) {
+                            const input = window.prompt(`Enter ${f.label}:`, defaultVal);
+                            if (input === null) return;
+                            val = input;
+                          }
+                          setPlacedFields(prev => [...prev, { id: crypto.randomUUID(), type: f.type, x: 50, y: Math.max(50, previewStageRef.current ? previewStageRef.current.parentElement!.parentElement!.scrollTop + 50 : 50), width: f.type === "stamp" ? 180 : undefined, height: f.type === "stamp" ? 64 : undefined, scale: 1, value: val }]);
+                        }}
+                        className="flex items-center gap-3 rounded-xl border border-transparent hover:border-slate-200 bg-white p-2 hover:bg-slate-50 transition-colors cursor-grab active:cursor-grabbing select-none"
+                      >
+                        {f.icon}
+                        <span className="text-sm font-medium text-slate-700">{f.label}</span>
+                      </div>
+                    ))}
                   </div>
-                )}
+                  
+                  <div className="h-px bg-slate-200" />
+                  
+                  {/* Group 2 */}
+                  <div className="flex flex-col gap-1">
+                    {DRAGGABLE_FIELDS.filter(f => f.group === 2).map((f) => (
+                      <div
+                        key={f.type}
+                        draggable
+                        onDragStart={(e) => e.dataTransfer.setData("fieldType", f.type)}
+                        onClick={() => {
+                          const isTextBased = !["stamp", "checkbox", "initial"].includes(f.type);
+                          const defaultVal = f.type === "date" ? new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "";
+                          let val = defaultVal;
+                          if (isTextBased) {
+                            const input = window.prompt(`Enter ${f.label}:`, defaultVal);
+                            if (input === null) return;
+                            val = input;
+                          }
+                          setPlacedFields(prev => [...prev, { id: crypto.randomUUID(), type: f.type, x: 50, y: Math.max(50, previewStageRef.current ? previewStageRef.current.parentElement!.parentElement!.scrollTop + 50 : 50), width: undefined, height: undefined, scale: 1, value: val }]);
+                        }}
+                        className="flex items-center gap-3 rounded-xl border border-transparent hover:border-slate-200 bg-white p-2 hover:bg-slate-50 transition-colors cursor-grab active:cursor-grabbing select-none"
+                      >
+                        {f.icon}
+                        <span className="text-sm font-medium text-slate-700">{f.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  <div className="h-px bg-slate-200" />
+                  
+                  {/* Group 3 */}
+                  <div className="flex flex-col gap-1">
+                    {DRAGGABLE_FIELDS.filter(f => f.group === 3).map((f) => (
+                      <div
+                        key={f.type}
+                        draggable
+                        onDragStart={(e) => e.dataTransfer.setData("fieldType", f.type)}
+                        onClick={() => {
+                          const isTextBased = !["stamp", "checkbox", "initial"].includes(f.type);
+                          const defaultVal = f.type === "date" ? new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "";
+                          let val = defaultVal;
+                          if (isTextBased) {
+                            const input = window.prompt(`Enter ${f.label}:`, defaultVal);
+                            if (input === null) return;
+                            val = input;
+                          }
+                          setPlacedFields(prev => [...prev, { id: crypto.randomUUID(), type: f.type, x: 50, y: Math.max(50, previewStageRef.current ? previewStageRef.current.parentElement!.parentElement!.scrollTop + 50 : 50), width: undefined, height: undefined, scale: 1, value: val }]);
+                        }}
+                        className="flex items-center gap-3 rounded-xl border border-transparent hover:border-slate-200 bg-white p-2 hover:bg-slate-50 transition-colors cursor-grab active:cursor-grabbing select-none"
+                      >
+                        {f.icon}
+                        <span className="text-sm font-medium text-slate-700">{f.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            <div 
+              className="flex-1 overflow-y-auto bg-slate-100/50 p-8"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const type = e.dataTransfer.getData("fieldType");
+                if (!type) return;
+                if (!previewStageRef.current) return;
+                const rect = previewStageRef.current.getBoundingClientRect();
+                const scrollY = previewStageRef.current.parentElement!.parentElement!.scrollTop;
+                const scrollX = previewStageRef.current.parentElement!.parentElement!.scrollLeft;
+                const x = Math.max(0, e.clientX - rect.left);
+                const y = Math.max(0, e.clientY - rect.top);
+                
+                const isTextBased = !["stamp", "checkbox", "initial"].includes(type);
+                const draggedDef = DRAGGABLE_FIELDS.find(f => f.type === type);
+                const defaultVal = type === "date" ? new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "";
+                let val = defaultVal;
+                          
+                if (isTextBased) {
+                  const input = window.prompt(`Enter ${draggedDef?.label || "Value"}:`, defaultVal);
+                  if (input === null) return;
+                  val = input;
+                }
+                          
+                setPlacedFields(prev => [...prev, { id: crypto.randomUUID(), type, x, y, width: type === "stamp" ? 180 : undefined, height: type === "stamp" ? 64 : undefined, scale: 1, value: val }]);
+              }}
+            >
+              <div className="max-w-4xl mx-auto flex justify-center">
+                <div className="relative w-[800px]" ref={previewStageRef}>
+                  <div
+                    className="relative editable-content w-full min-h-[1056px] bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200 p-12 md:p-16 lg:p-20 text-[15px] text-slate-800 leading-[1.9] tracking-tight outline-none"
+                    style={{ fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}
+                    onClick={() => setSelectedFieldId(null)}
+                    contentEditable={isEditMode}
+                    suppressContentEditableWarning={true}
+                    dangerouslySetInnerHTML={{
+                      __html: (() => {
+                        const baseHtml = localEditedContent || viewingItem.content || "";
+                        const highlighted = (!isEditMode && localEditedContent)
+                          ? highlightHtmlEdits(initialContent, localEditedContent)
+                          : baseHtml;
+                        return highlighted
+                          .replace(/\n/g, "<br/>")
+                          .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">');
+                      })()
+                    }}
+                  />
+                  
+                  {/* Draggable Placed Fields */}
+                  {placedFields.map(field => {
+                    const isSelected = selectedFieldId === field.id;
+                    const w = field.width || 120;
+                    const h = field.height || 40;
+
+                    if (field.type === "stamp") {
+                      return (
+                        <div
+                          key={field.id}
+                          className={`absolute rounded border-2 border-dashed group cursor-grab active:cursor-grabbing select-none transition-all ${isSelected ? 'border-violet-500 bg-violet-50/30' : 'border-slate-400 hover:border-violet-400'}`}
+                          style={{ left: `${field.x}px`, top: `${field.y}px`, width: `${w}px`, height: `${h}px`, zIndex: 100 }}
+                          onClick={e => { e.stopPropagation(); setSelectedFieldId(field.id); }}
+                          onPointerDown={e => {
+                            e.preventDefault(); e.stopPropagation();
+                            setSelectedFieldId(field.id);
+                            dragRef.current = { id: field.id, startClientX: e.clientX, startClientY: e.clientY, startX: field.x, startY: field.y };
+                          }}
+                        >
+                          {savedSignature ? (
+                            <img src={savedSignature} alt="Signature" className="w-full h-full object-contain pointer-events-none" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs text-center p-2">
+                              No Signature Saved
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            className="absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all"
+                            style={{ zIndex: 110 }}
+                            onClick={e => { e.stopPropagation(); setPlacedFields(prev => prev.filter(p => p.id !== field.id)); }}
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                          <div
+                            className="absolute -right-2 -bottom-2 w-5 h-5 cursor-nwse-resize bg-violet-600 rounded-full shadow-md hover:bg-violet-500 border-2 border-white flex items-center justify-center"
+                            style={{ zIndex: 110 }}
+                            onPointerDown={e => {
+                              e.stopPropagation(); e.preventDefault();
+                              resizeRef.current = { id: field.id, startClientX: e.clientX, startClientY: e.clientY, startScale: field.scale || 1 };
+                            }}
+                          >
+                            <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M22 22L12 22L22 12Z" fill="currentColor" />
+                            </svg>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    if (field.type === "checkbox") {
+                      return (
+                        <div
+                          key={field.id}
+                          className={`absolute rounded border-2 border-dashed group cursor-grab active:cursor-grabbing transition-all w-6 h-6 flex items-center justify-center ${isSelected ? 'border-violet-500 bg-violet-50/10' : 'border-slate-300 hover:border-violet-400 bg-white'}`}
+                          style={{ left: `${field.x}px`, top: `${field.y}px`, zIndex: 100 }}
+                          onClick={e => {
+                            e.stopPropagation();
+                            setSelectedFieldId(field.id);
+                          }}
+                          onPointerDown={e => {
+                            e.stopPropagation();
+                            setSelectedFieldId(field.id);
+                            dragRef.current = { id: field.id, startClientX: e.clientX, startClientY: e.clientY, startX: field.x, startY: field.y };
+                          }}
+                        >
+                          <span className="font-bold text-lg leading-none cursor-default">
+                             ✓
+                          </span>
+                          <button
+                            type="button"
+                            className="absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all z-10"
+                            onClick={e => { e.stopPropagation(); setPlacedFields(prev => prev.filter(p => p.id !== field.id)); }}
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      );
+                    }
+
+                    const draggedDef = DRAGGABLE_FIELDS.find(f => f.type === field.type);
+                    
+                    // Text-based fields
+                    return (
+                      <div
+                        key={field.id}
+                        className={`absolute rounded border-2 border-dashed group cursor-grab active:cursor-grabbing transition-all min-w-[120px] max-w-[400px] whitespace-pre-wrap ${isSelected ? 'border-violet-500 bg-violet-50/10' : 'border-slate-300 hover:border-violet-400 bg-white/50'}`}
+                        style={{ left: `${field.x}px`, top: `${field.y}px`, zIndex: 100 }}
+                        onClick={e => { 
+                          e.stopPropagation(); 
+                          setSelectedFieldId(field.id);
+                          if (!["initial"].includes(field.type)) {
+                            const defaultVal = field.type === "date" ? new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "";
+                            const val = window.prompt(`Enter ${draggedDef?.label || "Value"}:`, field.value || defaultVal);
+                            if (val !== null) {
+                              setPlacedFields(prev => prev.map(p => p.id === field.id ? { ...p, value: val } : p));
+                            }
+                          }
+                        }}
+                        onPointerDown={e => {
+                          e.stopPropagation();
+                          setSelectedFieldId(field.id);
+                          dragRef.current = { id: field.id, startClientX: e.clientX, startClientY: e.clientY, startX: field.x, startY: field.y };
+                        }}
+                      >
+                        <div className="w-full text-slate-800 font-medium px-2 py-1.5 cursor-pointer">
+                          {field.value ? field.value : <span className="text-slate-400 font-normal italic">[{draggedDef?.label || "Empty"}]</span>}
+                        </div>
+                        <button
+                          type="button"
+                          className="absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all z-10"
+                          onClick={e => { e.stopPropagation(); setPlacedFields(prev => prev.filter(p => p.id !== field.id)); }}
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
@@ -922,6 +1187,7 @@ export default function NotificationsPage() {
                   setRequireChangesItem(null);
                   setRequireChangesMessage("");
                   setViewingItem(null);
+                  resetSigningState();
                 }}
                 disabled={processingId === requireChangesItem.virtualId}
                 className="flex-[2] py-2.5 rounded-2xl bg-amber-500 text-white font-bold text-sm hover:bg-amber-600 transition-all disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"

@@ -430,8 +430,8 @@ export default function DocumentsPage() {
         }
         if (completedCount === totalCount) {
           const label = category === "Reviewer" 
-            ? "Reviewed" 
-            : (totalCount === 1 && recipients[0]?.status === "reviewed" ? "Reviewed" : "Signed");
+            ? "Approved" 
+            : (totalCount === 1 && recipients[0]?.status === "reviewed" ? "Approved" : "Signed");
           return (
             <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
               <CheckCircle2 className="mr-1 h-3 w-3" />
@@ -473,7 +473,7 @@ export default function DocumentsPage() {
         return (
           <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
             <CheckCircle2 className="mr-1 h-3 w-3" />
-            Reviewed
+            Approved
           </span>
         );
       }
@@ -492,7 +492,7 @@ export default function DocumentsPage() {
       return (
         <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
           <CheckCircle2 className="mr-1 h-3 w-3" />
-          Reviewed
+          Approved
         </span>
       );
     }
@@ -1305,7 +1305,7 @@ function DocumentDetailModal({
     const role = r.role?.toLowerCase();
     if (s === "rejected") return "Changes Required";
     if (s === "signed") return "Signed";
-    if (s === "reviewed") return "Reviewed";
+    if (s === "reviewed") return "Approved";
     if (s === "approved") return "Approved";
     return "Pending";
   };
@@ -1335,7 +1335,7 @@ function DocumentDetailModal({
       const s = myRecipient?.status;
       if (s === "rejected") return "Changes Required";
       if (s === "signed") return "Signed";
-      if (s === "reviewed") return "Reviewed";
+      if (s === "reviewed") return "Approved";
       if (s === "approved") return "Approved";
       return "Pending";
     }
@@ -1354,7 +1354,7 @@ function DocumentDetailModal({
       if (rejectedCount > 0) return `${rejectedCount} Changes Required`;
       if (completedCount === totalCount) {
         return totalCount === 1 
-          ? (currentDoc.recipients[0]?.status === "reviewed" ? "Reviewed" : "Signed")
+          ? (currentDoc.recipients[0]?.status === "reviewed" ? "Approved" : "Signed")
           : "Finished";
       }
       return "Pending";
@@ -1362,7 +1362,7 @@ function DocumentDetailModal({
 
     // Check document-level status for documents with no recipients
     if (currentDoc.status === "rejected") return "Changes Required";
-    if (currentDoc.status === "reviewed") return "Reviewed";
+    if (currentDoc.status === "reviewed") return "Approved";
     if (currentDoc.status === "approved") return "Approved";
     if (currentDoc.status === "signed" || currentDoc.status === "completed") return "Signed";
     if (currentDoc.status === "reviewing") return "Under Review";
