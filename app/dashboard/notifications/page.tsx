@@ -108,6 +108,14 @@ const getFieldSize = (field: Pick<PlacedField, "type" | "width" | "height">) => 
   };
 };
 
+const getFieldFontSize = (field: Pick<PlacedField, "type" | "height">) => {
+  if (field.type === "checkbox") return 16;
+  if (field.type === "stamp") return 14;
+  const baseHeight = DEFAULT_FIELD_SIZE[field.type]?.height || 40;
+  const nextHeight = field.height ?? baseHeight;
+  return Math.max(14, Math.min(28, Math.round(nextHeight * 0.42)));
+};
+
 const clampFieldPosition = (field: PlacedField, x: number, y: number, stage: HTMLDivElement | null) => {
   if (!stage) {
     return {
@@ -157,9 +165,37 @@ export default function NotificationsPage() {
   const resizeRef = useRef<{ id: string; startClientX: number; startClientY: number; startWidth: number; startHeight: number } | null>(null);
   const movedFieldRef = useRef<string | null>(null);
   const skipFieldClickRef = useRef<string | null>(null);
+  const textPressRef = useRef<{
+    id: string;
+    startClientX: number;
+    startClientY: number;
+    startX: number;
+    startY: number;
+    timer: number | null;
+  } | null>(null);
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
+      if (!dragRef.current && textPressRef.current) {
+        const pending = textPressRef.current;
+        const dx = e.clientX - pending.startClientX;
+        const dy = e.clientY - pending.startClientY;
+
+        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+          if (pending.timer) {
+            window.clearTimeout(pending.timer);
+          }
+          dragRef.current = {
+            id: pending.id,
+            startClientX: pending.startClientX,
+            startClientY: pending.startClientY,
+            startX: pending.startX,
+            startY: pending.startY,
+          };
+          textPressRef.current = null;
+        }
+      }
+
       if (dragRef.current) {
         const { id, startClientX, startClientY, startX, startY } = dragRef.current;
         const dx = e.clientX - startClientX;
@@ -219,6 +255,10 @@ export default function NotificationsPage() {
       }
     };
     const onUp = () => {
+      if (textPressRef.current?.timer) {
+        window.clearTimeout(textPressRef.current.timer);
+      }
+      textPressRef.current = null;
       if (movedFieldRef.current) {
         skipFieldClickRef.current = movedFieldRef.current;
       }
@@ -228,7 +268,13 @@ export default function NotificationsPage() {
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
-    return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
+    return () => {
+      if (textPressRef.current?.timer) {
+        window.clearTimeout(textPressRef.current.timer);
+      }
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
   }, []);
 
   const addPlacedField = (type: string, value?: string, position?: { x: number; y: number }) => {
@@ -279,13 +325,14 @@ export default function NotificationsPage() {
     try {
       const fieldsHtml = placedFields.map(f => {
         const { width, height } = getFieldSize(f);
+        const fontSize = getFieldFontSize(f);
         if (f.type === "stamp" && savedSignature) {
           return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;width:${width}px;height:${height}px;z-index:50;pointer-events:none;"><img src="${savedSignature}" alt="Signature" style="width:100%;height:100%;object-fit:contain;" /></div>`;
         }
         if (f.type === "checkbox") {
            return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;width:${width}px;height:${height}px;z-index:50;pointer-events:none;display:flex;align-items:center;justify-content:center;background:transparent;font-weight:bold;font-size:${Math.max(14, Math.round(height * 0.8))}px;">✓</div>`;
         }
-        return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;width:${width}px;min-height:${height}px;z-index:50;pointer-events:none;display:flex;align-items:center;font-size:14px;color:#0f172a;white-space:pre-wrap;font-family:inherit;overflow-wrap:anywhere;">${f.value || ""}</div>`;
+        return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;width:${width}px;min-height:${height}px;z-index:50;pointer-events:none;display:flex;align-items:center;font-size:${fontSize}px;line-height:1.2;color:#0f172a;white-space:pre-wrap;font-family:inherit;overflow-wrap:anywhere;">${f.value || ""}</div>`;
       }).join("");
 
       const baseHtml = item.content || "";
@@ -899,8 +946,8 @@ export default function NotificationsPage() {
                       <button
                         onClick={async () => {
                           const contentDiv = document.querySelector('.editable-content');
-                          const cleanHtml = isEditMode && contentDiv ? contentDiv.innerHTML : (localEditedContent || (contentDiv ? contentDiv.innerHTML : undefined));
-                          await handleUpdate(viewingItem, finalHtml);
+                          const finalHtml = isEditMode && contentDiv ? (contentDiv as HTMLElement).innerHTML : (localEditedContent || (contentDiv ? (contentDiv as HTMLElement).innerHTML : undefined));
+                          await handleUpdate(viewingItem, finalHtml || undefined);
                           setViewingItem(null);
                           resetSigningState();
                         }}
@@ -1067,6 +1114,7 @@ export default function NotificationsPage() {
                   {placedFields.map(field => {
                     const isSelected = selectedFieldId === field.id;
                     const { width: w, height: h } = getFieldSize(field);
+                    const fontSize = getFieldFontSize(field);
 
                     if (field.type === "stamp") {
                       return (
@@ -1140,7 +1188,7 @@ export default function NotificationsPage() {
                             dragRef.current = { id: field.id, startClientX: e.clientX, startClientY: e.clientY, startX: field.x, startY: field.y };
                           }}
                         >
-                          <span className="font-bold text-lg leading-none cursor-default">
+                          <span className="font-bold leading-none cursor-default" style={{ fontSize: `${Math.max(14, Math.round(h * 0.8))}px` }}>
                              ✓
                           </span>
                           <button
@@ -1187,18 +1235,40 @@ export default function NotificationsPage() {
                           e.preventDefault();
                           e.stopPropagation();
                           setSelectedFieldId(field.id);
-                          dragRef.current = { id: field.id, startClientX: e.clientX, startClientY: e.clientY, startX: field.x, startY: field.y };
-                        }}
-                        onDoubleClick={e => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          skipFieldClickRef.current = null;
-                          setSelectedFieldId(field.id);
-                          promptFieldValue(field, draggedDef?.label || "Value");
+                          const startClientX = e.clientX;
+                          const startClientY = e.clientY;
+                          const timer = window.setTimeout(() => {
+                            dragRef.current = {
+                              id: field.id,
+                              startClientX,
+                              startClientY,
+                              startX: field.x,
+                              startY: field.y,
+                            };
+                            textPressRef.current = null;
+                          }, 180);
+                          textPressRef.current = {
+                            id: field.id,
+                            startClientX,
+                            startClientY,
+                            startX: field.x,
+                            startY: field.y,
+                            timer,
+                          };
                         }}
                       >
                         <div
                           className="flex h-full w-full items-center text-slate-800 font-medium px-2 py-1.5 cursor-grab active:cursor-grabbing"
+                          style={{ fontSize: `${fontSize}px`, lineHeight: 1.2 }}
+                          onClick={e => {
+                            e.stopPropagation();
+                            if (skipFieldClickRef.current === field.id) {
+                              skipFieldClickRef.current = null;
+                              return;
+                            }
+                            setSelectedFieldId(field.id);
+                            promptFieldValue(field, draggedDef?.label || "Value");
+                          }}
                         >
                           {field.value ? field.value : <span className="text-slate-400 font-normal italic">[{draggedDef?.label || "Empty"}]</span>}
                         </div>

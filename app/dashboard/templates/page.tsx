@@ -1029,6 +1029,9 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   const [typedSignature, setTypedSignature] = useState("");
   const [uploadedSignature, setUploadedSignature] = useState<string | null>(null);
   const [isSavingSignature, setIsSavingSignature] = useState(false);
+  const [isSent, setIsSent] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [isPersisting, setIsPersisting] = useState(false);
   
   const [isEditMode, setIsEditMode] = useState(false);
   const [editedTemplateContent, setEditedTemplateContent] = useState<string | null>(null);
@@ -1040,6 +1043,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   };
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
   const isDrawingRef = useRef(false);
 
   // Drawing Handlers
@@ -1244,6 +1248,10 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   const [savedSignature, setSavedSignature] = useState<string | null>(null);
   const [showSendChoice, setShowSendChoice] = useState(false);
   const [sendActionType, setSendActionType] = useState<"review" | "sign" | null>(null);
+  const [manualSignaturePos, setManualSignaturePos] = useState<{ x: number; y: number } | null>(null);
+  const [manualSignatureScale, setManualSignatureScale] = useState(1);
+  const [isPlacingSignature, setIsPlacingSignature] = useState(false);
+  const [isDraggingSignature, setIsDraggingSignature] = useState(false);
 
   // Dynamic state selectors
   const selectedRecipients = documentType === "internal" ? internalSelectedRecipients : externalSelectedRecipients;
@@ -1528,6 +1536,9 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
     }
 
     const finalRecipients = [...selectedRecipients];
+    const actionType = actionOverride || sendActionType;
+    const isReviewMode = actionType === "review";
+
     if (manualEmail.trim()) {
       const normalizedManual = normalizeEmail(manualEmail);
       const alreadyExists = finalRecipients.some(r => normalizeEmail(r.email) === normalizedManual);
@@ -1535,13 +1546,12 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
         finalRecipients.push({ 
           name: "External Contact", 
           email: manualEmail.trim(), 
-          role: ((actionOverride || sendActionType) === "review" || activeCategory === "Reviewer") ? "reviewer" : "signer",
+          role: isReviewMode ? "reviewer" : "signer",
           company: "External"
         });
       }
     }
-
-    const isReviewMode = (actionOverride || sendActionType) === "review" || activeCategory === "Reviewer";
+    const docCategory = isReviewMode ? "Reviewer" : (activeCategory === "Reviewer" ? null : activeCategory);
 
     const newDoc = {
       id: `tmp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -1549,7 +1559,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
       subject: isReviewMode ? `Please review: ${template.name}` : `Please sign: ${template.name}`,
       recipients: finalRecipients.map((r) => ({ 
         ...r, 
-        role: isReviewMode ? "reviewer" : (r.role || "signer"), 
+        role: isReviewMode ? "reviewer" : "signer",
         status: "pending" 
       })),
       sender: { 
@@ -1561,7 +1571,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
       status: isReviewMode ? "reviewing" : (fileUrl ? "waiting" : "pending"),
       fileUrl: fileUrl, // Store the cloud URL
       fileKey: fileKey, // Store the unique key for deletion
-      category: isReviewMode ? "Reviewer" : activeCategory, // Store the category for reviewer tracking
+      category: docCategory, // Store the category for reviewer tracking
       content: editedTemplateContent ? highlightHtmlEdits(filledHtmlContent, editedTemplateContent) : filledHtmlContent, 
       manualSignaturePos: manualSignaturePos, // Pass manual placement coordinates
       manualSignatureScale: manualSignatureScale, // Pass manual scale
@@ -2452,10 +2462,10 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                 </div>
                 <div className="max-w-md space-y-4">
                   <h3 className="text-3xl font-black text-slate-900 tracking-tight leading-tight">
-                    {(activeCategory === "Reviewer" || sendActionType === "review") ? "Sent for Review!" : "Document Sent Successfully!"}
+                    {(sendActionType === "review") ? "Sent for Review!" : "Document Sent Successfully!"}
                   </h3>
                   <p className="text-slate-500 font-medium leading-relaxed">
-                    {(activeCategory === "Reviewer" || sendActionType === "review")
+                    {(sendActionType === "review")
                       ? "Your document has been sent for review. You can track its progress in the Documents page." 
                       : "Everything looks great! Your document is on its way to the recipients for signing."}
                   </p>

@@ -1155,30 +1155,32 @@ export default function DocumentsPage() {
 
           {/* Document Content */}
           <div className="flex-1 overflow-y-auto bg-slate-100/50 py-8 px-4 flex">
-            <div className="w-[800px] min-h-[1056px] mx-auto bg-white rounded-lg shadow-xl shadow-slate-200/50 border border-slate-200 p-12 md:p-16 shrink-0 relative">
-              <div
-                contentEditable={isEditMode}
-                suppressContentEditableWarning
-                className={`editable-content document-content text-[15px] text-slate-800 leading-[1.9] tracking-tight outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10 rounded-xl' : ''}`}
-                style={{
-                  fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                }}
-                dangerouslySetInnerHTML={{
-                  __html: (() => {
-                    const baseHtml = editedContent || viewingDoc.content || "";
-                    if (isEditMode) return baseHtml.replace(/\n/g, "<br/>");
-                    
-                    // Apply highlighting ONLY if local edits exist to avoid false positives
-                    const highlighted = editedContent 
-                      ? highlightHtmlEdits(initialContent || viewingDoc.content || "", editedContent)
-                      : baseHtml;
+            <div className="w-[800px] min-h-[1056px] mx-auto shrink-0 relative">
+              <div className="relative w-full min-h-[1056px] bg-white rounded-lg shadow-xl shadow-slate-200/50 border border-slate-200">
+                <div
+                  contentEditable={isEditMode}
+                  suppressContentEditableWarning
+                  className={`editable-content document-content min-h-[1056px] p-12 md:p-16 text-[15px] text-slate-800 leading-[1.9] tracking-tight outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10 rounded-xl' : ''}`}
+                  style={{
+                    fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                  }}
+                  dangerouslySetInnerHTML={{
+                    __html: (() => {
+                      const baseHtml = editedContent || viewingDoc.content || "";
+                      if (isEditMode) return baseHtml.replace(/\n/g, "<br/>");
+                      
+                      // Apply highlighting ONLY if local edits exist to avoid false positives
+                      const highlighted = editedContent 
+                        ? highlightHtmlEdits(initialContent || viewingDoc.content || "", editedContent)
+                        : baseHtml;
 
-                    return highlighted
-                      .replace(/\n/g, "<br/>")
-                      .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">');
-                  })()
-                }}
-              />
+                      return highlighted
+                        .replace(/\n/g, "<br/>")
+                        .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">');
+                    })()
+                  }}
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -1813,27 +1815,29 @@ function DocumentDetailModal({
 
                 if (displayContent) {
                   return (
-                    <div className="w-[800px] min-h-[1056px] mx-auto bg-white rounded-xl border border-slate-200 shadow-sm p-12 md:p-16 relative origin-top max-w-full">
-                      <div
-                        contentEditable={isEditMode}
-                        suppressContentEditableWarning
-                        className={`modal-document-content document-content text-[14px] text-slate-800 leading-[1.8] tracking-tight outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10 rounded-xl' : ''}`}
-                        style={{
-                          fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                        }}
-                        dangerouslySetInnerHTML={{
-                          __html: (() => {
-                            const baseHtml = editedContent || displayContent || "";
-                            if (isEditMode) return baseHtml.replace(/\n/g, "<br/>");
-                            
-                            // Apply highlighting instantly when stopping edit
-                            const highlighted = highlightHtmlEdits(initialContent || displayContent || "", baseHtml);
-                            return highlighted
-                              .replace(/\n/g, "<br/>")
-                              .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">');
-                          })()
-                        }}
-                      />
+                    <div className="w-[800px] min-h-[1056px] mx-auto relative origin-top max-w-full">
+                      <div className="relative w-full min-h-[1056px] bg-white rounded-xl border border-slate-200 shadow-sm">
+                        <div
+                          contentEditable={isEditMode}
+                          suppressContentEditableWarning
+                          className={`modal-document-content document-content min-h-[1056px] p-12 md:p-16 text-[14px] text-slate-800 leading-[1.8] tracking-tight outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10 rounded-xl' : ''}`}
+                          style={{
+                            fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                          }}
+                          dangerouslySetInnerHTML={{
+                            __html: (() => {
+                              const baseHtml = editedContent || displayContent || "";
+                              if (isEditMode) return baseHtml.replace(/\n/g, "<br/>");
+                              
+                              // Apply highlighting instantly when stopping edit
+                              const highlighted = highlightHtmlEdits(initialContent || displayContent || "", baseHtml);
+                              return highlighted
+                                .replace(/\n/g, "<br/>")
+                                .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">');
+                            })()
+                          }}
+                        />
+                      </div>
                     </div>
                   );
                 }
