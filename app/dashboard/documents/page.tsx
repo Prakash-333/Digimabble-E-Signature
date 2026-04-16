@@ -78,11 +78,16 @@ const mapRowToSentDocument = (row: DocumentRow, currentUserId: string, currentUs
   const isOwner = row.owner_id === currentUserId;
   const matchingRecipient = getMatchingRecipient(recipients, currentUserEmail);
 
-  // Hide external documents unless they are signed/completed
+  // External documents are hidden for recipients unless they are signed/completed.
+  // But the OWNER (sender) must always see their sent external documents.
   const isExternal = (row.sender as any)?.isExternal;
   const isCompleted = ["signed", "reviewed", "approved", "completed"].includes(row.status);
   
-  if ((isExternal && !isCompleted) || (!isOwner && !matchingRecipient)) {
+  if (!isOwner && isExternal && !isCompleted) {
+    return [];
+  }
+
+  if (!isOwner && !matchingRecipient) {
     return [];
   }
 
@@ -1594,7 +1599,7 @@ function DocumentDetailModal({
                             {getRecipientIcon(r)}
                             {getRecipientStatusLabel(r)}
                           </span>
-                          {r.status === "rejected" && (
+                          {(r.status === "rejected" || r.status === "changes_requested") && (
                             <p className="text-[10px] text-slate-500 pl-1">
                               <span className="font-semibold text-red-500">Msg: </span>
                               {r.reject_reason?.trim() || "No message"}
@@ -1638,7 +1643,7 @@ function DocumentDetailModal({
 
           {/* Reject Message Card */}
           {(() => {
-            const rejectRecipient = currentDoc.recipients.find(r => r.status === "rejected");
+            const rejectRecipient = currentDoc.recipients.find(r => ["rejected", "changes_requested"].includes(r.status || ""));
             if (!rejectRecipient) return null;
             return (
               <div className="rounded-2xl border border-red-200 bg-red-50 shadow-sm overflow-hidden">
@@ -1697,100 +1702,20 @@ function DocumentDetailModal({
                   <p className="text-sm font-bold text-slate-900">
                     {currentDoc.recipients.find(r => r.email === viewingRecipient)?.name || "Recipient"} — {currentDoc.name}
                   </p>
-                  <p className="text-[10px] text-slate-500">
+                  <p className="text-[10px] text-slate-500 font-medium tracking-wide">
                     {(() => {
                       const r = currentDoc.recipients.find(r => r.email === viewingRecipient);
                       if (!r) return "";
                       const s = (r as { status?: string }).status;
-                      if (s === "signed") return "✅ Signed";
-                      if (s === "reviewed") return "✅ Reviewed";
-                      return r.role?.toLowerCase() === "reviewer" ? "⏳ Yet to Review" : "⏳ Yet to Sign";
+                      if (s === "signed") return "Signed";
+                      if (s === "reviewed") return "Reviewed";
+                      return r.role?.toLowerCase() === "reviewer" ? "Yet to Review" : "Yet to Sign";
                     })()}
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                {(() => {
-                   const viewingR = currentDoc.recipients.find(r => r.email === viewingRecipient);
-                   const isReviewer = viewingR?.role?.toLowerCase() === "reviewer" || currentDoc.category?.toLowerCase() === "reviewer";
-                   const canEdit = !["signed", "reviewed", "approved", "completed"].includes(viewingR?.status || "");
-                   
-                   if (isReviewer && canEdit) {
-                     return (
-                        <button
-                          onClick={() => {
-                            if (isEditMode) {
-                               const contentDiv = document.querySelector('.modal-document-content');
-                               if (contentDiv) {
-                                 setEditedContent(contentDiv.innerHTML);
-                               }
-                            } else {
-                               if (!initialContent) {
-                                 const viewingR = currentDoc.recipients.find(r => r.email === viewingRecipient);
-                                 setInitialContent(viewingR?.signed_content || currentDoc.content || "");
-                               }
-                            }
-                            setIsEditMode(!isEditMode);
-                          }}
-                          className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-sm ${isEditMode ? 'bg-green-600 text-white shadow-green-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                        >
-                          {isEditMode ? <><Save className="h-3.5 w-3.5" /> Save Changes</> : <><Edit3 className="h-3.5 w-3.5" /> Edit Document</>}
-                        </button>
-                     );
-                   }
-                   return null;
-                })()}
-
-                {isEditMode && (
-                   <button
-                    onClick={async () => {
-                      const contentDiv = document.querySelector('.modal-document-content');
-                      const finalHtml = contentDiv ? contentDiv.innerHTML : (editedContent || initialContent);
-                      const highlighted = highlightHtmlEdits(initialContent, finalHtml);
-                      
-                      setIsPersisting(true);
-                      try {
-                        const { error } = await supabase
-                          .from("documents")
-                          .update({ content: highlighted, status: "reviewed", reviewed_at: new Date().toISOString() })
-                          .eq("id", currentDoc.id);
-                        
-                        if (error) throw error;
-                        
-                        // Update local state if shared across
-                        setViewingRecipient(null);
-                        setIsEditMode(false);
-                      } catch (err) {
-                        alert("Failed to save review: " + (err instanceof Error ? err.message : String(err)));
-                      } finally {
-                        setIsPersisting(false);
-                      }
-                    }}
-                    disabled={isPersisting}
-                    className="flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all disabled:opacity-50"
-                  >
-                    {isPersisting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><ShieldCheck className="h-3.5 w-3.5" /> Finalize Review</>}
-                  </button>
-                )}
-
-                {(() => {
-                  const viewingR = currentDoc.recipients.find(r => r.email === viewingRecipient);
-                  const openUrl = viewingR?.signed_file_url || currentDoc.fileUrl;
-                  if (!openUrl) return null;
-                  return (
-                    <a
-                      href={currentDoc.name?.toLowerCase().endsWith(".doc") || currentDoc.name?.toLowerCase().endsWith(".docx")
-                        ? `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(openUrl)}`
-                        : openUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200 px-3 py-1.5 text-[11px] font-semibold text-blue-600 hover:bg-blue-100 transition-colors"
-                    >
-                      <ArrowUpRight className="h-3 w-3" />
-                      Open
-                    </a>
-                  );
-                })()}
+                {/* Action buttons removed except Download */}
                 {(currentDoc.fileUrl || currentDoc.content) && (
                   <button
                     onClick={() => handleDownload(viewingRecipient || "")}
@@ -1835,8 +1760,14 @@ function DocumentDetailModal({
                               const baseHtml = editedContent || displayContent || "";
                               if (isEditMode) return baseHtml.replace(/\n/g, "<br/>");
                               
-                              // Apply highlighting instantly when stopping edit
-                              const highlighted = highlightHtmlEdits(initialContent || displayContent || "", baseHtml);
+                              // If we have an initialContent and a baseHtml, we might want to diff.
+                              // But if we're just viewing a document that was already reviewed,
+                              // baseHtml already contains the highlights.
+                              let highlighted = baseHtml;
+                              if (isEditMode || editedContent) {
+                                highlighted = highlightHtmlEdits(initialContent || displayContent || "", baseHtml);
+                              }
+                              
                               return highlighted
                                 .replace(/\n/g, "<br/>")
                                 .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">');

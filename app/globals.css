@@ -106,3 +106,10 @@ a {
   content: "";
   margin-top: 0.5em;
 }
+
+.document-content .highlight {
+  background-color: #fef08a !important; /* Tailwind yellow-200 */
+  display: inline;
+  padding: 0 2px;
+  border-radius: 4px;
+}

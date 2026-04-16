@@ -127,7 +127,7 @@ export function highlightHtmlEdits(originalHtml: string, newHtml: string): strin
         // Check if this specific token (word or single punctuation) exists in the original
         if (segment.trim() && !originalSet.has(segment.trim())) {
           const span = document.createElement('span');
-          span.className = 'bg-yellow-100/80 px-0.5 rounded shadow-sm border-b border-yellow-200 animate-in fade-in zoom-in-95 duration-500';
+          span.className = 'highlight bg-yellow-200 px-0.5 rounded shadow-sm border-b border-yellow-400 animate-in fade-in zoom-in-95 duration-500';
           span.textContent = segment;
           newFragment.appendChild(span);
         } else {

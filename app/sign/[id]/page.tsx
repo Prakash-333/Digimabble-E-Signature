@@ -143,6 +143,13 @@ export default function PublicSignPage() {
   const [initialContent, setInitialContent] = useState<string>("");
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Rejection / Require Changes State
+  const [rejectingItem, setRejectingItem] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [requireChangesItem, setRequireChangesItem] = useState(false);
+  const [requireChangesMessage, setRequireChangesMessage] = useState("");
+  const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
+
   // Derived State
   const isReviewMode = document?.category === "Reviewer" || document?.status === "reviewing";
 
@@ -405,6 +412,44 @@ export default function PublicSignPage() {
     }
   };
 
+  const handleReject = async () => {
+    setIsSubmitting(true);
+    try {
+      let finalContent = undefined;
+      if (isReviewMode && contentRef.current) {
+        const editedHtml = contentRef.current.innerHTML;
+        finalContent = editedHtml !== initialContent ? highlightHtmlEdits(initialContent, editedHtml) : editedHtml;
+      }
+      const { success, error: subError } = await submitGuestSignature(id, "", rejectReason, finalContent, "rejected");
+      if (!success) throw new Error(subError);
+      setIsSigned(true);
+    } catch (err: unknown) {
+      alert("Failed to reject: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsSubmitting(false);
+      setRejectingItem(false);
+    }
+  };
+
+  const handleRequireChanges = async () => {
+    setIsSubmitting(true);
+    try {
+      let finalContent = undefined;
+      if (isReviewMode && contentRef.current) {
+        const editedHtml = contentRef.current.innerHTML;
+        finalContent = editedHtml !== initialContent ? highlightHtmlEdits(initialContent, editedHtml) : editedHtml;
+      }
+      const { success, error: subError } = await submitGuestSignature(id, "", requireChangesMessage, finalContent, "changes_requested");
+      if (!success) throw new Error(subError);
+      setIsSigned(true);
+    } catch (err: unknown) {
+      alert("Failed to request changes: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsSubmitting(false);
+      setRequireChangesItem(false);
+    }
+  };
+
   const applyReviewHighlights = () => {
     if (!contentRef.current) return;
 
@@ -599,6 +644,63 @@ export default function PublicSignPage() {
             <p className="text-sm font-bold tracking-tight text-slate-900 uppercase">SMARTDOCS</p>
           </div>
         </div>
+        
+        {isAuthenticated && isReviewMode && (
+          <div className="hidden md:flex items-center gap-3">
+            <button
+              onClick={() => { setRejectingItem(true); setRejectReason(""); }}
+              disabled={isSubmitting}
+              className="flex items-center gap-2 rounded-xl border border-red-100 bg-red-50/50 px-4 py-2 text-xs font-bold text-red-600 hover:bg-red-50 transition-all shadow-sm disabled:opacity-60"
+            >
+              <X className="h-3.5 w-3.5" /> Reject
+            </button>
+
+            <button
+              onClick={() => { setRequireChangesItem(true); setRequireChangesMessage(""); }}
+              disabled={isSubmitting}
+              className="flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50/50 px-4 py-2 text-xs font-bold text-amber-600 hover:bg-amber-50 transition-all shadow-sm disabled:opacity-60"
+            >
+              <FileText className="h-3.5 w-3.5" /> Require Changes
+            </button>
+
+            <button
+              onClick={handleResetChanges}
+              disabled={isSubmitting}
+              className="flex items-center gap-2 rounded-xl border border-slate-100 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 transition-all shadow-sm disabled:opacity-60"
+              title="Reset all changes"
+            >
+              <RotateCcw className="h-3.5 w-3.5" /> Reset
+            </button>
+
+            <button
+              onClick={handleToggleEdit}
+              disabled={isSubmitting}
+              className={`flex items-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold transition-all shadow-sm disabled:opacity-60 ${isEditMode ? 'border-violet-200 bg-violet-50 text-violet-700' : 'border-slate-100 bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+            >
+              {isEditMode ? (
+                <><Save className="h-3.5 w-3.5" /> Stop Editing</>
+              ) : (
+                <><Edit3 className="h-3.5 w-3.5" /> Edit Document</>
+              )}
+            </button>
+
+            <button
+              onClick={() => setShowConfirmSubmit(true)}
+              disabled={isSubmitting}
+              className="flex items-center gap-2 rounded-xl bg-green-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-green-200 hover:bg-green-700 transition-all disabled:opacity-60"
+            >
+              {isSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Approve
+            </button>
+            
+            <button
+              onClick={() => router.push('/')}
+              className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-50 border border-slate-100 text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-all shrink-0"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        )}
+
         <div className="text-right">
           <p className="text-xs font-bold text-slate-900">{document?.name}</p>
           <div className="flex items-center justify-end gap-2 text-[10px] text-green-600 font-bold uppercase">
@@ -616,24 +718,7 @@ export default function PublicSignPage() {
                 ref={previewStageRef}
                 className="mx-auto max-w-[900px] bg-white shadow-sm p-8 md:p-16 min-h-full rounded-2xl border border-slate-100 relative"
               >
-                {isReviewMode && (
-                  <div className="absolute top-6 right-6 flex items-center gap-3 z-10">
-                    <button 
-                      onClick={handleResetChanges}
-                      className="flex items-center gap-2 rounded-xl bg-white border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-all shadow-sm"
-                      title="Reset all changes"
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      Reset
-                    </button>
-                    <button 
-                      onClick={handleToggleEdit}
-                      className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-sm ${isEditMode ? 'bg-green-600 text-white shadow-green-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                    >
-                      {isEditMode ? <><Save className="h-3.5 w-3.5" /> Stop Editing</> : <><Edit3 className="h-3.5 w-3.5" /> Edit Document</>}
-                    </button>
-                  </div>
-                )}
+
                 
                 {document?.content ? (
                   <div 
@@ -681,10 +766,10 @@ export default function PublicSignPage() {
           <div className="flex-shrink-0 border-t border-slate-100 bg-white/95 backdrop-blur-md p-4 md:p-6">
             <div className="mx-auto max-w-5xl flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="text-center sm:text-left">
-                <p className="text-base font-bold text-slate-900">{isReviewMode ? "Ready to submit your review?" : "Ready to complete?"}</p>
+                <p className="text-base font-bold text-slate-900">{isReviewMode ? "" : "Ready to complete?"}</p>
                 <p className="text-xs text-slate-500">
                   {isReviewMode 
-                    ? "You can edit the document content above before submitting."
+                    ? ""
                     : savedSignature 
                       ? "Drag and resize your signature on the document above."
                       : "Create your signature first, then place it on the document."}
@@ -692,14 +777,7 @@ export default function PublicSignPage() {
               </div>
               <div className="flex items-center gap-3">
                 {isReviewMode ? (
-                  <button 
-                    onClick={handleFinalSign}
-                    disabled={isSubmitting}
-                    className="flex items-center gap-3 rounded-2xl bg-violet-600 px-10 py-4 text-base font-bold text-white shadow-xl shadow-violet-200 transition-all hover:bg-violet-700 active:scale-95 disabled:opacity-50"
-                  >
-                    {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <ShieldCheck className="h-5 w-5" />}
-                    Submit Review
-                  </button>
+                  null
                 ) : (
                   <>
                     {!savedSignature ? (
@@ -733,7 +811,7 @@ export default function PublicSignPage() {
                           <RotateCw className="h-5 w-5" />
                         </button>
                         <button 
-                          onClick={handleFinalSign}
+                          onClick={() => setShowConfirmSubmit(true)}
                           disabled={isSubmitting || !signaturePlaced}
                           className="flex items-center gap-3 rounded-2xl bg-violet-600 px-10 py-4 text-base font-bold text-white shadow-xl shadow-violet-200 transition-all hover:bg-violet-700 active:scale-95 disabled:opacity-50"
                         >
@@ -806,6 +884,127 @@ export default function PublicSignPage() {
                    Save Signature
                 </button>
              </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rejection Reason Popup */}
+      {rejectingItem && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md mx-4 bg-white rounded-[2rem] shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-8 pt-8 pb-4 border-b border-slate-100">
+              <h3 className="text-lg font-bold text-slate-900">Reject Document</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                You are rejecting <span className="font-semibold text-slate-800">&ldquo;{document?.name}&rdquo;</span>.
+              </p>
+            </div>
+            <div className="px-8 py-6 space-y-4">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest block ml-1">
+                Reason for rejection
+              </label>
+              <textarea
+                className="w-full h-32 rounded-2xl bg-slate-50 border-none p-4 text-sm outline-none focus:ring-2 focus:ring-red-500 transition-all resize-none placeholder:text-slate-400"
+                placeholder="e.g. Terms are incorrect, missing information..."
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="px-8 pb-8 flex gap-3">
+              <button
+                onClick={() => { setRejectingItem(false); setRejectReason(""); }}
+                className="flex-1 py-3.5 rounded-2xl text-slate-600 font-bold text-sm border border-slate-100 hover:bg-slate-50 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReject}
+                disabled={isSubmitting}
+                className="flex-[2] py-3.5 rounded-2xl bg-red-600 text-white font-bold text-sm hover:bg-red-700 transition-all shadow-lg shadow-red-100 disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm Reject"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Require Changes Popup */}
+      {requireChangesItem && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md mx-4 bg-white rounded-[2rem] shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-8 pt-8 pb-4 border-b border-slate-100">
+              <h3 className="text-lg font-bold text-slate-900">Require Changes</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Request modifications for <span className="font-semibold text-slate-800">&ldquo;{document?.name}&rdquo;</span>.
+              </p>
+            </div>
+            <div className="px-8 py-6 space-y-4">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest block ml-1">
+                What needs to be changed?
+              </label>
+              <textarea
+                className="w-full h-32 rounded-2xl bg-slate-50 border-none p-4 text-sm outline-none focus:ring-2 focus:ring-amber-500 transition-all resize-none placeholder:text-slate-400"
+                placeholder="Describe the changes required..."
+                value={requireChangesMessage}
+                onChange={(e) => setRequireChangesMessage(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="px-8 pb-8 flex gap-3">
+              <button
+                onClick={() => { setRequireChangesItem(false); setRequireChangesMessage(""); }}
+                className="flex-1 py-3.5 rounded-2xl text-slate-600 font-bold text-sm border border-slate-100 hover:bg-slate-50 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRequireChanges}
+                disabled={isSubmitting}
+                className="flex-[2] py-3.5 rounded-2xl bg-amber-500 text-white font-bold text-sm hover:bg-amber-600 transition-all shadow-lg shadow-amber-100 disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Popup */}
+      {showConfirmSubmit && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-sm mx-4 bg-white rounded-[2rem] shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-8 pt-8 pb-4 border-b border-slate-100 text-center">
+              <div className="mx-auto w-12 h-12 rounded-full bg-violet-100 flex items-center justify-center text-violet-600 mb-4">
+                <CheckCircle2 className="h-6 w-6" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900">
+                {isReviewMode ? "Confirm Approval" : "Confirm Signature"}
+              </h3>
+              <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                {isReviewMode 
+                  ? "Are you sure you want to approve this document? This will finalize your review and notify the sender."
+                  : "Are you sure you want to submit your signature? This will finalize the document."}
+              </p>
+            </div>
+            <div className="px-8 py-6 flex gap-3">
+              <button
+                onClick={() => setShowConfirmSubmit(false)}
+                className="flex-1 py-3.5 rounded-2xl text-slate-600 font-bold text-sm border border-slate-100 hover:bg-slate-50 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowConfirmSubmit(false);
+                  handleFinalSign();
+                }}
+                disabled={isSubmitting}
+                className="flex-[2] py-3.5 rounded-2xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700 transition-all shadow-lg shadow-violet-100 disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm & Send"}
+              </button>
+            </div>
           </div>
         </div>
       )}

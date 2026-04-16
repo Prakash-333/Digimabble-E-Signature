@@ -54,9 +54,15 @@ export async function markFirstLogin(id: string) {
 }
 
 /**
- * Submits a guest signature.
+ * Submits a guest signature or review action.
  */
-export async function submitGuestSignature(id: string, signatureDataUrl: string, message?: string, editedContent?: string) {
+export async function submitGuestSignature(
+  id: string, 
+  signatureDataUrl: string, 
+  message?: string, 
+  editedContent?: string,
+  statusOverride?: "reviewed" | "signed" | "rejected" | "changes_requested"
+) {
   try {
     const supabase = createSupabaseAdminClient();
     
@@ -72,18 +78,19 @@ export async function submitGuestSignature(id: string, signatureDataUrl: string,
     // 2. Identify the guest recipient
     let recipients = doc.recipients as DocumentRecipient[];
     const isReviewDoc = doc.category === "Reviewer";
-    const status = isReviewDoc ? "reviewed" : "signed";
+    const status = statusOverride || (isReviewDoc ? "reviewed" : "signed");
     
     if (recipients.length > 0) {
       let updated = false;
       recipients = recipients.map((r) => {
-        if (!updated && !["signed", "reviewed", "approved", "completed"].includes(r.status || "")) {
+        if (!updated && !["signed", "reviewed", "approved", "completed", "rejected", "changes_requested"].includes(r.status || "")) {
           updated = true;
           return {
             ...r,
             status: status,
-            signed_content: editedContent || signatureDataUrl,
-            sign_message: message || r.sign_message
+            signed_content: editedContent || signatureDataUrl || r.signed_content,
+            sign_message: message || r.sign_message,
+            reject_reason: (status === "rejected" || status === "changes_requested") ? message : r.reject_reason
           };
         }
         return r;
@@ -93,8 +100,9 @@ export async function submitGuestSignature(id: string, signatureDataUrl: string,
         recipients[0] = {
           ...recipients[0],
           status: status,
-          signed_content: editedContent || signatureDataUrl,
-          sign_message: message || recipients[0].sign_message
+          signed_content: editedContent || signatureDataUrl || recipients[0].signed_content,
+          sign_message: message || recipients[0].sign_message,
+          reject_reason: (status === "rejected" || status === "changes_requested") ? message : recipients[0].reject_reason
         };
       }
     }
@@ -102,14 +110,15 @@ export async function submitGuestSignature(id: string, signatureDataUrl: string,
     // 3. Update document status and content
     const updatePayload: any = {
       recipients,
-      status: status,
+      // The documents table constraint only allows 'rejected', not 'changes_requested'
+      status: status === "changes_requested" ? "rejected" : status,
     };
     
     if (editedContent) {
       updatePayload.content = editedContent;
     }
 
-    if (isReviewDoc) {
+    if (status === "reviewed" || status === "rejected" || status === "changes_requested") {
       updatePayload.reviewed_at = new Date().toISOString();
     } else {
       updatePayload.signed_at = new Date().toISOString();
