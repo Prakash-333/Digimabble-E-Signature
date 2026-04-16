@@ -342,7 +342,11 @@ export default function NotificationsPage() {
       }).join("");
 
       const baseHtml = item.content || "";
-      const finalContent = baseHtml + fieldsHtml;
+      // Wrap in a self-contained relative container (800px, no padding) so that
+      // the absolute-positioned fields have the same coordinate origin as
+      // previewStageRef (the outer div the signer used). The document text goes
+      // inside a padded inner div, mirroring the signer's stage layout exactly.
+      const finalContent = `<div style="position:relative;width:800px;min-height:1056px;background:#fff;box-sizing:border-box;"><div style="padding:64px;min-height:1056px;font-size:15px;color:#1e293b;line-height:1.9;letter-spacing:-0.01em;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${baseHtml}</div>${fieldsHtml}</div>`;
 
       if (currentUserId) {
         markNotificationSeen(currentUserId, item.virtualId);

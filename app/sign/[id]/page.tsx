@@ -2,58 +2,119 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
-import { CheckCircle2, Loader2, FileText, PenLine as Pen, Lock, ShieldCheck, AlertCircle, Clock, X, RotateCcw, Edit3, Save, Eye as EyeIcon, RotateCw, PenTool } from "lucide-react";
+import { CheckCircle2, Loader2, FileText, PenLine as Pen, Lock, ShieldCheck, AlertCircle, Clock, X, RotateCcw, Edit3, Save, Eye as EyeIcon, RotateCw, PenTool, ChevronLeft, MessageSquare } from "lucide-react";
 import { getGuestDocumentMetaData, markFirstLogin, submitGuestSignature } from "../../actions/document-guest";
 import { highlightHtmlEdits, saveSelection, restoreSelection, stripHighlights } from "../../lib/diff";
 import { supabase } from "../../lib/supabase/browser";
 import { normalizeEmail } from "../../lib/documents";
 
-interface DocumentData {
+interface PlacedField {
   id: string;
-  name: string;
-  category?: string;
-  status: string;
-  content?: string;
-  file_url?: string;
-  access_id?: string;
-  access_password?: string;
-  access_first_login?: string | null;
-  recipients?: Array<{ email: string; name: string }>;
-}
-
-interface ResizableWrapperProps {
+  type: string;
   x: number;
   y: number;
-  width: number;
-  height: number;
+  width?: number;
+  height?: number;
+  scale?: number;
+  value?: string;
+}
+
+const DEFAULT_FIELD_SIZE: Record<string, { width: number; height: number }> = {
+  stamp: { width: 180, height: 64 },
+  initial: { width: 100, height: 36 },
+  date: { width: 140, height: 36 },
+  name: { width: 180, height: 40 },
+  first_name: { width: 160, height: 40 },
+  last_name: { width: 160, height: 40 },
+  email: { width: 220, height: 40 },
+  company: { width: 180, height: 40 },
+  title: { width: 160, height: 40 },
+  text: { width: 180, height: 44 },
+  checkbox: { width: 24, height: 24 },
+};
+
+const MIN_FIELD_SIZE: Record<string, { width: number; height: number }> = {
+  stamp: { width: 110, height: 40 },
+  initial: { width: 72, height: 28 },
+  date: { width: 100, height: 28 },
+  name: { width: 110, height: 32 },
+  first_name: { width: 110, height: 32 },
+  last_name: { width: 110, height: 32 },
+  email: { width: 150, height: 32 },
+  company: { width: 110, height: 32 },
+  title: { width: 100, height: 32 },
+  text: { width: 110, height: 36 },
+  checkbox: { width: 20, height: 20 },
+};
+
+const DRAGGABLE_FIELDS = [
+  // Group 1
+  { type: "initial", label: "Initial", icon: <PenTool className="h-4 w-4 text-slate-700" />, group: 1 },
+  { type: "date", label: "Date Signed", icon: <Clock className="h-4 w-4 text-slate-700" />, group: 1 },
+  // Group 2
+  { type: "name", label: "Name", icon: <Edit3 className="h-4 w-4 text-slate-700" />, group: 2 },
+  { type: "first_name", label: "First Name", icon: <Edit3 className="h-4 w-4 text-slate-700" />, group: 2 },
+  { type: "last_name", label: "Last Name", icon: <Edit3 className="h-4 w-4 text-slate-700" />, group: 2 },
+  { type: "email", label: "Email Address", icon: <Edit3 className="h-4 w-4 text-slate-700" />, group: 2 },
+  { type: "company", label: "Company", icon: <Edit3 className="h-4 w-4 text-slate-700" />, group: 2 },
+  { type: "title", label: "Title", icon: <Edit3 className="h-4 w-4 text-slate-700" />, group: 2 },
+] as const;
+
+const getFieldSize = (field: Pick<PlacedField, "type" | "width" | "height">) => {
+  const fallback = DEFAULT_FIELD_SIZE[field.type] || { width: 180, height: 40 };
+  return {
+    width: field.width ?? fallback.width,
+    height: field.height ?? fallback.height,
+  };
+};
+
+const clampFieldPosition = (field: PlacedField, x: number, y: number, stage: HTMLDivElement | null) => {
+  if (!stage) {
+    return {
+      x: Math.max(0, Math.round(x)),
+      y: Math.max(0, Math.round(y)),
+    };
+  }
+
+  const rect = stage.getBoundingClientRect();
+  const { width, height } = getFieldSize(field);
+
+  return {
+    x: Math.min(Math.max(0, Math.round(x)), Math.max(0, Math.floor(rect.width - width))),
+    y: Math.min(Math.max(0, Math.round(y)), Math.max(0, Math.floor(rect.height - height))),
+  };
+};
+
+interface ResizableWrapperProps {
+  field: PlacedField;
   isSelected: boolean;
   onSelect: () => void;
   onDelete: () => void;
   onResizeStart: (e: React.PointerEvent) => void;
   onDragStart: (e: React.PointerEvent) => void;
+  onEdit: () => void;
   children: React.ReactNode;
 }
 
 const ResizableWrapper = ({
-  x,
-  y,
-  width,
-  height,
+  field,
   isSelected,
   onSelect,
   onDelete,
   onResizeStart,
   onDragStart,
+  onEdit,
   children,
 }: ResizableWrapperProps) => {
+  const { width, height } = getFieldSize(field);
   return (
     <div
       className={`absolute rounded-md border-2 border-dashed group flex items-center justify-center cursor-grab active:cursor-grabbing select-none transition-all ${
         isSelected ? "border-violet-500 bg-violet-50/50" : "border-slate-400 hover:border-violet-400"
       }`}
       style={{
-        left: `${x}px`,
-        top: `${y}px`,
+        left: `${field.x}px`,
+        top: `${field.y}px`,
         width: `${width}px`,
         height: `${height}px`,
         zIndex: 100,
@@ -64,12 +125,16 @@ const ResizableWrapper = ({
       }}
       onPointerDown={onDragStart}
     >
-      {children}
+      <div 
+        className="w-full h-full flex items-center justify-center pointer-events-auto"
+        onClick={(e) => { e.stopPropagation(); onEdit(); }}
+      >
+        {children}
+      </div>
       {/* Delete button (Top-right) */}
       <button
         type="button"
-        className="absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center hover:bg-red-600 transition-all active:scale-90 opacity-0 group-hover:opacity-100"
-        style={{ zIndex: 110 }}
+        className={`absolute -right-2 -top-2 h-5 w-5 rounded-full bg-red-500 border border-white text-white shadow flex items-center justify-center hover:bg-red-600 transition-all active:scale-90 z-[110] ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
         onClick={(e) => {
           e.stopPropagation();
           onDelete();
@@ -80,8 +145,7 @@ const ResizableWrapper = ({
 
       {/* Resize handle (Bottom-right) */}
       <div
-        className="absolute -right-2 -bottom-2 w-5 h-5 cursor-nwse-resize bg-violet-600 rounded-full shadow-md hover:bg-violet-500 transition-all border-2 border-white flex items-center justify-center"
-        style={{ zIndex: 110 }}
+        className={`absolute -right-2 -bottom-2 w-5 h-5 cursor-nwse-resize bg-violet-600 rounded-full shadow-md hover:bg-violet-500 transition-all border-2 border-white flex items-center justify-center z-[110] ${isSelected ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
         onPointerDown={onResizeStart}
       >
         <svg
@@ -120,18 +184,15 @@ export default function PublicSignPage() {
   const [isSigned, setIsSigned] = useState(false);
   const [signMessage, setSignMessage] = useState("");
   
-  // Drag and Drop Signature State
+  // Multi-Mode Signature State
+  const [signatureMode, setSignatureMode] = useState<'draw' | 'type' | 'upload'>('upload');
+  const [typedSignature, setTypedSignature] = useState("");
+  const [uploadedSignature, setUploadedSignature] = useState<string | null>(null);
+  
+  // Drag and Drop Field State
   const [savedSignature, setSavedSignature] = useState<string | null>(null);
-  const [signatureX, setSignatureX] = useState(50);
-  const [signatureY, setSignatureY] = useState(50);
-  const [signatureScale, setSignatureScale] = useState(1);
-  const [signaturePlaced, setSignaturePlaced] = useState(false);
-  const [isSelected, setIsSelected] = useState(false);
-
-  const signatureWidthBase = 180;
-  const signatureHeightBase = 64;
-  const signatureWidthPx = Math.round(signatureWidthBase * signatureScale);
-  const signatureHeightPx = Math.round(signatureHeightBase * signatureScale);
+  const [placedFields, setPlacedFields] = useState<PlacedField[]>([]);
+  const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
 
   // Signature Pad Refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -154,20 +215,10 @@ export default function PublicSignPage() {
   const isReviewMode = document?.category === "Reviewer" || document?.status === "reviewing";
 
   // Dragging Logic Refs
-  const dragRef = useRef<{
-    pointerId: number;
-    startClientX: number;
-    startClientY: number;
-    startSigX: number;
-    startSigY: number;
-  } | null>(null);
-
-  const sigResizeRef = useRef<{
-    pointerId: number;
-    startClientX: number;
-    startClientY: number;
-    startScale: number;
-  } | null>(null);
+  const dragRef = useRef<{ id: string; startClientX: number; startClientY: number; startX: number; startY: number } | null>(null);
+  const resizeRef = useRef<{ id: string; startClientX: number; startClientY: number; startWidth: number; startHeight: number } | null>(null);
+  const movedFieldRef = useRef<string | null>(null);
+  const skipFieldClickRef = useRef<string | null>(null);
 
   // Load document once to check exists and get basic info
   useEffect(() => {
@@ -259,66 +310,129 @@ export default function PublicSignPage() {
 
   // Robust Global Pointer Listeners for Drag and Resize
   useEffect(() => {
-    const handlePointerMove = (e: PointerEvent) => {
-      // Handle Dragging
+    const onMove = (e: PointerEvent) => {
       if (dragRef.current) {
-        const drag = dragRef.current;
-        const stage = previewStageRef.current;
-        if (!stage) return;
-        const rect = stage.getBoundingClientRect();
-        const dx = e.clientX - drag.startClientX;
-        const dy = e.clientY - drag.startClientY;
-
-        const maxX = Math.max(0, Math.floor(rect.width - signatureWidthPx));
-        const maxY = Math.max(0, Math.floor(rect.height - signatureHeightPx));
-
-        setSignatureX(Math.min(Math.max(0, Math.round(drag.startSigX + dx)), maxX));
-        setSignatureY(Math.min(Math.max(0, Math.round(drag.startSigY + dy)), maxY));
+        const { id, startClientX, startClientY, startX, startY } = dragRef.current;
+        const dx = e.clientX - startClientX;
+        const dy = e.clientY - startClientY;
+        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+          movedFieldRef.current = id;
+        }
+        
+        setPlacedFields(prev => {
+          const field = prev.find(f => f.id === id);
+          if (!field) return prev;
+          const nextPos = clampFieldPosition(field, startX + dx, startY + dy, previewStageRef.current);
+          return prev.map(f => {
+            if (f.id === id) {
+              return {
+                ...f,
+                x: nextPos.x,
+                y: nextPos.y
+              };
+            }
+            return f;
+          });
+        });
       }
+      if (resizeRef.current) {
+        const { id, startClientX, startClientY, startHeight, startWidth } = resizeRef.current;
+        const dx = e.clientX - startClientX;
+        const dy = e.clientY - startClientY;
+        movedFieldRef.current = id;
+        
+        setPlacedFields(prev => prev.map(f => {
+          if (f.id !== id) return f;
 
-      // Handle Resizing
-      if (sigResizeRef.current) {
-        const resize = sigResizeRef.current;
-        const dx = e.clientX - resize.startClientX;
-        const newScale = Math.min(2.5, Math.max(0.4, resize.startScale + dx / 180));
-        setSignatureScale(newScale);
+          const minSize = MIN_FIELD_SIZE[f.type] || { width: 80, height: 28 };
+          const width = Math.max(minSize.width, Math.round(startWidth + dx));
+          const height = Math.max(
+            minSize.height,
+            Math.round(
+              f.type === "checkbox"
+                ? startHeight + Math.max(dx, dy)
+                : startHeight + dy
+            )
+          );
+          const resizedField = {
+            ...f,
+            width,
+            height,
+          };
+          const nextPos = clampFieldPosition(resizedField, resizedField.x, resizedField.y, previewStageRef.current);
+
+          return {
+            ...resizedField,
+            x: nextPos.x,
+            y: nextPos.y,
+          };
+        }));
       }
     };
-
-    const handlePointerUp = () => {
+    const onUp = () => {
+      if (movedFieldRef.current) {
+        skipFieldClickRef.current = movedFieldRef.current;
+      }
       dragRef.current = null;
-      sigResizeRef.current = null;
+      resizeRef.current = null;
+      movedFieldRef.current = null;
     };
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
     return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
     };
-  }, [signatureWidthPx, signatureHeightPx]);
+  }, []);
 
-  const handleSignatureDragStart = (event: React.PointerEvent) => {
+  const addPlacedField = (type: string, value?: string, position?: { x: number; y: number }) => {
+    const defaultSize = DEFAULT_FIELD_SIZE[type] || { width: 180, height: 40 };
+    const fieldId = crypto.randomUUID();
+    const baseField: PlacedField = {
+      id: fieldId,
+      type,
+      x: position?.x ?? 50,
+      y: position?.y ?? 50,
+      width: defaultSize.width,
+      height: defaultSize.height,
+      scale: 1,
+      value,
+    };
+    const nextPos = clampFieldPosition(baseField, baseField.x, baseField.y, previewStageRef.current);
+
+    setPlacedFields(prev => [...prev, { ...baseField, x: nextPos.x, y: nextPos.y }]);
+    setSelectedFieldId(fieldId);
+  };
+
+  const handleFieldDragStart = (id: string, event: React.PointerEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    setIsSelected(true);
+    setSelectedFieldId(id);
+    const field = placedFields.find(f => f.id === id);
+    if (!field) return;
+
     dragRef.current = {
-      pointerId: event.pointerId,
+      id,
       startClientX: event.clientX,
       startClientY: event.clientY,
-      startSigX: signatureX,
-      startSigY: signatureY,
+      startX: field.x,
+      startY: field.y,
     };
   };
 
-  const handleResizeStart = (event: React.PointerEvent) => {
+  const handleResizeStart = (id: string, event: React.PointerEvent) => {
     event.stopPropagation();
     event.preventDefault();
-    sigResizeRef.current = {
-      pointerId: event.pointerId,
+    const field = placedFields.find(f => f.id === id);
+    if (!field) return;
+    const { width, height } = getFieldSize(field);
+
+    resizeRef.current = {
+      id,
       startClientX: event.clientX,
       startClientY: event.clientY,
-      startScale: signatureScale,
+      startWidth: width,
+      startHeight: height,
     };
   };
 
@@ -353,6 +467,7 @@ export default function PublicSignPage() {
   };
 
   const endDrawing = () => { isDrawing.current = false; };
+
   const clearCanvas = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -361,22 +476,86 @@ export default function PublicSignPage() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   };
 
-  const saveToLocalSignature = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const signatureDataUrl = canvas.toDataURL("image/png");
-    setSavedSignature(signatureDataUrl);
-    setShowSignModal(false);
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setUploadedSignature(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const saveToLocalSignature = async () => {
+    let finalSignatureUrl = "";
+
+    if (signatureMode === 'draw') {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      finalSignatureUrl = canvas.toDataURL("image/png");
+    } else if (signatureMode === 'upload') {
+      if (!uploadedSignature) return;
+      
+      // Process uploaded image to remove white background
+      try {
+        const img = new Image();
+        img.src = uploadedSignature;
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+        });
+
+        const tempCanvas = window.document.createElement('canvas');
+        tempCanvas.width = img.width;
+        tempCanvas.height = img.height;
+        const ctx = tempCanvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          const imageData = ctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+          const data = imageData.data;
+          
+          for (let i = 0; i < data.length; i += 4) {
+            // Remove white/near-white pixels
+            if (data[i] > 230 && data[i+1] > 230 && data[i+2] > 230) {
+              data[i+3] = 0;
+            }
+          }
+          
+          ctx.putImageData(imageData, 0, 0);
+          finalSignatureUrl = tempCanvas.toDataURL("image/png");
+        }
+      } catch (err) {
+        console.error("Failed to process signature transparency:", err);
+        finalSignatureUrl = uploadedSignature; // Fallback
+      }
+    } else if (signatureMode === 'type') {
+      if (!typedSignature) return;
+      // Render typed text to temporary canvas (transparent background)
+      const tempCanvas = window.document.createElement('canvas');
+      tempCanvas.width = 440;
+      tempCanvas.height = 200;
+      const ctx = tempCanvas.getContext('2d');
+      if (ctx) {
+        ctx.font = 'italic 48px "Dancing Script", cursive';
+        ctx.fillStyle = '#1e293b';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(typedSignature, 220, 100);
+        finalSignatureUrl = tempCanvas.toDataURL("image/png");
+      }
+    }
+
+    if (!finalSignatureUrl) return;
     
-    // Auto-place on document
-    setSignaturePlaced(true);
-    setSignatureX(50);
-    setSignatureY(50);
+    setSavedSignature(finalSignatureUrl);
+    setShowSignModal(false);
+    addPlacedField("stamp", finalSignatureUrl);
   };
 
   const handleFinalSign = async () => {
-    if (!isReviewMode && (!savedSignature || !signaturePlaced)) {
-      alert("Please place your signature on the document first.");
+    if (!isReviewMode && placedFields.length === 0) {
+      alert("Please place at least one field on the document first.");
       return;
     }
 
@@ -394,10 +573,25 @@ export default function PublicSignPage() {
         }
       }
 
-      // Bake signature into HTML only if placed
-      if (signaturePlaced && savedSignature) {
-        const sigHtml = `<div style="position: absolute; left: ${signatureX}px; top: ${signatureY}px; width: ${signatureWidthPx}px; height: ${signatureHeightPx}px; z-index: 50; pointer-events: none;"><img src="${savedSignature}" alt="Signature" style="width: 100%; height: 100%; object-fit: contain;" /></div>`;
-        finalContent += sigHtml;
+      // Bake all placed fields into HTML
+      if (!isReviewMode && placedFields.length > 0) {
+        let fieldsHtml = "";
+        placedFields.forEach(field => {
+          const { width, height } = getFieldSize(field);
+          const style = `position: absolute; left: ${field.x}px; top: ${field.y}px; width: ${width}px; height: ${height}px; z-index: 50; pointer-events: none; display: flex; align-items: center; justify-content: center;`;
+          
+          if (field.type === "stamp" && field.value) {
+            fieldsHtml += `<div style="${style}"><img src="${field.value}" alt="Signature" style="width: 100%; height: 100%; object-fit: contain;" /></div>`;
+          } else if (field.value) {
+            const fontSize = Math.max(12, Math.min(24, Math.round(height * 0.4)));
+            fieldsHtml += `<div style="${style} font-family: sans-serif; font-size: ${fontSize}px; font-weight: 600; color: #1e293b; white-space: nowrap; overflow: hidden;">${field.value}</div>`;
+          }
+        });
+
+        // Wrap in a self-contained relative container (800px, no padding) so that
+        // the absolute-positioned fields perfectly match the internal sender views.
+        const baseHtml = stripHighlights(document?.content || "");
+        finalContent = `<div style="position:relative;width:800px;min-height:1056px;background:#fff;box-sizing:border-box;"><div style="padding:64px;min-height:1056px;font-size:15px;color:#1e293b;line-height:1.9;letter-spacing:-0.01em;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${baseHtml}</div>${fieldsHtml}</div>`;
       }
 
       const { success, error: subError } = await submitGuestSignature(id, savedSignature || "", signMessage, finalContent);
@@ -412,22 +606,12 @@ export default function PublicSignPage() {
     }
   };
 
-  const handleReject = async () => {
-    setIsSubmitting(true);
-    try {
-      let finalContent = undefined;
-      if (isReviewMode && contentRef.current) {
-        const editedHtml = contentRef.current.innerHTML;
-        finalContent = editedHtml !== initialContent ? highlightHtmlEdits(initialContent, editedHtml) : editedHtml;
-      }
-      const { success, error: subError } = await submitGuestSignature(id, "", rejectReason, finalContent, "rejected");
-      if (!success) throw new Error(subError);
-      setIsSigned(true);
-    } catch (err: unknown) {
-      alert("Failed to reject: " + (err instanceof Error ? err.message : String(err)));
-    } finally {
-      setIsSubmitting(false);
-      setRejectingItem(false);
+  const promptFieldValue = (id: string, label: string) => {
+    const field = placedFields.find(f => f.id === id);
+    if (!field) return;
+    const val = window.prompt(`Enter ${label}:`, field.value || "");
+    if (val !== null) {
+      setPlacedFields(prev => prev.map(f => f.id === id ? { ...f, value: val } : f));
     }
   };
 
@@ -636,17 +820,26 @@ export default function PublicSignPage() {
   return (
     <div className="flex h-screen flex-col bg-slate-50 overflow-hidden">
       <header className="flex-shrink-0 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 z-20">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-600 text-sm font-bold text-white shadow-lg shadow-violet-100">
-            S
+        <div className="flex items-center gap-6">
+          <div 
+            onClick={() => router.push('/')}
+            className="flex items-center gap-1.5 text-slate-500 hover:text-slate-900 font-medium text-sm border-r border-slate-200 pr-4 mr-1 transition-colors cursor-pointer"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Back
           </div>
-          <div>
-            <p className="text-sm font-bold tracking-tight text-slate-900 uppercase">SMARTDOCS</p>
+          <div className="flex items-center gap-3">
+             <div className="h-9 w-9 flex items-center justify-center rounded-xl bg-[#f0ecfe] text-[15px] font-bold text-[#5b2df6]">
+               {document?.name?.[0]?.toUpperCase() || 'D'}
+             </div>
+             <div>
+               <h3 className="text-sm font-bold text-slate-900 leading-tight">{document?.name}</h3>
+               <p className="text-[11px] text-slate-500 font-medium">Please {isReviewMode ? 'review' : 'sign'}: {document?.name}</p>
+             </div>
           </div>
         </div>
         
-        {isAuthenticated && isReviewMode && (
-          <div className="hidden md:flex items-center gap-3">
+        <div className="flex items-center gap-4">
             <button
               onClick={() => { setRejectingItem(true); setRejectReason(""); }}
               disabled={isSubmitting}
@@ -660,182 +853,190 @@ export default function PublicSignPage() {
               disabled={isSubmitting}
               className="flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50/50 px-4 py-2 text-xs font-bold text-amber-600 hover:bg-amber-50 transition-all shadow-sm disabled:opacity-60"
             >
-              <FileText className="h-3.5 w-3.5" /> Require Changes
+              <MessageSquare className="h-3.5 w-3.5" /> Require Changes
             </button>
 
-            <button
-              onClick={handleResetChanges}
-              disabled={isSubmitting}
-              className="flex items-center gap-2 rounded-xl border border-slate-100 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 transition-all shadow-sm disabled:opacity-60"
-              title="Reset all changes"
-            >
-              <RotateCcw className="h-3.5 w-3.5" /> Reset
-            </button>
+            {!isReviewMode && (
+              <button
+                onClick={() => {
+                  const hasStamp = placedFields.some(f => f.type === 'stamp');
+                  if (!hasStamp && placedFields.length === 0) {
+                    alert("Please place your signature/sign on the document first.");
+                    return;
+                  }
+                  setShowConfirmSubmit(true);
+                }}
+                disabled={isSubmitting}
+                className="flex items-center gap-2 rounded-xl bg-green-600 px-6 py-2.5 text-xs font-bold text-white shadow-lg shadow-green-200 hover:bg-green-700 transition-all disabled:opacity-60"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" /> Send
+              </button>
+            )}
 
-            <button
-              onClick={handleToggleEdit}
-              disabled={isSubmitting}
-              className={`flex items-center gap-2 rounded-xl border px-4 py-2 text-xs font-bold transition-all shadow-sm disabled:opacity-60 ${isEditMode ? 'border-violet-200 bg-violet-50 text-violet-700' : 'border-slate-100 bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
-            >
-              {isEditMode ? (
-                <><Save className="h-3.5 w-3.5" /> Stop Editing</>
-              ) : (
-                <><Edit3 className="h-3.5 w-3.5" /> Edit Document</>
-              )}
-            </button>
-
-            <button
-              onClick={() => setShowConfirmSubmit(true)}
-              disabled={isSubmitting}
-              className="flex items-center gap-2 rounded-xl bg-green-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-green-200 hover:bg-green-700 transition-all disabled:opacity-60"
-            >
-              {isSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Approve
-            </button>
+            {isReviewMode ? (
+              <button
+                onClick={() => setShowConfirmSubmit(true)}
+                disabled={isSubmitting}
+                className="flex items-center gap-2 rounded-xl bg-violet-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all disabled:opacity-60"
+              >
+                {isSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />} Approve
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  const hasStamp = placedFields.some(f => f.type === 'stamp');
+                  if (!hasStamp) {
+                    setSignatureMode("draw");
+                    setShowSignModal(true);
+                  } else {
+                    setShowConfirmSubmit(true);
+                  }
+                }}
+                disabled={isSubmitting}
+                className="flex items-center gap-2 rounded-xl bg-[#5b2df6] px-6 py-2.5 text-xs font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all disabled:opacity-60"
+              >
+                {isSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PenTool className="h-3.5 w-3.5" />} Sign on Document
+              </button>
+            )}
             
             <button
-              onClick={() => router.push('/')}
-              className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-50 border border-slate-100 text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-all shrink-0"
+               onClick={() => router.push('/')}
+               className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-50 border border-slate-100 text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-all shrink-0"
             >
-              <X className="w-5 h-5" />
+               <X className="w-5 h-5" />
             </button>
-          </div>
-        )}
-
-        <div className="text-right">
-          <p className="text-xs font-bold text-slate-900">{document?.name}</p>
-          <div className="flex items-center justify-end gap-2 text-[10px] text-green-600 font-bold uppercase">
-            <ShieldCheck className="h-3 w-3" />
-            Verified Access
-          </div>
         </div>
       </header>
 
-      <main className="flex-1 overflow-hidden p-2 md:p-4 flex flex-col items-center">
-        <div className="w-full max-w-[98vw] flex-1 flex flex-col rounded-3xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
-          {/* Scrollable Document Area */}
-          <div className="flex-1 overflow-y-auto bg-slate-100 p-4 md:p-8 min-h-0">
+      <main className="flex-1 overflow-hidden flex bg-slate-50 relative">
+        {/* ADD FIELDS Sidebar (only for Signers) */}
+        {!isReviewMode && (
+          <aside className="w-64 border-r border-slate-200 bg-white flex flex-col p-6 overflow-y-auto">
+             <h2 className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-6">ADD FIELDS</h2>
+             <p className="text-xs text-slate-500 mb-8 font-medium leading-relaxed">Click or drag fields to place them on the document.</p>
+             
+             <div className="space-y-3">
+                {/* Group 1: Signatures/Dates */}
+                <div className="space-y-3">
+                   {DRAGGABLE_FIELDS.filter(f => f.group === 1).map(field => (
+                     <div 
+                        key={field.type}
+                        onClick={() => {
+                          if (field.type === "stamp") {
+                            setSignatureMode("upload");
+                            setShowSignModal(true);
+                          }
+                          else if (field.type === "date") addPlacedField(field.type, new Date().toLocaleDateString());
+                          else addPlacedField(field.type);
+                        }}
+                        className="flex items-center gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50/50 cursor-pointer hover:bg-white hover:border-violet-200 hover:shadow-sm hover:translate-x-1 transition-all group"
+                     >
+                        <div className="h-8 w-8 flex items-center justify-center rounded-lg bg-white border border-slate-100 group-hover:border-violet-100 transition-colors">
+                           {field.icon}
+                        </div>
+                        <span className="text-sm font-semibold text-slate-700">{field.label}</span>
+                     </div>
+                   ))}
+                </div>
+
+                {/* Group 2: Personal Fields */}
+                <div className="space-y-3">
+                   {DRAGGABLE_FIELDS.filter(f => f.group === 2).map(field => (
+                     <div 
+                        key={field.type}
+                        onClick={() => addPlacedField(field.type)}
+                        className="flex items-center gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50/50 cursor-pointer hover:bg-white hover:border-violet-200 hover:shadow-sm hover:translate-x-1 transition-all group"
+                     >
+                        <div className="h-8 w-8 flex items-center justify-center rounded-lg bg-white border border-slate-100 group-hover:border-violet-100 transition-colors">
+                           {field.icon}
+                        </div>
+                        <span className="text-sm font-semibold text-slate-700">{field.label}</span>
+                     </div>
+                   ))}
+                </div>
+             </div>
+          </aside>
+        )}
+
+        {/* Scrollable Document Area */}
+        <div 
+           className="flex-1 overflow-y-auto bg-slate-100 p-8 flex flex-col items-center"
+           onClick={() => setSelectedFieldId(null)}
+        >
+            <div className="max-w-4xl mx-auto flex justify-center">
               <div 
                 ref={previewStageRef}
-                className="mx-auto max-w-[900px] bg-white shadow-sm p-8 md:p-16 min-h-full rounded-2xl border border-slate-100 relative"
+                className="relative w-[800px]"
               >
+              {document?.content ? (
+                <div 
+                  ref={contentRef}
+                  contentEditable={isEditMode}
+                  onInput={handleDocumentInput}
+                  suppressContentEditableWarning
+                  className={`relative editable-content w-full min-h-[1056px] bg-white rounded-2xl shadow-xl border border-slate-200 p-12 md:p-16 text-[15px] text-slate-800 leading-[1.9] tracking-tight outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10' : ''}`} 
+                  style={{ fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}
+                  dangerouslySetInnerHTML={{ __html: document.content }} 
+                />
+              ) : document?.file_url ? (
+                <div className="flex flex-col items-center justify-center py-40">
+                  <FileText className="h-16 w-16 text-slate-200 mb-4" />
+                  <p className="text-slate-500 font-medium text-center">This document is a PDF. Click fields on the left to add your endorsement.</p>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-40">
+                  <AlertCircle className="h-16 w-16 text-slate-200 mb-4" />
+                  <p className="text-slate-500 font-medium">Document content unavailable.</p>
+                </div>
+              )}
 
+              {/* Render Placed Fields */}
+              {!isReviewMode && placedFields.map(field => {
+                const def = DRAGGABLE_FIELDS.find(f => f.type === field.type);
+                const { height } = getFieldSize(field);
                 
-                {document?.content ? (
-                  <div 
-                    ref={contentRef}
-                    contentEditable={isEditMode}
-                    onInput={handleDocumentInput}
-                    suppressContentEditableWarning
-                    className={`prose prose-slate max-w-none outline-none transition-all duration-300 ${isEditMode ? 'p-6 rounded-2xl bg-amber-50/30 ring-2 ring-amber-200 shadow-inner min-h-[400px]' : ''}`} 
-                    dangerouslySetInnerHTML={{ __html: document.content }} 
-                  />
-                ) : document?.file_url ? (
-                  <div className="flex flex-col items-center justify-center py-40">
-                    <FileText className="h-16 w-16 text-slate-200 mb-4" />
-                    <p className="text-slate-500 font-medium text-center">This document is a PDF. Click buttons below to add your endorsement.</p>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-40">
-                    <AlertCircle className="h-16 w-16 text-slate-200 mb-4" />
-                    <p className="text-slate-500 font-medium">Document content unavailable.</p>
-                  </div>
-                )}
-
-                {/* Placed Signature */}
-                {!isReviewMode && signaturePlaced && savedSignature && (
+                return (
                   <ResizableWrapper
-                    x={signatureX}
-                    y={signatureY}
-                    width={signatureWidthPx}
-                    height={signatureHeightPx}
-                    isSelected={isSelected}
-                    onSelect={() => setIsSelected(true)}
-                    onDelete={() => setSignaturePlaced(false)}
-                    onResizeStart={handleResizeStart}
-                    onDragStart={handleSignatureDragStart}
+                    key={field.id}
+                    field={field}
+                    isSelected={selectedFieldId === field.id}
+                    onSelect={() => setSelectedFieldId(field.id)}
+                    onDelete={() => setPlacedFields(prev => prev.filter(f => f.id !== field.id))}
+                    onResizeStart={(e) => handleResizeStart(field.id, e)}
+                    onDragStart={(e) => handleFieldDragStart(field.id, e)}
+                    onEdit={() => {
+                      if (field.type !== "stamp") {
+                        promptFieldValue(field.id, def?.label || "Value");
+                      }
+                    }}
                   >
-                    <div className="w-full h-full flex items-center justify-center pointer-events-none">
-                      <img src={savedSignature} alt="Signature" className="max-w-full max-h-full object-contain" />
-                    </div>
-                  </ResizableWrapper>
-                )}
-             </div>
-          </div>
-          
-          {/* Fixed Footer */}
-          <div className="flex-shrink-0 border-t border-slate-100 bg-white/95 backdrop-blur-md p-4 md:p-6">
-            <div className="mx-auto max-w-5xl flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="text-center sm:text-left">
-                <p className="text-base font-bold text-slate-900">{isReviewMode ? "" : "Ready to complete?"}</p>
-                <p className="text-xs text-slate-500">
-                  {isReviewMode 
-                    ? ""
-                    : savedSignature 
-                      ? "Drag and resize your signature on the document above."
-                      : "Create your signature first, then place it on the document."}
-                </p>
-              </div>
-              <div className="flex items-center gap-3">
-                {isReviewMode ? (
-                  null
-                ) : (
-                  <>
-                    {!savedSignature ? (
-                      <button 
-                        onClick={() => setShowSignModal(true)}
-                        className="flex items-center gap-3 rounded-2xl bg-violet-600 px-8 py-4 text-base font-bold text-white shadow-xl shadow-violet-200 transition-all hover:bg-violet-700 active:scale-95"
-                      >
-                        <Pen className="h-5 w-5" />
-                        Create Signature
-                      </button>
+                    {field.type === "stamp" ? (
+                      <img src={field.value} alt="Stamp" className="max-w-full max-h-full object-contain p-1" />
                     ) : (
-                      <>
-                        {!signaturePlaced && (
-                          <button 
-                            onClick={() => {
-                              setSignaturePlaced(true);
-                              setSignatureX(50);
-                              setSignatureY(50);
-                            }}
-                            className="flex items-center gap-3 rounded-2xl bg-blue-600 px-8 py-4 text-base font-bold text-white shadow-xl shadow-blue-200 transition-all hover:bg-blue-700 active:scale-95"
-                          >
-                            <PenTool className="h-5 w-5" />
-                            Place on Doc
-                          </button>
-                        )}
-                        <button 
-                          onClick={() => setShowSignModal(true)}
-                          className="flex h-12 w-12 items-center justify-center rounded-2xl border-2 border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all"
-                          title="Change Signature"
-                        >
-                          <RotateCw className="h-5 w-5" />
-                        </button>
-                        <button 
-                          onClick={() => setShowConfirmSubmit(true)}
-                          disabled={isSubmitting || !signaturePlaced}
-                          className="flex items-center gap-3 rounded-2xl bg-violet-600 px-10 py-4 text-base font-bold text-white shadow-xl shadow-violet-200 transition-all hover:bg-violet-700 active:scale-95 disabled:opacity-50"
-                        >
-                          {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <ShieldCheck className="h-5 w-5" />}
-                          Submit Final
-                        </button>
-                      </>
+                      <div 
+                        className="flex h-full w-full items-center text-slate-800 font-bold px-2 whitespace-nowrap overflow-hidden"
+                        style={{ fontSize: `${Math.max(12, Math.min(22, Math.round(height * 0.4)))}px` }}
+                      >
+                         {field.value || <span className="text-slate-300 font-normal italic">[{def?.label || 'Empty'}]</span>}
+                      </div>
                     )}
-                  </>
-                )}
-              </div>
+                  </ResizableWrapper>
+                )
+              })}
             </div>
-          </div>
+            </div>
         </div>
       </main>
 
       {/* Signature Modal */}
       {showSignModal && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+          <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;700&display=swap" rel="stylesheet" />
           <div className="w-full max-w-lg bg-white rounded-[2.5rem] shadow-2xl overflow-hidden">
              <div className="flex items-center justify-between p-8 border-b border-slate-100">
                 <h3 className="text-xl font-bold text-slate-900 flex items-center gap-3">
                    <Pen className="h-5 w-5 text-violet-600" />
-                   Create Your Signature
+                   Add Your Sign
                 </h3>
                 <button onClick={() => setShowSignModal(false)} className="h-10 w-10 flex items-center justify-center rounded-full bg-slate-50 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-all">
                    <X className="h-5 w-5" />
@@ -843,45 +1044,97 @@ export default function PublicSignPage() {
              </div>
              
              <div className="p-8 space-y-6">
-                <div className="bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 relative">
-                   <canvas 
-                      ref={canvasRef}
-                      width={440}
-                      height={200}
-                      onMouseDown={startDrawing}
-                      onMouseMove={draw}
-                      onMouseUp={endDrawing}
-                      onMouseLeave={endDrawing}
-                      onTouchStart={startDrawing}
-                      onTouchMove={draw}
-                      onTouchEnd={endDrawing}
-                      className="w-full h-[200px] cursor-crosshair touch-none"
-                   />
-                   <button 
-                      onClick={clearCanvas}
-                      className="absolute bottom-4 right-4 flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-violet-600 transition-all"
-                   >
-                      <RotateCcw className="h-3 w-3" />
-                      Clear
-                   </button>
+                {/* Tab Switcher */}
+                <div className="flex p-1 bg-slate-50 rounded-2xl border border-slate-100">
+                   {(['draw', 'type', 'upload'] as const).map((mode) => (
+                     <button
+                        key={mode}
+                        onClick={() => setSignatureMode(mode)}
+                        className={`flex-1 py-3 text-xs font-bold rounded-xl transition-all ${
+                          signatureMode === mode 
+                          ? 'bg-white text-violet-600 shadow-sm' 
+                          : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                     >
+                        {mode === 'draw' ? 'Manual' : mode === 'type' ? 'Type' : 'Upload'}
+                     </button>
+                   ))}
                 </div>
-                
-                <div className="space-y-4">
-                   <label className="text-xs font-bold text-slate-400 uppercase tracking-widest block ml-1">Optional Message</label>
-                   <textarea 
-                     value={signMessage}
-                     onChange={(e) => setSignMessage(e.target.value)}
-                     className="w-full rounded-2xl bg-slate-50 border-none p-4 text-sm outline-none focus:ring-2 focus:ring-violet-500 transition-all resize-none"
-                     placeholder="Any comments for the sender..."
-                     rows={3}
-                   />
+
+                <div className="min-h-[220px]">
+                   {signatureMode === 'draw' && (
+                      <div className="bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 relative animate-in fade-in zoom-in-95 duration-200">
+                         <canvas 
+                            ref={canvasRef}
+                            width={440}
+                            height={200}
+                            onMouseDown={startDrawing}
+                            onMouseMove={draw}
+                            onMouseUp={endDrawing}
+                            onMouseLeave={endDrawing}
+                            onTouchStart={startDrawing}
+                            onTouchMove={draw}
+                            onTouchEnd={endDrawing}
+                            className="w-full h-[200px] cursor-crosshair touch-none"
+                         />
+                         <button 
+                            onClick={clearCanvas}
+                            className="absolute bottom-4 right-4 flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-violet-600 transition-all"
+                         >
+                            <RotateCcw className="h-3 w-3" />
+                            Clear
+                         </button>
+                      </div>
+                   )}
+
+                   {signatureMode === 'type' && (
+                      <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
+                         <div className="relative">
+                            <input 
+                               type="text"
+                               placeholder="Type your name here..."
+                               value={typedSignature}
+                               onChange={(e) => setTypedSignature(e.target.value)}
+                               className="w-full px-6 py-5 rounded-2xl bg-slate-50 border-2 border-slate-100 text-slate-700 font-semibold focus:border-violet-300 focus:bg-white focus:outline-none transition-all"
+                            />
+                         </div>
+                         <div className="h-[120px] flex items-center justify-center rounded-2xl bg-[#fafafa] border border-slate-100 overflow-hidden">
+                            {typedSignature ? (
+                               <p className="text-4xl text-slate-800 font-bold" style={{ fontFamily: '"Dancing Script", cursive' }}>
+                                 {typedSignature}
+                               </p>
+                            ) : (
+                               <p className="text-sm text-slate-300 italic">Signature preview will appear here</p>
+                            )}
+                         </div>
+                      </div>
+                   )}
+
+                   {signatureMode === 'upload' && (
+                      <div className="animate-in fade-in zoom-in-95 duration-200">
+                         <label className="flex flex-col items-center justify-center w-full h-[200px] bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 cursor-pointer hover:bg-slate-100 hover:border-violet-300 transition-all group overflow-hidden">
+                            {uploadedSignature ? (
+                               <img src={uploadedSignature} alt="Uploaded signature" className="max-w-full max-h-full object-contain p-4" />
+                            ) : (
+                               <div className="text-center p-6">
+                                  <div className="h-12 w-12 bg-white rounded-xl shadow-sm border border-slate-100 flex items-center justify-center mx-auto mb-3 group-hover:scale-110 transition-transform">
+                                     <Save className="h-6 w-6 text-slate-400" />
+                                  </div>
+                                  <p className="text-sm font-bold text-slate-600">Click to upload image</p>
+                                  <p className="text-[10px] text-slate-400 mt-1">PNG, JPG recommended</p>
+                               </div>
+                            )}
+                            <input type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+                         </label>
+                      </div>
+                   )}
                 </div>
                 
                 <button 
                    onClick={saveToLocalSignature}
                    className="w-full py-4 rounded-2xl bg-violet-600 text-white font-bold shadow-lg shadow-violet-200 hover:bg-violet-700 active:scale-[0.98] transition-all"
                 >
-                   Save Signature
+                   Save Sign
                 </button>
              </div>
           </div>
