@@ -420,11 +420,17 @@ export default function DocumentsPage() {
       ).length;
 
       if (totalCount > 0) {
-        if (rejectedCount > 0) {
+        const anyChangesRequired = recipients.some(
+          (r) => ["rejected", "changes_requested"].includes((r as { status?: string }).status || "")
+        );
+        if (anyChangesRequired) {
+          const reqCount = recipients.filter(
+            (r) => ["rejected", "changes_requested"].includes((r as { status?: string }).status || "")
+          ).length;
           return (
             <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-[10px] font-semibold text-red-700">
               <XCircle className="mr-1 h-3 w-3" />
-              {rejectedCount === totalCount ? "Changes Required" : `${rejectedCount} Changes Required`}
+              {reqCount === totalCount ? "Changes Required" : `${reqCount} Changes Required`}
             </span>
           );
         }
@@ -453,7 +459,7 @@ export default function DocumentsPage() {
         : null;
       const myStatus = myRecipient?.status || recipients.find(r => r.email)?.status;
 
-      if (myStatus === "rejected") {
+      if (myStatus === "rejected" || myStatus === "changes_requested") {
         return (
           <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-[10px] font-semibold text-red-700">
             <XCircle className="mr-1 h-3 w-3" />
@@ -546,22 +552,22 @@ export default function DocumentsPage() {
       if (doc.direction === "sent") {
         const hasRejection = doc.recipients.some(r => r.status === "rejected");
         if (hasRejection || doc.status === "rejected") return false;
-        const allCompleted = doc.recipients.length > 0 && doc.recipients.every(r => ["signed", "reviewed", "approved"].includes(r.status || ""));
-        if (!allCompleted) return false;
+        const allSigned = doc.recipients.length > 0 && doc.recipients.every(r => ["signed", "completed"].includes(r.status || ""));
+        if (!allSigned) return false;
       } else {
         const myRecipient = doc.recipientRole ? doc.recipients.find(r => r.role?.toLowerCase() === doc.recipientRole?.toLowerCase()) : doc.recipients.find(r => r.email === currentUserEmail);
         const myStatus = myRecipient?.status || doc.status;
-        if (!["signed", "reviewed", "approved", "completed"].includes(myStatus)) return false;
+        if (!["signed", "completed"].includes(myStatus)) return false;
       }
     }
     else if (activeFilter === "rejected") {
       if (doc.direction === "sent") {
-        const hasRejection = doc.recipients.some(r => r.status === "rejected");
-        if (!hasRejection && doc.status !== "rejected") return false;
+        const hasRejection = doc.recipients.some(r => ["rejected", "changes_requested"].includes(r.status || ""));
+        if (!hasRejection && !["rejected", "changes_requested"].includes(doc.status)) return false;
       } else {
         const myRecipient = doc.recipientRole ? doc.recipients.find(r => r.role?.toLowerCase() === doc.recipientRole?.toLowerCase()) : doc.recipients.find(r => r.email === currentUserEmail);
         const myStatus = myRecipient?.status || doc.status;
-        if (myStatus !== "rejected") return false;
+        if (myStatus !== "rejected" && myStatus !== "changes_requested") return false;
       }
     }
     else if (activeFilter === "received") {
@@ -733,7 +739,7 @@ export default function DocumentsPage() {
               key={`${doc.id}-${index}`}
               className="group flex flex-col justify-between overflow-hidden rounded-[1.6rem] border border-slate-200 bg-[#eef2f7] shadow-sm hover:border-slate-300 hover:shadow-md transition-all relative"
             >
-              <div className="flex items-start justify-between gap-3 px-4 pb-3 pt-4">
+              <div className="flex items-start justify-between gap-3 px-2 pb-3 pt-4">
                 <div className="flex items-start gap-3 min-w-0 flex-1">
                   <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-semibold ${getDocKind(doc) === "pdf" ? "bg-red-100 text-red-600" : getDocKind(doc) === "image" ? "bg-emerald-100 text-emerald-600" : "bg-blue-100 text-blue-600"}`}>
                     {getDocKind(doc) === "image" ? <ImageIcon className="h-4 w-4" /> : getDocKind(doc) === "pdf" ? "PDF" : <FileImage className="h-4 w-4" />}
@@ -891,12 +897,12 @@ export default function DocumentsPage() {
                 </div>
               </div>
 
-              <div className="mx-4 h-40 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+              <div className="mx-2 h-40 overflow-hidden rounded-2xl border border-slate-200 bg-white">
                 {getPreview(doc)}
               </div>
 
               {isRenaming === doc.id && (
-                <div className="mt-3 flex gap-2 px-4">
+                <div className="mt-3 flex gap-2 px-2">
                   <input
                     type="text"
                     value={newName}
@@ -919,7 +925,7 @@ export default function DocumentsPage() {
                 </div>
               )}
 
-              <div className="mt-4 flex items-center gap-2 px-4">
+              <div className="mt-4 flex items-center gap-2 px-2">
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-500 text-xs font-semibold text-white">
                   {(doc.sender.fullName || "P").charAt(0).toUpperCase()}
                 </div>
@@ -932,7 +938,7 @@ export default function DocumentsPage() {
                 </p>
               </div>
 
-              <div className="mt-4 flex items-center justify-between border-t border-slate-200 bg-white/50 px-4 py-3">
+              <div className="mt-4 flex items-center justify-between border-t border-slate-200 bg-white/50 px-2 py-3">
                 <div>{getStatusBadge(doc)}</div>
                 <div className="flex items-center gap-2">
                   <button
@@ -951,7 +957,7 @@ export default function DocumentsPage() {
       ) : (
         <div className="mt-6 space-y-3">
           {filteredDocuments.map((doc, index) => (
-            <div key={`${doc.id}-${index}`} className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div key={`${doc.id}-${index}`} className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white px-2 py-4 shadow-sm">
               <div className="flex h-16 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
                 {getPreview(doc)}
               </div>

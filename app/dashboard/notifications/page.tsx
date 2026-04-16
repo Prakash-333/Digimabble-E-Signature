@@ -96,8 +96,10 @@ const formatDateTime = (value: string) =>
 
 const formatStatus = (s: string | null) => {
   if (!s) return "";
-  if (s.toLowerCase() === "reviewed") return "Approved";
-  return s.charAt(0).toUpperCase() + s.slice(1);
+  const low = s.toLowerCase();
+  if (low === "reviewed") return "Approved";
+  if (low === "changes_requested") return "Changes Requested";
+  return s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, " ");
 };
 
 const getFieldSize = (field: Pick<PlacedField, "type" | "width" | "height">) => {
@@ -157,6 +159,8 @@ export default function NotificationsPage() {
   const [placedFields, setPlacedFields] = useState<PlacedField[]>([]);
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
   const [showConfirmSend, setShowConfirmSend] = useState(false);
+  const [showConfirmApprove, setShowConfirmApprove] = useState(false);
+  const [approveData, setApproveData] = useState<{ item: any; html?: string } | null>(null);
   const [signMessage, setSignMessage] = useState("");
   const [isSigning, setIsSigning] = useState(false);
 
@@ -311,6 +315,8 @@ export default function NotificationsPage() {
     setPlacedFields([]);
     setSelectedFieldId(null);
     setShowConfirmSend(false);
+    setShowConfirmApprove(false);
+    setApproveData(null);
     setSignMessage("");
     setIsSigning(false);
   };
@@ -440,7 +446,7 @@ export default function NotificationsPage() {
           });
         } else {
           row.recipients.forEach((r) => {
-            if (["signed", "reviewed", "approved", "rejected"].includes(r.status || "")) {
+            if (["signed", "reviewed", "approved", "rejected", "changes_requested", "completed"].includes(r.status || "")) {
               const virtualId = `${row.id}_${normalizeEmail(r.email)}_${r.status}`;
               if (hiddenIds.has(virtualId)) return;
               outgoing.push({
@@ -682,7 +688,11 @@ export default function NotificationsPage() {
                       <span
                         className={`inline-flex rounded-full px-3 py-1 text-[11px] font-bold ${
                           completed || item.type === "outgoing_update"
-                            ? item.recipientStatus === "rejected" ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"
+                            ? item.recipientStatus === "rejected" 
+                              ? "bg-red-50 text-red-700" 
+                              : item.recipientStatus === "changes_requested"
+                                ? "bg-amber-50 text-amber-700"
+                                : "bg-green-50 text-green-700"
                             : "bg-amber-50 text-amber-700"
                         }`}
                       >
@@ -946,10 +956,12 @@ export default function NotificationsPage() {
                       <button
                         onClick={async () => {
                           const contentDiv = document.querySelector('.editable-content');
-                          const finalHtml = isEditMode && contentDiv ? (contentDiv as HTMLElement).innerHTML : (localEditedContent || (contentDiv ? (contentDiv as HTMLElement).innerHTML : undefined));
-                          await handleUpdate(viewingItem, finalHtml || undefined);
-                          setViewingItem(null);
-                          resetSigningState();
+                          const finalHtml = isEditMode && contentDiv 
+                            ? (contentDiv as HTMLElement).innerHTML 
+                            : (localEditedContent || (contentDiv ? (contentDiv as HTMLElement).innerHTML : undefined));
+                          
+                          setApproveData({ item: viewingItem, html: finalHtml || undefined });
+                          setShowConfirmApprove(true);
                         }}
                         disabled={processingId === viewingItem.virtualId}
                         className="flex items-center gap-2 rounded-xl bg-green-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-green-200 hover:bg-green-700 transition-all disabled:opacity-60"
@@ -1334,13 +1346,26 @@ export default function NotificationsPage() {
               <button
                 onClick={async () => {
                   setProcessingId(requireChangesItem.virtualId);
+                  
+                  // Capture current edits from the viewer if any
+                  const contentDiv = document.querySelector('.editable-content');
+                  const currentHtml = isEditMode && contentDiv 
+                    ? (contentDiv as HTMLElement).innerHTML 
+                    : (localEditedContent || (contentDiv ? (contentDiv as HTMLElement).innerHTML : undefined));
+
                   const { data: docRow } = await supabase
                     .from("documents")
-                    .select("recipients")
+                    .select("recipients, content")
                     .eq("id", requireChangesItem.id)
                     .single();
 
-                  const patchData: Record<string, unknown> = { status: "changes_requested" };
+                  const patchData: Record<string, unknown> = { status: "rejected" };
+                  
+                  // Save edited content if it changed
+                  if (currentHtml) {
+                    patchData.content = highlightHtmlEdits(initialContent, currentHtml);
+                  }
+
                   if (docRow?.recipients && Array.isArray(docRow.recipients)) {
                     const updatedRecipients = docRow.recipients.map((r: any) =>
                       normalizeEmail(r.email) === currentEmail
@@ -1358,13 +1383,24 @@ export default function NotificationsPage() {
                   const { error } = await supabase.from("documents").update(patchData).eq("id", requireChangesItem.id);
                   setProcessingId(null);
                   
-                  if (!error) {
-                    setItems((prev) =>
-                      prev.map((entry) =>
-                        entry.virtualId === requireChangesItem.virtualId ? { ...entry, recipientStatus: "changes_requested" } : entry
-                      )
-                    );
+                  if (error) {
+                    alert("Failed to send change request. Please try again.");
+                    console.error("Error updating document:", error);
+                    return;
                   }
+
+                  setItems((prev) =>
+                    prev.map((entry) =>
+                      entry.virtualId === requireChangesItem.virtualId 
+                        ? { 
+                            ...entry, 
+                            recipientStatus: "changes_requested",
+                            content: patchData.content as string || entry.content
+                          } 
+                        : entry
+                    )
+                  );
+                  
                   setRequireChangesItem(null);
                   setRequireChangesMessage("");
                   setViewingItem(null);
@@ -1425,6 +1461,49 @@ export default function NotificationsPage() {
                   <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Submitting...</>
                 ) : (
                   <><ShieldCheck className="h-3.5 w-3.5" /> Confirm & Send</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Confirm Approve Popup */}
+      {showConfirmApprove && approveData && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md mx-4 bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-6 pt-6 pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3 mb-1">
+                <div className="h-8 w-8 rounded-full bg-violet-100 flex items-center justify-center text-violet-600">
+                  <CheckCircle2 className="h-5 w-5" />
+                </div>
+                <h3 className="text-base font-bold text-slate-900">Confirm Approval</h3>
+              </div>
+              <p className="text-xs text-slate-500 ml-11">
+                Are you sure you want to approve <span className="font-semibold text-slate-800">&ldquo;{approveData.item.name}&rdquo;</span>? This will notify the sender.
+              </p>
+            </div>
+            <div className="px-6 py-6 flex gap-3">
+              <button
+                onClick={() => { setShowConfirmApprove(false); setApproveData(null); }}
+                className="flex-1 py-2.5 rounded-2xl text-slate-600 font-bold text-sm border border-slate-200 hover:bg-slate-50 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  const item = approveData.item;
+                  const html = approveData.html;
+                  setShowConfirmApprove(false);
+                  setApproveData(null);
+                  await handleUpdate(item, html);
+                }}
+                disabled={processingId === approveData.item.virtualId}
+                className="flex-[2] py-2.5 rounded-2xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {processingId === approveData.item.virtualId ? (
+                  <><Loader2 className="h-3.5 w-3.5 animate-spin" />Approving...</>
+                ) : (
+                  <>Confirm Approval</>
                 )}
               </button>
             </div>

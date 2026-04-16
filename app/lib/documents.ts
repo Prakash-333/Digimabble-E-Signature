@@ -55,4 +55,4 @@ export const isReviewRequest = (record: Pick<SharedDocumentRecord, "category" | 
   record.category === "Reviewer" || record.status === "reviewing" || normalizeEmail(role) === "reviewer";
 
 export const isCompletedForRecipient = (status: string) =>
-  ["reviewed", "approved", "signed", "completed", "rejected"].includes(status);
+  ["reviewed", "approved", "signed", "completed", "rejected", "changes_requested"].includes(status);

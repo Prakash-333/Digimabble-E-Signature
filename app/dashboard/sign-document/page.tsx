@@ -162,6 +162,7 @@ export default function SignDocumentPage() {
   const [htmlContent, setHtmlContent] = useState<string | null>(null);
   const [signedHtmlContent, setSignedHtmlContent] = useState<string | null>(null);
   const [showSignMessageDialog, setShowSignMessageDialog] = useState(false);
+  const [showConfirmSend, setShowConfirmSend] = useState(false);
   const [signMessage, setSignMessage] = useState("");
   const signMessageRef = useRef("");
 
@@ -2120,10 +2121,53 @@ export default function SignDocumentPage() {
                 Cancel
               </button>
               <button
-                onClick={() => void handleConfirmAndSend()}
+                onClick={() => {
+                  setShowSignMessageDialog(false);
+                  setShowConfirmSend(true);
+                }}
                 className="flex-[2] py-2.5 rounded-2xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700 transition-all flex items-center justify-center gap-2"
               >
                 Send
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Final Confirm Send Popup */}
+      {showConfirmSend && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md mx-4 bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-6 pt-6 pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3 mb-1">
+                <div className="h-8 w-8 rounded-full bg-violet-100 flex items-center justify-center text-violet-600">
+                  <CloudUpload className="h-5 w-5" />
+                </div>
+                <h3 className="text-base font-bold text-slate-900">Final Confirmation</h3>
+              </div>
+              <p className="text-xs text-slate-500 ml-11">
+                Are you sure you want to send this signed document? This action will finalize the process.
+              </p>
+            </div>
+            <div className="px-6 py-6 flex gap-3">
+              <button
+                onClick={() => { setShowConfirmSend(false); setShowSignMessageDialog(true); }}
+                className="flex-1 py-2.5 rounded-2xl text-slate-600 font-bold text-sm border border-slate-200 hover:bg-slate-50 transition-all"
+              >
+                Back
+              </button>
+              <button
+                onClick={async () => {
+                  setShowConfirmSend(false);
+                  await handleConfirmAndSend();
+                }}
+                disabled={isUploadingSigned}
+                className="flex-[2] py-2.5 rounded-2xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {isUploadingSigned ? (
+                  <><Loader2 className="h-3.5 w-3.5 animate-spin" />Sending...</>
+                ) : (
+                  <>Yes, Send Now</>
+                )}
               </button>
             </div>
           </div>
