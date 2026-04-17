@@ -4,6 +4,13 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { CheckCircle2, Loader2, FileText, PenLine as Pen, Lock, ShieldCheck, AlertCircle, Clock, X, RotateCcw, Edit3, Save, Eye as EyeIcon, RotateCw, PenTool, ChevronLeft, MessageSquare } from "lucide-react";
 import { getGuestDocumentMetaData, markFirstLogin, submitGuestSignature } from "../../actions/document-guest";
+import {
+  buildPositionedDocumentHtml,
+  DOCUMENT_STAGE_FONT_FAMILY,
+  DOCUMENT_STAGE_MIN_HEIGHT,
+  DOCUMENT_STAGE_PADDING,
+  renderDocumentStageBodyHtml,
+} from "../../lib/document-stage";
 import { highlightHtmlEdits, saveSelection, restoreSelection, stripHighlights } from "../../lib/diff";
 import { supabase } from "../../lib/supabase/browser";
 import { normalizeEmail } from "../../lib/documents";
@@ -578,7 +585,8 @@ export default function PublicSignPage() {
         let fieldsHtml = "";
         placedFields.forEach(field => {
           const { width, height } = getFieldSize(field);
-          const style = `position: absolute; left: ${field.x}px; top: ${field.y}px; width: ${width}px; height: ${height}px; z-index: 50; pointer-events: none; display: flex; align-items: center; justify-content: center;`;
+          const alignmentStyle = field.type === "stamp" ? "justify-content: center;" : "justify-content: flex-start; padding-left: 8px;";
+          const style = `position: absolute; left: ${field.x}px; top: ${field.y}px; width: ${width}px; height: ${height}px; z-index: 50; pointer-events: none; display: flex; align-items: center; ${alignmentStyle} box-sizing: border-box;`;
           
           if (field.type === "stamp" && field.value) {
             fieldsHtml += `<div style="${style}"><img src="${field.value}" alt="Signature" style="width: 100%; height: 100%; object-fit: contain;" /></div>`;
@@ -590,8 +598,7 @@ export default function PublicSignPage() {
 
         // Wrap in a self-contained relative container (800px, no padding) so that
         // the absolute-positioned fields perfectly match the internal sender views.
-        const baseHtml = stripHighlights(document?.content || "");
-        finalContent = `<div style="position:relative;width:800px;min-height:1056px;background:#fff;box-sizing:border-box;"><div style="padding:64px;min-height:1056px;font-size:15px;color:#1e293b;line-height:1.9;letter-spacing:-0.01em;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${baseHtml}</div>${fieldsHtml}</div>`;
+        finalContent = buildPositionedDocumentHtml(stripHighlights(document?.content || ""), fieldsHtml);
       }
 
       const { success, error: subError } = await submitGuestSignature(id, savedSignature || "", signMessage, finalContent);
@@ -874,13 +881,37 @@ export default function PublicSignPage() {
             )}
 
             {isReviewMode ? (
-              <button
-                onClick={() => setShowConfirmSubmit(true)}
-                disabled={isSubmitting}
-                className="flex items-center gap-2 rounded-xl bg-violet-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all disabled:opacity-60"
-              >
-                {isSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />} Approve
-              </button>
+              <>
+                <button
+                  onClick={handleResetChanges}
+                  disabled={isSubmitting}
+                  className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-50 transition-all shadow-sm disabled:opacity-60"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" /> Reset
+                </button>
+                {isEditMode ? (
+                  <button
+                    onClick={handleToggleEdit}
+                    className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-all shadow-sm"
+                  >
+                    <Save className="h-3.5 w-3.5" /> Stop editing
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleToggleEdit}
+                    className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-xs font-bold text-violet-700 hover:bg-violet-100 transition-all shadow-sm"
+                  >
+                    <Edit3 className="h-3.5 w-3.5" /> Edit Document
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowConfirmSubmit(true)}
+                  disabled={isSubmitting}
+                  className="flex items-center gap-2 rounded-xl bg-violet-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all disabled:opacity-60"
+                >
+                  {isSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />} Approve
+                </button>
+              </>
             ) : (
               <button
                 onClick={() => {
@@ -974,9 +1005,13 @@ export default function PublicSignPage() {
                   contentEditable={isEditMode}
                   onInput={handleDocumentInput}
                   suppressContentEditableWarning
-                  className={`relative editable-content w-full min-h-[1056px] bg-white rounded-2xl shadow-xl border border-slate-200 p-12 md:p-16 text-[15px] text-slate-800 leading-[1.9] tracking-tight outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10' : ''}`} 
-                  style={{ fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}
-                  dangerouslySetInnerHTML={{ __html: document.content }} 
+                  className={`relative editable-content w-full bg-white rounded-2xl shadow-xl border border-slate-200 text-[15px] text-slate-800 leading-[1.9] outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10' : ''}`}
+                  style={{
+                    minHeight: `${DOCUMENT_STAGE_MIN_HEIGHT}px`,
+                    padding: `${DOCUMENT_STAGE_PADDING}px`,
+                    fontFamily: DOCUMENT_STAGE_FONT_FAMILY,
+                  }}
+                  dangerouslySetInnerHTML={{ __html: renderDocumentStageBodyHtml(document.content || "") }}
                 />
               ) : document?.file_url ? (
                 <div className="flex flex-col items-center justify-center py-40">

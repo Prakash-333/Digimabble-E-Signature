@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye, Search, PenLine, Copy } from "lucide-react";
 import { deleteCloudFiles } from "../../actions/uploadthing";
 import { supabase } from "../../lib/supabase/browser";
+import { hasPositionedDocumentStage, renderDocumentStageBodyHtml } from "../../lib/document-stage";
 import { getMatchingRecipient, normalizeEmail } from "../../lib/documents";
 import { highlightHtmlEdits } from "../../lib/diff";
 import { Edit3, Save, ShieldCheck, Loader2, RotateCcw } from "lucide-react";
@@ -1403,7 +1404,7 @@ function DocumentDetailModal({
 
     const totalCount = currentDoc.recipients.length;
     const rejectedCount = currentDoc.recipients.filter(
-      (r) => (r as { status?: string }).status === "rejected"
+      (r) => ["rejected", "changes_requested"].includes((r as { status?: string }).status || "")
     ).length;
     const completedCount = currentDoc.recipients.filter(
       (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
@@ -1444,7 +1445,7 @@ function DocumentDetailModal({
 
     const totalCount = currentDoc.recipients.length;
     const rejectedCount = currentDoc.recipients.filter(
-      (r) => (r as { status?: string }).status === "rejected"
+      (r) => ["rejected", "changes_requested"].includes((r as { status?: string }).status || "")
     ).length;
     const completedCount = currentDoc.recipients.filter(
       (r) => ["signed", "reviewed", "approved", "completed"].includes((r as { status?: string }).status || "")
@@ -1478,7 +1479,7 @@ function DocumentDetailModal({
 
     const totalCount = currentDoc.recipients.length;
     const rejectedCount = currentDoc.recipients.filter(
-      (r) => (r as { status?: string }).status === "rejected"
+      (r) => ["rejected", "changes_requested"].includes((r as { status?: string }).status || "")
     ).length;
     const completedCount = currentDoc.recipients.filter(
       (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
@@ -1798,19 +1799,21 @@ function DocumentDetailModal({
                 const displayContent = viewingR?.signed_content || currentDoc.content;
 
                 if (displayContent) {
+                  const isPositionedDocument = hasPositionedDocumentStage(displayContent);
                   return (
                     <div className="w-[800px] min-h-[1056px] mx-auto relative origin-top max-w-full">
                       <div className="relative w-full min-h-[1056px] bg-white rounded-xl border border-slate-200 shadow-sm">
                         <div
                           contentEditable={isEditMode}
                           suppressContentEditableWarning
-                          className={`modal-document-content document-content min-h-[1056px] p-12 md:p-16 text-[14px] text-slate-800 leading-[1.8] tracking-tight outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10 rounded-xl' : ''}`}
+                          className={`modal-document-content document-content min-h-[1056px] text-[14px] text-slate-800 leading-[1.8] tracking-tight outline-none transition-all duration-300 ${isPositionedDocument ? '' : 'p-12 md:p-16'} ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10 rounded-xl' : ''}`}
                           style={{
                             fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                           }}
                           dangerouslySetInnerHTML={{
                             __html: (() => {
                               const baseHtml = editedContent || displayContent || "";
+                              if (isPositionedDocument) return baseHtml;
                               if (isEditMode) return baseHtml.replace(/\n/g, "<br/>");
                               
                               // If we have an initialContent and a baseHtml, we might want to diff.
@@ -1821,9 +1824,7 @@ function DocumentDetailModal({
                                 highlighted = highlightHtmlEdits(initialContent || displayContent || "", baseHtml);
                               }
                               
-                              return highlighted
-                                .replace(/\n/g, "<br/>")
-                                .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">');
+                              return renderDocumentStageBodyHtml(highlighted);
                             })()
                           }}
                         />

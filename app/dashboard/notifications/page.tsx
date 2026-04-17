@@ -5,6 +5,14 @@ import { Bell, CheckCircle2, FileSignature, Eye, Loader2, MoreVertical, ChevronL
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/browser";
 import { highlightHtmlEdits } from "../../lib/diff";
+import {
+  buildPositionedDocumentHtml,
+  DOCUMENT_STAGE_FONT_FAMILY,
+  DOCUMENT_STAGE_MIN_HEIGHT,
+  DOCUMENT_STAGE_PADDING,
+  hasPositionedDocumentStage,
+  renderDocumentStageBodyHtml,
+} from "../../lib/document-stage";
 import { getStoredSignature } from "../../lib/signature-storage";
 import {
   getMatchingRecipient,
@@ -341,12 +349,7 @@ export default function NotificationsPage() {
         return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;width:${width}px;min-height:${height}px;z-index:50;pointer-events:none;display:flex;align-items:center;font-size:${fontSize}px;line-height:1.2;color:#0f172a;white-space:pre-wrap;font-family:inherit;overflow-wrap:anywhere;">${f.value || ""}</div>`;
       }).join("");
 
-      const baseHtml = item.content || "";
-      // Wrap in a self-contained relative container (800px, no padding) so that
-      // the absolute-positioned fields have the same coordinate origin as
-      // previewStageRef (the outer div the signer used). The document text goes
-      // inside a padded inner div, mirroring the signer's stage layout exactly.
-      const finalContent = `<div style="position:relative;width:800px;min-height:1056px;background:#fff;box-sizing:border-box;"><div style="padding:64px;min-height:1056px;font-size:15px;color:#1e293b;line-height:1.9;letter-spacing:-0.01em;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${baseHtml}</div>${fieldsHtml}</div>`;
+      const finalContent = buildPositionedDocumentHtml(item.content || "", fieldsHtml);
 
       if (currentUserId) {
         markNotificationSeen(currentUserId, item.virtualId);
@@ -1105,23 +1108,26 @@ export default function NotificationsPage() {
                 addPlacedField(type, "", { x, y });
               }}
             >
-              <div className="max-w-4xl mx-auto flex justify-center">
+                <div className="max-w-4xl mx-auto flex justify-center">
                 <div className="relative w-[800px]" ref={previewStageRef}>
                   <div
-                    className="relative editable-content w-full min-h-[1056px] bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200 p-12 md:p-16 text-[15px] text-slate-800 leading-[1.9] tracking-tight outline-none"
-                    style={{ fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}
+                    className="relative editable-content w-full bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200 text-[15px] text-slate-800 leading-[1.9] tracking-tight outline-none"
+                    style={{
+                      minHeight: `${DOCUMENT_STAGE_MIN_HEIGHT}px`,
+                      padding: hasPositionedDocumentStage(localEditedContent || viewingItem.content || "") ? "0px" : `${DOCUMENT_STAGE_PADDING}px`,
+                      fontFamily: DOCUMENT_STAGE_FONT_FAMILY,
+                    }}
                     onClick={() => setSelectedFieldId(null)}
                     contentEditable={isEditMode}
                     suppressContentEditableWarning={true}
                     dangerouslySetInnerHTML={{
                       __html: (() => {
                         const baseHtml = localEditedContent || viewingItem.content || "";
+                        if (hasPositionedDocumentStage(baseHtml)) return baseHtml;
                         const highlighted = (!isEditMode && localEditedContent)
                           ? highlightHtmlEdits(initialContent, localEditedContent)
                           : baseHtml;
-                        return highlighted
-                          .replace(/\n/g, "<br/>")
-                          .replace(/<strong>/g, '<strong style="font-weight:700; color:#0f172a;">');
+                        return renderDocumentStageBodyHtml(highlighted);
                       })()
                     }}
                   />
@@ -1373,7 +1379,7 @@ export default function NotificationsPage() {
                   if (docRow?.recipients && Array.isArray(docRow.recipients)) {
                     const updatedRecipients = docRow.recipients.map((r: any) =>
                       normalizeEmail(r.email) === currentEmail
-                        ? { ...r, status: "changes_requested", change_message: requireChangesMessage.trim() || null }
+                        ? { ...r, status: "changes_requested", reject_reason: requireChangesMessage.trim() || null }
                         : r
                     );
                     patchData.recipients = updatedRecipients;

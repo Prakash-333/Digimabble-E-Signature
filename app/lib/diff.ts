@@ -78,8 +78,8 @@ export function restoreSelection(containerNode: Node, savedSel: SavedSelection |
  */
 export function stripHighlights(html: string): string {
   if (!html) return "";
-  // Removes only the <span> tags with our specific styling classes
-  return html.replace(/<span class="bg-yellow-100\/80[^>]*>(.*?)<\/span>/g, "$1");
+  // Removes only the <span> tags with our specific 'highlight' class
+  return html.replace(/<span class="highlight[^>]*>(.*?)<\/span>/g, "$1");
 }
 
 export function highlightHtmlEdits(originalHtml: string, newHtml: string): string {
