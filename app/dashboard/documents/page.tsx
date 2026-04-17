@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye, Search, PenLine } from "lucide-react";
+import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye, Search, PenLine, Copy } from "lucide-react";
 import { deleteCloudFiles } from "../../actions/uploadthing";
 import { supabase } from "../../lib/supabase/browser";
 import { getMatchingRecipient, normalizeEmail } from "../../lib/documents";
@@ -193,7 +193,7 @@ export default function DocumentsPage() {
         const consolidated = remoteDocsRaw.reduce((acc, doc) => {
           const timeKey = doc.sentAt ? doc.sentAt.substring(0, 16) : `no-time-${doc.id}`;
           // Include direction and unique ID in groupKey to prevent merging
-          const groupKey = `${doc.direction}-${doc.fileKey || doc.id}`;
+          const groupKey = `${doc.direction}-${doc.id}`;
 
           if (!acc[groupKey]) {
             acc[groupKey] = { ...doc };
@@ -304,6 +304,39 @@ export default function DocumentsPage() {
     setDocuments(updatedDocs);
     await supabase.from("documents").delete().eq("id", id);
     setOpenMenuId(null);
+  };
+
+  const handleDuplicate = async (doc: SentDocument) => {
+    if (!userId) return;
+
+    try {
+      const { data, error } = await supabase
+        .from("documents")
+        .insert({
+          owner_id: userId,
+          name: `Copy of ${doc.name}`,
+          subject: doc.subject,
+          recipients: [], // Clear recipients for the duplicate
+          sender: doc.sender,
+          sent_at: doc.sentAt ? new Date(new Date(doc.sentAt).getTime() - 1000).toISOString() : new Date().toISOString(),
+          status: "draft",
+          file_url: doc.fileUrl || null,
+          file_key: doc.fileKey || null,
+          category: doc.category || null,
+          content: doc.content || null,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      
+      // The real-time channel will handle the list update
+      alert("Document duplicated successfully!");
+      setOpenMenuId(null);
+    } catch (err) {
+      console.error("Failed to duplicate document:", err);
+      alert("Failed to duplicate document. Please try again.");
+    }
   };
 
   const handleRename = (id: string) => {
@@ -869,6 +902,13 @@ export default function DocumentsPage() {
                         Download
                       </button>
                       <button
+                        onClick={() => handleDuplicate(doc)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
+                      >
+                        <Copy className="h-3 w-3" />
+                        Duplicate
+                      </button>
+                      <button
                         onClick={() => {
                           setOpenMenuId(null);
                           setIsRenaming(doc.id);
@@ -1030,6 +1070,7 @@ export default function DocumentsPage() {
                       return null;
                     })()}
                     <button onClick={() => handleDownload(doc)} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">Download</button>
+                    <button onClick={() => handleDuplicate(doc)} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">Duplicate</button>
                     <button onClick={() => { setOpenMenuId(null); setIsRenaming(doc.id); setNewName(doc.name); }} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">Rename</button>
                     <button onClick={() => { setOpenMenuId(null); setDetailDoc(doc); }} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">More</button>
                     <div className="h-px bg-slate-100 my-1" />
@@ -1102,6 +1143,18 @@ export default function DocumentsPage() {
                   title="Reset all edits"
                 >
                   <RotateCcw className="h-4 w-4 transition-transform group-hover:rotate-[-45deg]" />
+                </button>
+              )}
+
+              {viewingDoc && (
+                <button
+                  onClick={() => {
+                    router.push(`/dashboard/templates?step=type_selection&documentId=${encodeURIComponent(viewingDoc.id)}`);
+                  }}
+                  className="flex items-center gap-2 rounded-xl bg-green-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-green-200 hover:bg-green-700 transition-all ml-2"
+                >
+                  <ArrowUpRight className="h-3.5 w-3.5" />
+                  Send
                 </button>
               )}
 

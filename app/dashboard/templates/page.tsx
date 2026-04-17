@@ -371,92 +371,93 @@ function TemplatesContent() {
     }
   };
 
-  // Check for step=recipients parameter to open template flow at step 2
+  // Check for step parameters to open template flow at specific steps
   useEffect(() => {
     if (currentUserId === undefined) return;
 
-    const stepParam = searchParams.get("step");
+    const stepParam = searchParams.get("step") as "recipients" | "type_selection" | null;
     const documentId = searchParams.get("documentId");
-    if (stepParam !== "recipients" || !documentId || !currentUserId) return;
+    
+    if (!(stepParam === "recipients" || stepParam === "type_selection") || !documentId || !currentUserId) return;
     if (loadedDocumentIdRef.current === documentId) return;
 
     loadedDocumentIdRef.current = documentId;
 
-      const loadReviewedDocument = async () => {
-        const { data, error } = await supabase
-          .from("documents")
-          .select("id, name, category, file_url, content")
-          .eq("id", documentId)
-          .eq("owner_id", currentUserId)
-          .maybeSingle();
+    const loadReviewedDocument = async () => {
+      const { data, error } = await supabase
+        .from("documents")
+        .select("id, name, category, file_url, content")
+        .eq("id", documentId)
+        .eq("owner_id", currentUserId)
+        .maybeSingle();
 
-        const docData = data as ReviewedDocumentRow | null;
+      const docData = data as ReviewedDocumentRow | null;
 
-        if (error || !docData) {
-          console.warn("Failed to load reviewed document:", error);
-          return;
+      if (error || !docData) {
+        console.warn("Failed to load reviewed document:", error);
+        return;
+      }
+
+      loadedDocumentIdRef.current = documentId;
+
+      const tempId = `review-${docData.id}`;
+      
+      setAppTemplates((prev) => {
+        const nameExists = prev.find((t) => t.name === docData.name && !String(t.id).startsWith("review-"));
+        
+        if (nameExists) {
+           // If a saved template with the same name exists, we'll merge and select IT instead of creating a new temporary one.
+           setTimeout(() => {
+              setSelectedForUse(nameExists.id);
+              setUseStep(stepParam);
+           }, 0);
+          return prev.map((t) =>
+            t.name === docData.name
+              ? {
+                  ...t,
+                  detectedText: docData.content ?? t.detectedText,
+                  fileDataUrl: docData.file_url ?? t.fileDataUrl,
+                }
+              : t
+          );
         }
 
-        loadedDocumentIdRef.current = documentId;
-
-        const tempId = `review-${docData.id}`;
-        
-        setAppTemplates((prev) => {
-          const nameExists = prev.find((t) => t.name === docData.name && !String(t.id).startsWith("review-"));
+        if (!prev.some(t => t.id === tempId)) {
+          const tempTemplate: AppTemplate = {
+            id: tempId,
+            initial: docData.name.charAt(0).toUpperCase(),
+            name: docData.name,
+            category: (docData.category as Template["category"]) || "Legal",
+            updated: formatTemplateUpdatedLabel(),
+            uses: "0 uses",
+            color: "bg-violet-50 text-violet-600",
+            fileDataUrl: docData.file_url ?? undefined,
+            detectedText: docData.content ?? undefined,
+            preview: {
+              headline: docData.name,
+              sections: [{ title: "Document", lines: ["Reviewed document ready to send"] }],
+            },
+          };
           
-          if (nameExists) {
-             // If a saved template with the same name exists, we'll merge and select IT instead of creating a new temporary one.
-             setTimeout(() => {
-                setSelectedForUse(nameExists.id);
-                setUseStep("recipients");
-             }, 0);
-            return prev.map((t) =>
-              t.name === docData.name
-                ? {
-                    ...t,
-                    detectedText: docData.content ?? t.detectedText,
-                    fileDataUrl: docData.file_url ?? t.fileDataUrl,
-                  }
-                : t
-            );
-          }
-
-          if (!prev.some(t => t.id === tempId)) {
-            const tempTemplate: AppTemplate = {
-              id: tempId,
-              initial: docData.name.charAt(0).toUpperCase(),
-              name: docData.name,
-              category: (docData.category as Template["category"]) || "Legal",
-              updated: formatTemplateUpdatedLabel(),
-              uses: "0 uses",
-              color: "bg-violet-50 text-violet-600",
-              fileDataUrl: docData.file_url ?? undefined,
-              detectedText: docData.content ?? undefined,
-              preview: {
-                headline: docData.name,
-                sections: [{ title: "Document", lines: ["Reviewed document ready to send"] }],
-              },
-            };
-            
-            setTimeout(() => {
-              setSelectedForUse(tempId);
-              setUseStep("recipients");
-            }, 0);
-            
-            return [tempTemplate, ...prev];
-          }
-
           setTimeout(() => {
             setSelectedForUse(tempId);
-            setUseStep("recipients");
+            setUseStep(stepParam);
           }, 0);
           
-          return prev;
-        });
-      };
+          return [tempTemplate, ...prev];
+        }
 
-      void loadReviewedDocument();
-    }, [searchParams, currentUserId]);
+        setTimeout(() => {
+          setSelectedForUse(tempId);
+          setUseStep(stepParam);
+        }, 0);
+        
+        return prev;
+      });
+    };
+
+    void loadReviewedDocument();
+  }, [searchParams, currentUserId]);
 
   const filteredTemplates = useMemo(() => {
     let filtered = appTemplates;
