@@ -902,13 +902,34 @@ export default function DocumentsPage() {
                         <Download className="h-3 w-3" />
                         Download
                       </button>
-                      <button
-                        onClick={() => handleDuplicate(doc)}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
-                      >
-                        <Copy className="h-3 w-3" />
-                        Duplicate
-                      </button>
+                      {(() => {
+                        const isSender = doc.direction === "sent";
+                        const totalCount = doc.recipients.length;
+                        const anyChangesRequired = doc.recipients.some(
+                          (r) => ["rejected", "changes_requested"].includes(r.status || "")
+                        );
+                        const completedCount = doc.recipients.filter(
+                          (r) => ["signed", "reviewed", "approved", "completed"].includes(r.status || "")
+                        ).length;
+
+                        const isPending = isSender && (
+                          totalCount > 0 
+                            ? (!anyChangesRequired && completedCount !== totalCount)
+                            : (!["reviewed", "approved", "signed", "completed", "reviewing", "rejected", "changes_requested"].includes(doc.status) && doc.category !== "Reviewer")
+                        );
+
+                        if (!isPending) return null;
+
+                        return (
+                          <button
+                            onClick={() => handleDuplicate(doc)}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
+                          >
+                            <Copy className="h-3 w-3" />
+                            Duplicate
+                          </button>
+                        );
+                      })()}
                       <button
                         onClick={() => {
                           setOpenMenuId(null);
@@ -988,11 +1009,17 @@ export default function DocumentsPage() {
                 <div>{getStatusBadge(doc)}</div>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setDetailDoc(doc)}
+                    onClick={() => {
+                      if (doc.status === "draft") {
+                        setViewingDoc(doc);
+                      } else {
+                        setDetailDoc(doc);
+                      }
+                    }}
                     className="text-[11px] font-semibold text-slate-700 hover:text-violet-600 transition-all flex items-center gap-1 border border-slate-300 px-2.5 py-1 rounded-full hover:border-violet-300"
                   >
                     <ArrowUpRight className="h-3 w-3" />
-                    View More
+                    {doc.status === "draft" ? "View" : "View More"}
                   </button>
 
                 </div>
@@ -1018,8 +1045,17 @@ export default function DocumentsPage() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => setDetailDoc(doc)} className="rounded-full border border-slate-300 px-3.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:border-violet-300 hover:text-violet-600">
-                  View More
+                <button 
+                  onClick={() => {
+                    if (doc.status === "draft") {
+                      setViewingDoc(doc);
+                    } else {
+                      setDetailDoc(doc);
+                    }
+                  }} 
+                  className="rounded-full border border-slate-300 px-3.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:border-violet-300 hover:text-violet-600"
+                >
+                  {doc.status === "draft" ? "View" : "View More"}
                 </button>
                 <button
                   onClick={(e) => {
@@ -1071,7 +1107,28 @@ export default function DocumentsPage() {
                       return null;
                     })()}
                     <button onClick={() => handleDownload(doc)} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">Download</button>
-                    <button onClick={() => handleDuplicate(doc)} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">Duplicate</button>
+                    {(() => {
+                      const isSender = doc.direction === "sent";
+                      const totalCount = doc.recipients.length;
+                      const anyChangesRequired = doc.recipients.some(
+                        (r) => ["rejected", "changes_requested"].includes(r.status || "")
+                      );
+                      const completedCount = doc.recipients.filter(
+                        (r) => ["signed", "reviewed", "approved", "completed"].includes(r.status || "")
+                      ).length;
+
+                      const isPending = isSender && (
+                        totalCount > 0 
+                          ? (!anyChangesRequired && completedCount !== totalCount)
+                          : (!["reviewed", "approved", "signed", "completed", "reviewing", "rejected", "changes_requested"].includes(doc.status) && doc.category !== "Reviewer")
+                      );
+
+                      if (!isPending) return null;
+
+                      return (
+                        <button onClick={() => handleDuplicate(doc)} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">Duplicate</button>
+                      );
+                    })()}
                     <button onClick={() => { setOpenMenuId(null); setIsRenaming(doc.id); setNewName(doc.name); }} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">Rename</button>
                     <button onClick={() => { setOpenMenuId(null); setDetailDoc(doc); }} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50">More</button>
                     <div className="h-px bg-slate-100 my-1" />
@@ -1149,24 +1206,66 @@ export default function DocumentsPage() {
 
               {viewingDoc && (
                 <button
-                  onClick={() => {
+                  onClick={async () => {
+                    const isSender = viewingDoc.direction === "sent";
+                    if (isEditMode) {
+                      const contentDiv = document.querySelector('.editable-content');
+                      const cleanHtml = contentDiv ? contentDiv.innerHTML : (editedContent || initialContent || viewingDoc.content || "");
+                      const highlighted = viewingDoc.status === "draft" 
+                        ? cleanHtml 
+                        : highlightHtmlEdits(initialContent || viewingDoc.content || "", cleanHtml);
+                      
+                      setIsPersisting(true);
+                      try {
+                        if (isSender) {
+                          const { error } = await supabase
+                            .from("documents")
+                            .update({ content: highlighted })
+                            .eq("id", viewingDoc.id);
+                          if (error) throw error;
+                          setDocuments(prev => prev.map(d => d.id === viewingDoc.id ? { ...d, content: highlighted } : d));
+                        } else {
+                          const { error } = await supabase
+                            .from("documents")
+                            .update({ content: highlighted, status: "reviewed" })
+                            .eq("id", viewingDoc.id);
+                          if (error) throw error;
+                          setDocuments(prev => prev.map(d => d.id === viewingDoc.id ? { ...d, content: highlighted, status: "reviewed" } : d));
+                        }
+                        setIsEditMode(false);
+                        setEditedContent(null);
+                      } catch (err) {
+                        alert("Failed to save changes before sending: " + (err instanceof Error ? err.message : String(err)));
+                        setIsPersisting(false);
+                        return; // Stop if save fails
+                      } finally {
+                        setIsPersisting(false);
+                      }
+                    }
                     router.push(`/dashboard/templates?step=type_selection&documentId=${encodeURIComponent(viewingDoc.id)}`);
                   }}
-                  className="flex items-center gap-2 rounded-xl bg-green-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-green-200 hover:bg-green-700 transition-all ml-2"
+                  disabled={isPersisting}
+                  className="flex items-center gap-2 rounded-xl bg-green-600 px-6 py-2 text-xs font-bold text-white shadow-lg shadow-green-200 hover:bg-green-700 transition-all ml-2 disabled:opacity-50"
                 >
-                  <ArrowUpRight className="h-3.5 w-3.5" />
-                  Send
+                  {isPersisting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ArrowUpRight className="h-3.5 w-3.5" />
+                  )}
+                  {viewingDoc.status === "draft" ? "Send to others" : "Send"}
                 </button>
               )}
 
-              {isEditMode && (() => {
+              {isEditMode && !viewingDoc.direction?.includes("sent") && (() => {
                 const isSender = viewingDoc.direction === "sent";
                 return (
                   <button
                     onClick={async () => {
                       const contentDiv = document.querySelector('.editable-content');
                       const cleanHtml = contentDiv ? contentDiv.innerHTML : (editedContent || initialContent || viewingDoc.content || "");
-                      const highlighted = highlightHtmlEdits(initialContent || viewingDoc.content || "", cleanHtml);
+                      const highlighted = viewingDoc.status === "draft"
+                        ? cleanHtml
+                        : highlightHtmlEdits(initialContent || viewingDoc.content || "", cleanHtml);
                       
                       setIsPersisting(true);
                       try {
@@ -1234,8 +1333,8 @@ export default function DocumentsPage() {
                       const baseHtml = editedContent || viewingDoc.content || "";
                       if (isEditMode) return baseHtml.replace(/\n/g, "<br/>");
                       
-                      // Apply highlighting ONLY if local edits exist to avoid false positives
-                      const highlighted = editedContent 
+                      // Apply highlighting ONLY if local edits exist and it's not a draft
+                      const highlighted = (editedContent && viewingDoc.status !== "draft")
                         ? highlightHtmlEdits(initialContent || viewingDoc.content || "", editedContent)
                         : baseHtml;
 
