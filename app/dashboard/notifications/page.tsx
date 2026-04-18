@@ -628,7 +628,9 @@ export default function NotificationsPage() {
     
     if (displayContent) {
       setViewingItem({ ...item, content: displayContent });
-      setInitialContent(displayContent);
+      // IMPORTANT: initialContent must be the ORIGINAL document content (stripped of any prior highlights),
+      // NOT the signed_content or edited version. This ensures diff highlights correctly identify new edits.
+      setInitialContent(stripHighlights(item.content || displayContent));
       setLocalEditedContent(null);
       setIsEditMode(false);
       resetSigningState();
