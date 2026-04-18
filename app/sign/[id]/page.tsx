@@ -641,6 +641,21 @@ export default function PublicSignPage() {
     }
   };
 
+  const handleReject = async () => {
+    setIsSubmitting(true);
+    try {
+      // Rejections don't need content updates, just the status and reason
+      const { success, error: subError } = await submitGuestSignature(id, "", rejectReason, undefined, "rejected");
+      if (!success) throw new Error(subError);
+      setIsSigned(true);
+    } catch (err: unknown) {
+      alert("Failed to reject: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsSubmitting(false);
+      setRejectingItem(false);
+    }
+  };
+
   const applyReviewHighlights = () => {
     if (!contentRef.current) return;
 

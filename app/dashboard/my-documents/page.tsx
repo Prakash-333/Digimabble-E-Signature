@@ -51,8 +51,18 @@ export default function MyDocumentsPage() {
     // Load documents from Supabase on mount
     useEffect(() => {
         const loadDocuments = async () => {
-            const { data } = await supabase.auth.getUser();
-            const currentUser = data.user;
+            const { data: { session } } = await supabase.auth.getSession();
+            let currentUser = session?.user;
+
+            if (!currentUser) {
+                const { data: authData, error: authError } = await supabase.auth.getUser();
+                if (authError) {
+                    if (authError.message?.includes("stole it")) return;
+                    throw authError;
+                }
+                currentUser = authData.user;
+            }
+
             if (!currentUser) return;
             setUserId(currentUser.id);
 

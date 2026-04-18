@@ -459,17 +459,22 @@ export default function DocumentsPage() {
       ).length;
 
       if (totalCount > 0) {
-        const anyChangesRequired = recipients.some(
-          (r) => ["rejected", "changes_requested"].includes((r as { status?: string }).status || "")
-        );
-        if (anyChangesRequired) {
-          const reqCount = recipients.filter(
-            (r) => ["rejected", "changes_requested"].includes((r as { status?: string }).status || "")
-          ).length;
+        const rejectedNum = recipients.filter(r => (r as { status?: string }).status === "rejected").length;
+        const changesNum = recipients.filter(r => (r as { status?: string }).status === "changes_requested").length;
+
+        if (rejectedNum > 0) {
           return (
             <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-[10px] font-semibold text-red-700">
               <XCircle className="mr-1 h-3 w-3" />
-              {reqCount === totalCount ? "Changes Required" : `${reqCount} Changes Required`}
+              {rejectedNum === totalCount ? "Rejected" : `${rejectedNum} Rejected`}
+            </span>
+          );
+        }
+        if (changesNum > 0) {
+          return (
+            <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-semibold text-amber-700">
+              <Clock className="mr-1 h-3 w-3" />
+              {changesNum === totalCount ? "Changes Required" : `${changesNum} Changes Required`}
             </span>
           );
         }
@@ -498,10 +503,18 @@ export default function DocumentsPage() {
         : null;
       const myStatus = myRecipient?.status || recipients.find(r => r.email)?.status;
 
-      if (myStatus === "rejected" || myStatus === "changes_requested") {
+      if (myStatus === "rejected") {
         return (
           <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-[10px] font-semibold text-red-700">
             <XCircle className="mr-1 h-3 w-3" />
+            Rejected
+          </span>
+        );
+      }
+      if (myStatus === "changes_requested") {
+        return (
+          <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-semibold text-amber-700">
+            <Clock className="mr-1 h-3 w-3" />
             Changes Required
           </span>
         );
@@ -577,36 +590,48 @@ export default function DocumentsPage() {
     if (activeFilter === "all") {/* noop */}
     else if (activeFilter === "pending") {
       if (doc.direction === "sent") {
-        const hasRejection = doc.recipients.some(r => r.status === "rejected");
-        if (hasRejection || doc.status === "rejected") return false;
-        const allCompleted = doc.recipients.length > 0 && doc.recipients.every(r => ["signed", "reviewed", "approved"].includes(r.status || ""));
+        const hasRejection = doc.recipients.some(r => ["rejected", "changes_requested"].includes(r.status || ""));
+        if (hasRejection || ["rejected", "changes_requested"].includes(doc.status)) return false;
+        const allCompleted = doc.recipients.length > 0 && doc.recipients.every(r => ["signed", "reviewed", "approved", "completed"].includes(r.status || ""));
         if (allCompleted) return false;
       } else {
         const myRecipient = doc.recipientRole ? doc.recipients.find(r => r.role?.toLowerCase() === doc.recipientRole?.toLowerCase()) : doc.recipients.find(r => r.email === currentUserEmail);
         const myStatus = myRecipient?.status || doc.status;
-        if (myStatus === "rejected" || ["signed", "reviewed", "approved", "completed"].includes(myStatus)) return false;
+        if (["rejected", "changes_requested"].includes(myStatus || "") || ["signed", "reviewed", "approved", "completed"].includes(myStatus || "")) return false;
       }
     }
     else if (activeFilter === "approved") {
       if (doc.direction === "sent") {
-        const hasRejection = doc.recipients.some(r => r.status === "rejected");
-        if (hasRejection || doc.status === "rejected") return false;
+        const hasRejection = doc.recipients.some(r => ["rejected", "changes_requested"].includes(r.status || ""));
+        if (hasRejection || ["rejected", "changes_requested"].includes(doc.status)) return false;
         const allSigned = doc.recipients.length > 0 && doc.recipients.every(r => ["signed", "completed"].includes(r.status || ""));
         if (!allSigned) return false;
       } else {
         const myRecipient = doc.recipientRole ? doc.recipients.find(r => r.role?.toLowerCase() === doc.recipientRole?.toLowerCase()) : doc.recipients.find(r => r.email === currentUserEmail);
         const myStatus = myRecipient?.status || doc.status;
-        if (!["signed", "completed"].includes(myStatus)) return false;
+        if (!["signed", "completed"].includes(myStatus || "")) return false;
       }
     }
     else if (activeFilter === "rejected") {
       if (doc.direction === "sent") {
-        const hasRejection = doc.recipients.some(r => ["rejected", "changes_requested"].includes(r.status || ""));
-        if (!hasRejection && !["rejected", "changes_requested"].includes(doc.status)) return false;
+        const hasRejection = doc.recipients.some(r => r.status === "rejected");
+        if (!hasRejection) return false;
       } else {
         const myRecipient = doc.recipientRole ? doc.recipients.find(r => r.role?.toLowerCase() === doc.recipientRole?.toLowerCase()) : doc.recipients.find(r => r.email === currentUserEmail);
         const myStatus = myRecipient?.status || doc.status;
-        if (myStatus !== "rejected" && myStatus !== "changes_requested") return false;
+        if (myStatus !== "rejected") return false;
+      }
+    }
+    else if (activeFilter === "changes") {
+      if (doc.direction === "sent") {
+        const hasChanges = doc.recipients.some(r => r.status === "changes_requested");
+        const hasRejection = doc.recipients.some(r => r.status === "rejected");
+        // Only show in "Changes Required" if there are changes but NO actual rejections
+        if (!hasChanges || hasRejection) return false;
+      } else {
+        const myRecipient = doc.recipientRole ? doc.recipients.find(r => r.role?.toLowerCase() === doc.recipientRole?.toLowerCase()) : doc.recipients.find(r => r.email === currentUserEmail);
+        const myStatus = myRecipient?.status || doc.status;
+        if (myStatus !== "changes_requested") return false;
       }
     }
     else if (activeFilter === "received") {
@@ -712,7 +737,7 @@ export default function DocumentsPage() {
       </div>
 
       <div className="mt-6 flex flex-wrap gap-2">
-        {[{ value: "all", label: "All" }, { value: "pending", label: "Pending" }, { value: "approved", label: "Signed" }, { value: "rejected", label: "Changes Required" }, { value: "received", label: "Approved" }].map((tag) => (
+        {[{ value: "all", label: "All" }, { value: "pending", label: "Pending" }, { value: "approved", label: "Signed" }, { value: "rejected", label: "Rejected" }, { value: "changes", label: "Changes Required" }, { value: "received", label: "Approved" }].map((tag) => (
           <button
             key={tag.value}
             onClick={() => setActiveFilter(tag.value)}
@@ -1463,8 +1488,8 @@ function DocumentDetailModal({
 
   const getRecipientStatusLabel = (r: { name: string; email: string; role: string; status?: string }) => {
     const s = (r as { status?: string }).status;
-    const role = r.role?.toLowerCase();
-    if (s === "rejected") return "Changes Required";
+    if (s === "rejected") return "Rejected";
+    if (s === "changes_requested") return "Changes Required";
     if (s === "signed") return "Signed";
     if (s === "reviewed") return "Approved";
     if (s === "approved") return "Approved";
@@ -1474,6 +1499,7 @@ function DocumentDetailModal({
   const getRecipientStatusColor = (r: { name: string; email: string; role: string; status?: string }) => {
     const s = (r as { status?: string }).status;
     if (s === "rejected") return "bg-red-100 text-red-700";
+    if (s === "changes_requested") return "bg-amber-100 text-amber-700";
     if (s === "signed" || s === "reviewed" || s === "approved") return "bg-green-100 text-green-700";
     return "bg-amber-100 text-amber-700";
   };
@@ -1494,7 +1520,8 @@ function DocumentDetailModal({
         ? currentDoc.recipients.find(r => normalizeEmail(r.email) === currentUserEmail)
         : currentDoc.recipients[0];
       const s = myRecipient?.status;
-      if (s === "rejected") return "Changes Required";
+      if (s === "rejected") return "Rejected";
+      if (s === "changes_requested") return "Changes Required";
       if (s === "signed") return "Signed";
       if (s === "reviewed") return "Approved";
       if (s === "approved") return "Approved";
@@ -1503,16 +1530,23 @@ function DocumentDetailModal({
 
     const totalCount = currentDoc.recipients.length;
     const rejectedCount = currentDoc.recipients.filter(
-      (r) => ["rejected", "changes_requested"].includes((r as { status?: string }).status || "")
+      (r) => (r as { status?: string }).status === "rejected"
+    ).length;
+    const changesCount = currentDoc.recipients.filter(
+      (r) => (r as { status?: string }).status === "changes_requested"
     ).length;
     const completedCount = currentDoc.recipients.filter(
-      (r) => ["signed", "reviewed", "approved"].includes((r as { status?: string }).status || "")
+      (r) => ["signed", "reviewed", "approved", "completed"].includes((r as { status?: string }).status || "")
     ).length;
 
-    // Multi-recipient logic: only show "Reviewed" when ALL recipients have reviewed
+    // Multi-recipient logic: prioritize Rejected > Changes Required
     if (totalCount > 0) {
-      if (rejectedCount > 0 && rejectedCount === totalCount) return "Changes Required";
-      if (rejectedCount > 0) return `${rejectedCount} Changes Required`;
+      if (rejectedCount > 0) {
+        return rejectedCount === totalCount ? "Rejected" : `${rejectedCount} Rejected`;
+      }
+      if (changesCount > 0) {
+        return changesCount === totalCount ? "Changes Required" : `${changesCount} Changes Required`;
+      }
       if (completedCount === totalCount) {
         return totalCount === 1 
           ? (currentDoc.recipients[0]?.status === "reviewed" ? "Approved" : "Signed")
@@ -1522,7 +1556,8 @@ function DocumentDetailModal({
     }
 
     // Check document-level status for documents with no recipients
-    if (currentDoc.status === "rejected") return "Changes Required";
+    if (currentDoc.status === "rejected") return "Rejected";
+    if (currentDoc.status === "changes_requested") return "Changes Required";
     if (currentDoc.status === "reviewed") return "Approved";
     if (currentDoc.status === "approved") return "Approved";
     if (currentDoc.status === "signed" || currentDoc.status === "completed") return "Signed";
@@ -1538,6 +1573,7 @@ function DocumentDetailModal({
         : currentDoc.recipients[0];
       const s = myRecipient?.status;
       if (s === "rejected") return "bg-red-100 text-red-700 border-red-200";
+      if (s === "changes_requested") return "bg-amber-100 text-amber-700 border-amber-200";
       if (s === "signed" || s === "reviewed" || s === "approved") return "bg-green-100 text-green-700 border-green-200";
       return "bg-amber-100 text-amber-700 border-amber-200";
     }
@@ -1552,13 +1588,16 @@ function DocumentDetailModal({
 
     // Multi-recipient logic first
     if (totalCount > 0) {
+      const rejectedCount = currentDoc.recipients.filter(r => (r as { status?: string }).status === "rejected").length;
       if (rejectedCount > 0) return "bg-red-100 text-red-700 border-red-200";
+      const changesCount = currentDoc.recipients.filter(r => (r as { status?: string }).status === "changes_requested").length;
+      if (changesCount > 0) return "bg-amber-100 text-amber-700 border-amber-200";
       if (completedCount === totalCount) return "bg-green-100 text-green-700 border-green-200";
       return "bg-blue-100 text-blue-700 border-blue-200";
     }
 
     // Check document-level status for documents with no recipients
-    if (currentDoc.status === "rejected") return "bg-red-100 text-red-700 border-red-200";
+    if (currentDoc.status === "rejected" || currentDoc.status === "changes_requested") return "bg-amber-100 text-amber-700 border-amber-200";
     if (["signed", "completed", "reviewed", "approved"].includes(currentDoc.status)) return "bg-green-100 text-green-700 border-green-200";
     if (currentDoc.status === "reviewing") return "bg-yellow-100 text-yellow-700 border-yellow-200";
     if (currentDoc.status === "waiting") return "bg-orange-100 text-orange-700 border-orange-200";

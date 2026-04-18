@@ -394,8 +394,18 @@ export default function NotificationsPage() {
 
   useEffect(() => {
     const loadIncomingRequests = async () => {
-      const { data } = await supabase.auth.getUser();
-      const currentUser = data.user;
+      const { data: { session } } = await supabase.auth.getSession();
+      let currentUser = session?.user;
+
+      if (!currentUser) {
+        const { data: { user: freshUser }, error: authError } = await supabase.auth.getUser();
+        if (authError) {
+          if (authError.message?.includes("stole it")) return;
+          throw authError;
+        }
+        currentUser = freshUser ?? undefined;
+      }
+
       const email = normalizeEmail(currentUser?.email);
 
       if (!currentUser || !email) {
@@ -695,10 +705,10 @@ export default function NotificationsPage() {
                       <span
                         className={`inline-flex rounded-full px-3 py-1 text-[11px] font-bold ${
                           completed || item.type === "outgoing_update"
-                            ? item.recipientStatus === "rejected" 
-                              ? "bg-red-50 text-red-700" 
+                            ? item.recipientStatus === "rejected"
+                              ? "bg-red-100 text-red-700"
                               : item.recipientStatus === "changes_requested"
-                                ? "bg-amber-50 text-amber-700"
+                                ? "bg-amber-100 text-amber-700"
                                 : "bg-green-50 text-green-700"
                             : "bg-amber-50 text-amber-700"
                         }`}

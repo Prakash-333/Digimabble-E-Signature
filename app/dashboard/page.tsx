@@ -61,8 +61,18 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const loadCounts = async () => {
-      const { data } = await supabase.auth.getUser();
-      const user = data.user;
+      const { data: { session } } = await supabase.auth.getSession();
+      let user = session?.user;
+
+      if (!user) {
+        const { data: { user: freshUser }, error: authError } = await supabase.auth.getUser();
+        if (authError) {
+          if (authError.message?.includes("stole it")) return;
+          throw authError;
+        }
+        user = freshUser ?? undefined;
+      }
+
       if (!user) return;
 
       setUserLabel(user.user_metadata?.full_name || user.email || "User");

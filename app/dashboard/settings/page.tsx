@@ -24,9 +24,19 @@ export default function SettingsPage() {
   useEffect(() => {
     const loadProfile = async () => {
       try {
-        const { data, error: authError } = await supabase.auth.getUser();
-        const currentUser = data.user;
-        if (authError || !currentUser) {
+        const { data: { session } } = await supabase.auth.getSession();
+        let currentUser = session?.user;
+
+        if (!currentUser) {
+          const { data: authData, error: authError } = await supabase.auth.getUser();
+          if (authError) {
+            if (authError.message?.includes("stole it")) return;
+            throw authError;
+          }
+          currentUser = authData.user;
+        }
+
+        if (!currentUser) {
           setBanner("Please sign in again to load your profile.");
           return;
         }
