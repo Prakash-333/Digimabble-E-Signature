@@ -92,7 +92,54 @@ const createMockClient = () => {
   } as unknown as any;
 };
 
-// Export either the real client or the mock
-export const supabase = isConfigured 
-  ? createClient(supabaseUrl, supabaseAnonKey)
-  : createMockClient();
+// Add explicit auth config for better stability in Next.js
+const authConfig = {
+  persistSession: true,
+  autoRefreshToken: true,
+  detectSessionInUrl: true,
+  storageKey: `sb-${supabaseUrl?.split("//")[1]?.split(".")[0]}-auth-token`,
+  flowType: 'pkce' as const,
+};
+
+// Singleton instance to prevent multiple client initializations
+let supabaseInstance: any;
+
+const getSupabaseClient = () => {
+  // If we already have an instance, return it
+  if (supabaseInstance) return supabaseInstance;
+
+  // For browser environment, check window to survive HMR in development
+  if (typeof window !== "undefined") {
+    if ((window as any)._supabaseInstance) {
+      supabaseInstance = (window as any)._supabaseInstance;
+      return supabaseInstance;
+    }
+
+    supabaseInstance = isConfigured 
+      ? createClient(supabaseUrl!, supabaseAnonKey!, { 
+          auth: {
+            ...authConfig,
+            // Add extra resilience for Next.js 15+ environments
+            lock: typeof window !== 'undefined' ? undefined : {
+              acquire: async () => {},
+              release: async () => {},
+            }
+          } 
+        })
+      : createMockClient();
+
+    // Cache the instance on window in development
+    if (process.env.NODE_ENV === 'development') {
+      (window as any)._supabaseInstance = supabaseInstance;
+    }
+    
+    return supabaseInstance;
+  }
+
+  // Fallback for SSR
+  return isConfigured 
+    ? createClient(supabaseUrl!, supabaseAnonKey!, { auth: authConfig })
+    : createMockClient();
+};
+
+export const supabase = getSupabaseClient();

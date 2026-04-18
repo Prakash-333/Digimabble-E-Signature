@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye, Search, PenLine, Copy } from "lucide-react";
+import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye, Search, PenLine, Copy, CloudUpload } from "lucide-react";
 import { deleteCloudFiles } from "../../actions/uploadthing";
 import { supabase } from "../../lib/supabase/browser";
 import { hasPositionedDocumentStage, renderDocumentStageBodyHtml } from "../../lib/document-stage";
 import { getMatchingRecipient, normalizeEmail } from "../../lib/documents";
-import { highlightHtmlEdits } from "../../lib/diff";
+
 import { Edit3, Save, ShieldCheck, Loader2, RotateCcw } from "lucide-react";
+import { useUploadThing } from "../../lib/uploadthing-client";
+import { analyzeDocumentFile } from "../../lib/document-analysis";
 
 type Recipient = { 
   name: string; 
@@ -128,6 +130,105 @@ export default function DocumentsPage() {
   const [initialContent, setInitialContent] = useState("");
   const [editedContent, setEditedContent] = useState<string | null>(null);
   const [isPersisting, setIsPersisting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [pendingFileUrl, setPendingFileUrl] = useState<string | null>(null);
+  const [pendingFileKey, setPendingFileKey] = useState<string | null>(null);
+
+  const { startUpload, isUploading } = useUploadThing("documentUploader", {
+    onClientUploadComplete: (res) => {
+      if (res?.[0]) {
+        setPendingFileUrl(res[0].url);
+        setPendingFileKey(res[0].key);
+      }
+    },
+    onUploadError: (err) => {
+      alert("Upload failed: " + err.message);
+    }
+  });
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0 && viewingDoc) {
+      const file = e.target.files[0];
+      setIsAnalyzing(true);
+      try {
+        const analysis = await analyzeDocumentFile(file);
+        setEditedContent(analysis.textContent);
+        setViewingDoc(prev => prev ? { ...prev, name: file.name.replace(/\.[^/.]+$/, "") } : null);
+        // Start upload
+        await startUpload([file]);
+      } catch (error) {
+        console.error("Analysis failed:", error);
+        alert("Failed to analyze document.");
+      } finally {
+        setIsAnalyzing(false);
+      }
+    }
+  };
+
+  const handleSendToExistingRecipients = async (doc: SentDocument, highlightedContent: string) => {
+    if (!doc.recipients || doc.recipients.length === 0) {
+      alert("No recipients found for this document.");
+      return;
+    }
+
+    setIsPersisting(true);
+    try {
+      // 1. Save changes to DB first
+      const updatePayload: any = { content: highlightedContent };
+      if (pendingFileUrl) updatePayload.file_url = pendingFileUrl;
+      if (pendingFileKey) updatePayload.file_key = pendingFileKey;
+      if (viewingDoc?.name) updatePayload.name = viewingDoc.name;
+
+      const { error: updateError } = await supabase
+        .from("documents")
+        .update(updatePayload)
+        .eq("id", doc.id);
+      
+      if (updateError) throw updateError;
+
+      // 2. Trigger emails to all recipients
+      const emailPromises = doc.recipients.map(recipient => 
+        fetch('/api/send-document', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            documentId: doc.id,
+            recipientEmail: recipient.email,
+            recipientName: recipient.name,
+            senderName: doc.sender.fullName || "User",
+            documentName: viewingDoc?.name || doc.name,
+            subject: doc.subject || `Document Update: ${doc.name}`
+          })
+        }).then(res => res.json())
+      );
+
+      const results = await Promise.all(emailPromises);
+      console.log("Direct send results:", results);
+
+      // Check for any major failures
+      const failures = results.filter(r => r.error);
+      if (failures.length > 0) {
+        console.warn("Some emails failed to send:", failures);
+      }
+
+      // Update local state and close
+      setDocuments(prev => prev.map(d => d.id === doc.id ? { ...d, ...updatePayload, status: "waiting" } : d));
+      setViewingDoc(null);
+      setIsEditMode(false);
+      setEditedContent(null);
+      setPendingFileUrl(null);
+      setPendingFileKey(null);
+      
+      alert("Document updated and sent successfully to all recipients!");
+    } catch (err) {
+      console.error("Direct send failed:", err);
+      alert("Failed to send: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsPersisting(false);
+    }
+  };
+
 
   useEffect(() => {
     let isMounted = true;
@@ -241,9 +342,9 @@ export default function DocumentsPage() {
             });
             const advancedStatuses = ["pending", "signed", "reviewed", "approved", "completed", "rejected"];
             const currentStatusIndex = advancedStatuses.indexOf(acc[groupKey].status || "pending");
-            const newStatusIndex = advancedStatuses.indexOf(doc.status || "pending");
-            
-            if (newStatusIndex > currentStatusIndex) {
+            // Update overall document status and content/fileUrl if new status is higher OR equal priority
+            // Equal priority is important for capturing subsequent edits once a document is already 'rejected'
+            if (newStatusIndex >= currentStatusIndex) {
               acc[groupKey].status = doc.status || "pending";
               if (doc.content) acc[groupKey].content = doc.content;
               if (doc.fileUrl) acc[groupKey].fileUrl = doc.fileUrl;
@@ -887,20 +988,36 @@ export default function DocumentsPage() {
                                 <Eye className="h-3 w-3" />
                                 View
                               </button>
-                              {doc.direction === "sent" && (
-                                <button
-                                  onClick={() => {
-                                    setOpenMenuId(null);
-                                    setInitialContent(displayContent);
-                                    setViewingDoc({ ...doc, content: displayContent });
-                                    setIsEditMode(true);
-                                  }}
-                                  className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-bold text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
-                                >
-                                  <Edit3 className="h-3 w-3" />
-                                  Edit Content
-                                </button>
-                              )}
+                              {doc.direction === "sent" && (() => {
+                                const totalCount = doc.recipients.length;
+                                const anyChangesRequired = doc.recipients.some(
+                                  (r) => ["rejected", "changes_requested"].includes(r.status || "")
+                                );
+                                const completedCount = doc.recipients.filter(
+                                  (r) => ["signed", "reviewed", "approved", "completed"].includes(r.status || "")
+                                ).length;
+
+                                const isPending = totalCount > 0 
+                                    ? (!anyChangesRequired && completedCount !== totalCount)
+                                    : (!["reviewed", "approved", "signed", "completed", "reviewing", "rejected", "changes_requested"].includes(doc.status) && doc.category !== "Reviewer");
+
+                                if (!isPending) return null;
+
+                                return (
+                                  <button
+                                    onClick={() => {
+                                      setOpenMenuId(null);
+                                      setInitialContent(displayContent || "");
+                                      setViewingDoc({ ...doc, content: displayContent || "" });
+                                      setIsEditMode(true);
+                                    }}
+                                    className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-bold text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
+                                  >
+                                    <Edit3 className="h-3 w-3" />
+                                    Edit Document
+                                  </button>
+                                );
+                              })()}
                             </>
                           );
                         }
@@ -1114,11 +1231,36 @@ export default function DocumentsPage() {
                             <button onClick={() => { setOpenMenuId(null); setViewingDoc({ ...doc, content: displayContent }); }} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2">
                               <Eye className="h-3 w-3" />View
                             </button>
-                            {doc.direction === "sent" && (
-                              <button onClick={() => { setOpenMenuId(null); setInitialContent(displayContent); setViewingDoc({ ...doc, content: displayContent }); setIsEditMode(true); }} className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-violet-600 hover:bg-violet-50 flex items-center gap-2">
-                                <Edit3 className="h-3 w-3" />Edit Content
-                              </button>
-                            )}
+                            {doc.direction === "sent" && (() => {
+                              const totalCount = doc.recipients.length;
+                              const anyChangesRequired = doc.recipients.some(
+                                (r) => ["rejected", "changes_requested"].includes(r.status || "")
+                              );
+                              const completedCount = doc.recipients.filter(
+                                (r) => ["signed", "reviewed", "approved", "completed"].includes(r.status || "")
+                              ).length;
+
+                              const isPending = totalCount > 0 
+                                  ? (!anyChangesRequired && completedCount !== totalCount)
+                                  : (!["reviewed", "approved", "signed", "completed", "reviewing", "rejected", "changes_requested"].includes(doc.status) && doc.category !== "Reviewer");
+
+                              if (!isPending) return null;
+
+                              return (
+                                <button
+                                  onClick={() => {
+                                    setOpenMenuId(null);
+                                    setInitialContent(displayContent || "");
+                                    setViewingDoc({ ...doc, content: displayContent || "" });
+                                    setIsEditMode(true);
+                                  }}
+                                  className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-violet-600 hover:bg-violet-50 flex items-center gap-2"
+                                >
+                                  <Edit3 className="h-3 w-3" />
+                                  Edit Document
+                                </button>
+                              );
+                            })()}
                           </>
                         );
                       }
@@ -1196,24 +1338,61 @@ export default function DocumentsPage() {
                  // Both senders and reviewers with pending documents can edit
                  if ((isSender || (isReviewer && canEdit))) {
                    return (
-                      <button
-                        onClick={() => {
-                          if (isEditMode) {
-                             const contentDiv = document.querySelector('.editable-content');
-                             if (contentDiv) {
-                               setEditedContent(contentDiv.innerHTML);
-                             }
-                          } else {
-                             if (!initialContent) {
-                               setInitialContent(viewingDoc.content || "");
-                             }
-                          }
-                          setIsEditMode(!isEditMode);
-                        }}
-                        className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-sm ${isEditMode ? 'bg-green-600 text-white shadow-green-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                      >
-                        {isEditMode ? <><Save className="h-3.5 w-3.5" /> Stop Editing</> : <><Edit3 className="h-3.5 w-3.5" /> Edit Document</>}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {viewingDoc.direction === "sent" && (
+                          <button
+                            onClick={() => {
+                              if (!isEditMode) setIsEditMode(true);
+                              fileInputRef.current?.click();
+                            }}
+                            disabled={isUploading || isAnalyzing}
+                            className="flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-sm bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                          >
+                            {isUploading || isAnalyzing ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <CloudUpload className="h-3.5 w-3.5 text-violet-600" />
+                            )}
+                            Upload Other Document
+                          </button>
+                        )}
+                        {viewingDoc.direction === "sent" && viewingDoc.recipients.length > 0 && (
+                          <button
+                            onClick={() => {
+                              const contentDiv = document.querySelector('.editable-content');
+                              const currentContent = contentDiv ? contentDiv.innerHTML : (editedContent || initialContent || viewingDoc.content || "");
+                              handleSendToExistingRecipients(viewingDoc, currentContent);
+                            }}
+                            disabled={isUploading || isAnalyzing || isPersisting}
+                            className="flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-md bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50"
+                          >
+                            {isPersisting ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <ArrowUpRight className="h-3.5 w-3.5" />
+                            )}
+                            Send Edited Document
+                          </button>
+                        )}
+                        <button
+                          onClick={() => {
+                            if (isEditMode) {
+                               const contentDiv = document.querySelector('.editable-content');
+                               if (contentDiv) {
+                                 setEditedContent(contentDiv.innerHTML);
+                               }
+                            } else {
+                               if (!initialContent) {
+                                 setInitialContent(viewingDoc.content || "");
+                               }
+                            }
+                            setIsEditMode(!isEditMode);
+                          }}
+                          className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-sm ${isEditMode ? 'bg-green-600 text-white shadow-green-200' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                        >
+                          {isEditMode ? <><Save className="h-3.5 w-3.5" /> Stop Editing</> : <><Edit3 className="h-3.5 w-3.5" /> Edit Document</>}
+                        </button>
+                      </div>
                    );
                  }
                  return null;
@@ -1236,29 +1415,35 @@ export default function DocumentsPage() {
                     if (isEditMode) {
                       const contentDiv = document.querySelector('.editable-content');
                       const cleanHtml = contentDiv ? contentDiv.innerHTML : (editedContent || initialContent || viewingDoc.content || "");
-                      const highlighted = viewingDoc.status === "draft" 
-                        ? cleanHtml 
-                        : highlightHtmlEdits(initialContent || viewingDoc.content || "", cleanHtml);
+                      const highlighted = cleanHtml;
+
                       
                       setIsPersisting(true);
                       try {
+                        const updatePayload: any = { content: highlighted };
+                        if (pendingFileUrl) updatePayload.file_url = pendingFileUrl;
+                        if (pendingFileKey) updatePayload.file_key = pendingFileKey;
+                        if (viewingDoc.name) updatePayload.name = viewingDoc.name;
+
                         if (isSender) {
                           const { error } = await supabase
                             .from("documents")
-                            .update({ content: highlighted })
+                            .update(updatePayload)
                             .eq("id", viewingDoc.id);
                           if (error) throw error;
-                          setDocuments(prev => prev.map(d => d.id === viewingDoc.id ? { ...d, content: highlighted } : d));
+                          setDocuments(prev => prev.map(d => d.id === viewingDoc.id ? { ...d, ...updatePayload } : d));
                         } else {
                           const { error } = await supabase
                             .from("documents")
-                            .update({ content: highlighted, status: "reviewed" })
+                            .update({ ...updatePayload, status: "reviewed" })
                             .eq("id", viewingDoc.id);
                           if (error) throw error;
-                          setDocuments(prev => prev.map(d => d.id === viewingDoc.id ? { ...d, content: highlighted, status: "reviewed" } : d));
+                          setDocuments(prev => prev.map(d => d.id === viewingDoc.id ? { ...d, ...updatePayload, status: "reviewed" } : d));
                         }
                         setIsEditMode(false);
                         setEditedContent(null);
+                        setPendingFileUrl(null);
+                        setPendingFileKey(null);
                       } catch (err) {
                         alert("Failed to save changes before sending: " + (err instanceof Error ? err.message : String(err)));
                         setIsPersisting(false);
@@ -1288,32 +1473,43 @@ export default function DocumentsPage() {
                     onClick={async () => {
                       const contentDiv = document.querySelector('.editable-content');
                       const cleanHtml = contentDiv ? contentDiv.innerHTML : (editedContent || initialContent || viewingDoc.content || "");
-                      const highlighted = viewingDoc.status === "draft"
-                        ? cleanHtml
-                        : highlightHtmlEdits(initialContent || viewingDoc.content || "", cleanHtml);
+                      const highlighted = cleanHtml;
+
                       
                       setIsPersisting(true);
                       try {
                         if (isSender) {
                           // Sender: update content only, keep original status so recipients can still sign/review
+                          const updatePayload: any = { content: highlighted };
+                          if (pendingFileUrl) updatePayload.file_url = pendingFileUrl;
+                          if (pendingFileKey) updatePayload.file_key = pendingFileKey;
+                          if (viewingDoc.name) updatePayload.name = viewingDoc.name;
+
                           const { error } = await supabase
                             .from("documents")
-                            .update({ content: highlighted })
+                            .update(updatePayload)
                             .eq("id", viewingDoc.id);
                           if (error) throw error;
-                          setDocuments(prev => prev.map(d => d.id === viewingDoc.id ? { ...d, content: highlighted } : d));
+                          setDocuments(prev => prev.map(d => d.id === viewingDoc.id ? { ...d, ...updatePayload } : d));
                         } else {
                           // Reviewer: update content and mark as reviewed
+                          const updatePayload: any = { content: highlighted, status: "reviewed" };
+                          if (pendingFileUrl) updatePayload.file_url = pendingFileUrl;
+                          if (pendingFileKey) updatePayload.file_key = pendingFileKey;
+                          if (viewingDoc.name) updatePayload.name = viewingDoc.name;
+
                           const { error } = await supabase
                             .from("documents")
-                            .update({ content: highlighted, status: "reviewed" })
+                            .update(updatePayload)
                             .eq("id", viewingDoc.id);
                           if (error) throw error;
-                          setDocuments(prev => prev.map(d => d.id === viewingDoc.id ? { ...d, content: highlighted, status: "reviewed" } : d));
+                          setDocuments(prev => prev.map(d => d.id === viewingDoc.id ? { ...d, ...updatePayload } : d));
                         }
                         setViewingDoc(null);
                         setIsEditMode(false);
                         setEditedContent(null);
+                        setPendingFileUrl(null);
+                        setPendingFileKey(null);
                       } catch (err) {
                         alert("Failed to save edits: " + (err instanceof Error ? err.message : String(err)));
                       } finally {
@@ -1359,9 +1555,8 @@ export default function DocumentsPage() {
                       if (isEditMode) return baseHtml.replace(/\n/g, "<br/>");
                       
                       // Apply highlighting ONLY if local edits exist and it's not a draft
-                      const highlighted = (editedContent && viewingDoc.status !== "draft")
-                        ? highlightHtmlEdits(initialContent || viewingDoc.content || "", editedContent)
-                        : baseHtml;
+                      const highlighted = baseHtml;
+
 
                       return highlighted
                         .replace(/\n/g, "<br/>")
@@ -1375,7 +1570,17 @@ export default function DocumentsPage() {
         </div>
       )}
 
+      {/* Hidden File Input for Uploading Replacement */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileUpload}
+        className="hidden"
+        accept="application/pdf,image/*,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,.txt,.csv"
+      />
+
       {/* Document Detail / Status Modal */}
+
       {detailDoc && (
         <DocumentDetailModal
           doc={detailDoc}
@@ -1793,7 +1998,7 @@ function DocumentDetailModal({
                           </span>
                           {(r.status === "rejected" || r.status === "changes_requested") && (
                             <p className="text-[10px] text-slate-500 pl-1">
-                              <span className="font-semibold text-red-500">Msg: </span>
+                              <span className="font-semibold text-amber-500">Msg: </span>
                               {r.reject_reason?.trim() || "No message"}
                             </p>
                           )}
@@ -1838,12 +2043,12 @@ function DocumentDetailModal({
             const rejectRecipient = currentDoc.recipients.find(r => ["rejected", "changes_requested"].includes(r.status || ""));
             if (!rejectRecipient) return null;
             return (
-              <div className="rounded-2xl border border-red-200 bg-red-50 shadow-sm overflow-hidden">
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 shadow-sm overflow-hidden">
                 <div className="px-6 py-4 flex items-start gap-3">
-                  <XCircle className="h-5 w-5 text-red-500 mt-0.5 shrink-0" />
+                  <Clock className="h-5 w-5 text-amber-500 mt-0.5 shrink-0" />
                   <div>
-                    <p className="text-sm font-bold text-red-700">Changes Required</p>
-                    <p className="text-sm text-red-600 mt-1 whitespace-pre-wrap">
+                    <p className="text-sm font-bold text-amber-700">Changes Required</p>
+                    <p className="text-sm text-amber-600 mt-1 whitespace-pre-wrap">
                       {rejectRecipient.reject_reason?.trim() || "No message provided"}
                     </p>
                   </div>
@@ -1958,9 +2163,7 @@ function DocumentDetailModal({
                               // But if we're just viewing a document that was already reviewed,
                               // baseHtml already contains the highlights.
                               let highlighted = baseHtml;
-                              if (isEditMode || editedContent) {
-                                highlighted = highlightHtmlEdits(initialContent || displayContent || "", baseHtml);
-                              }
+
                               
                               return renderDocumentStageBodyHtml(highlighted);
                             })()

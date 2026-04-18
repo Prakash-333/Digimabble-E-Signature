@@ -19,11 +19,21 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }: { data: { session: Session | null } }) => {
-      if (data.session) {
-        router.replace("/dashboard");
-      }
-    });
+    let mounted = true;
+    supabase.auth.getSession()
+      .then(({ data, error }) => {
+        if (error) {
+          console.error("Login session check error:", error);
+          return;
+        }
+        if (mounted && data?.session) {
+          router.replace("/dashboard");
+        }
+      })
+      .catch(err => {
+        console.error("Unexpected error in login initial check:", err);
+      });
+    return () => { mounted = false; };
   }, [router]);
 
   const handleLogin = async (e: FormEvent<HTMLFormElement>) => {

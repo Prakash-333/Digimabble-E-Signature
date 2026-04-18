@@ -41,6 +41,7 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [loadingSession, setLoadingSession] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [userLabel, setUserLabel] = useState("User");
   const [notificationCount, setNotificationCount] = useState(0);
   const [pendingIds, setPendingIds] = useState<string[]>([]);
@@ -63,87 +64,105 @@ export default function DashboardLayout({
     let mounted = true;
 
     const syncSession = async () => {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) {
-        console.error("Session sync error:", {
-          message: error.message,
-          status: error.status
-        });
-      }
-      if (!mounted) return;
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) {
+          console.error("Session sync error:", {
+            message: error.message,
+            status: error.status
+          });
+          setAuthError(error.message);
+        }
+        if (!mounted) return;
 
-      const session = data.session;
-      if (!session) {
-        router.replace("/login");
-        return;
-      }
-      setCurrentUserId(session.user.id);
+        const session = data?.session;
+        if (!session) {
+          router.replace("/login");
+          return;
+        }
+        setCurrentUserId(session.user.id);
 
-      const name =
-        session.user.user_metadata?.full_name ||
-        session.user.email ||
-        "User";
-      setUserLabel(name);
-      const userEmail = normalizeEmail(session.user.email);
-      if (userEmail) {
-        const { data: rows } = await supabase
+        const name =
+          session.user.user_metadata?.full_name ||
+          session.user.email ||
+          "User";
+        setUserLabel(name);
+        const userEmail = normalizeEmail(session.user.email);
+        if (userEmail) {
+          try {
+            const { data: rows, error: fetchError } = await supabase
+              .from("documents")
+              .select("id, owner_id, recipients, status, category, sender, sent_at, file_url, file_key, content, name, subject")
+              .order("sent_at", { ascending: false })
+              .limit(200);
+
+            if (fetchError) throw fetchError;
+
+            const hiddenIds = getHiddenNotificationIds(session.user.id);
+            const seenIds = getSeenNotificationIds(session.user.id);
+            
+            const ids: string[] = [];
+            ((rows ?? []) as SharedDocumentRecord[]).forEach((row) => {
+              if (row.owner_id !== session.user.id) {
+                // Incoming Request
+                if (hiddenIds.has(row.id) || seenIds.has(row.id)) return;
+                const isRecipient = Boolean(getMatchingRecipient(row.recipients, userEmail));
+                if (isRecipient && !isCompletedForRecipient(row.status)) {
+                  ids.push(row.id);
+                }
+              } else {
+                // Outgoing Update (track completions)
+                row.recipients.forEach((r) => {
+                  if (["signed", "reviewed", "approved", "rejected"].includes(r.status || "")) {
+                    const virtualId = `${row.id}_${normalizeEmail(r.email)}_${r.status}`;
+                    if (!hiddenIds.has(virtualId) && !seenIds.has(virtualId)) {
+                      ids.push(virtualId);
+                    }
+                  }
+                });
+              }
+            });
+            setPendingIds(ids);
+            setNotificationCount(ids.length);
+          } catch (err: any) {
+            console.warn("Failed to fetch notification rows:", err);
+          }
+        } else {
+          setPendingIds([]);
+          setNotificationCount(0);
+        }
+      } catch (err: any) {
+        console.error("Unexpected error in syncSession:", err);
+        setAuthError(err.message || "Failed to connect to authentication server.");
+      } finally {
+        if (mounted) setLoadingSession(false);
+      }
+    };
+
+    syncSession();
+
+    const { data } = supabase.auth.onAuthStateChange(async (_event: string, session: any) => {
+      try {
+        if (!session) {
+          router.replace("/login");
+          return;
+        }
+        setCurrentUserId(session.user.id);
+        const name =
+          session.user.user_metadata?.full_name ||
+          session.user.email ||
+          "User";
+        setUserLabel(name);
+        
+        const { data: rows, error: fetchError } = await supabase
           .from("documents")
           .select("id, owner_id, recipients, status, category, sender, sent_at, file_url, file_key, content, name, subject")
           .order("sent_at", { ascending: false })
           .limit(200);
 
-        const hiddenIds = getHiddenNotificationIds(session.user.id);
-        const seenIds = getSeenNotificationIds(session.user.id);
-        
-        const ids: string[] = [];
-        ((rows ?? []) as SharedDocumentRecord[]).forEach((row) => {
-          if (row.owner_id !== session.user.id) {
-            // Incoming Request
-            if (hiddenIds.has(row.id) || seenIds.has(row.id)) return;
-            const isRecipient = Boolean(getMatchingRecipient(row.recipients, userEmail));
-            if (isRecipient && !isCompletedForRecipient(row.status)) {
-              ids.push(row.id);
-            }
-          } else {
-            // Outgoing Update (track completions)
-            row.recipients.forEach((r) => {
-              if (["signed", "reviewed", "approved", "rejected"].includes(r.status || "")) {
-                const virtualId = `${row.id}_${normalizeEmail(r.email)}_${r.status}`;
-                if (!hiddenIds.has(virtualId) && !seenIds.has(virtualId)) {
-                  ids.push(virtualId);
-                }
-              }
-            });
-          }
-        });
-        setPendingIds(ids);
-        setNotificationCount(ids.length);
-      } else {
-        setPendingIds([]);
-        setNotificationCount(0);
-      }
-      setLoadingSession(false);
-    };
-
-    syncSession();
-
-    const { data } = supabase.auth.onAuthStateChange((_event: string, session: any) => {
-      if (!session) {
-        router.replace("/login");
-        return;
-      }
-      setCurrentUserId(session.user.id);
-      const name =
-        session.user.user_metadata?.full_name ||
-        session.user.email ||
-        "User";
-      setUserLabel(name);
-      void supabase
-        .from("documents")
-        .select("id, owner_id, recipients, status, category, sender, sent_at, file_url, file_key, content, name, subject")
-        .order("sent_at", { ascending: false })
-        .limit(200)
-        .then(({ data: rows }: { data: any }) => {
+        if (fetchError) {
+          console.warn("Failed to fetch documents on auth change:", fetchError);
+        } else {
           const userEmail = normalizeEmail(session.user.email);
           const hiddenIds = getHiddenNotificationIds(session.user.id);
           const seenIds = getSeenNotificationIds(session.user.id);
@@ -169,8 +188,12 @@ export default function DashboardLayout({
           });
           setPendingIds(ids);
           setNotificationCount(ids.length);
-        });
-      setLoadingSession(false);
+        }
+      } catch (err: any) {
+        console.error("Error in onAuthStateChange handler:", err);
+      } finally {
+        if (mounted) setLoadingSession(false);
+      }
     });
 
     return () => {
@@ -195,8 +218,35 @@ export default function DashboardLayout({
 
   if (loadingSession) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">
-        Loading session...
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+        <div className="text-center">
+          <p className="text-sm text-slate-500 font-medium mb-3">
+            {authError ? "Connection Issue" : "Loading your session..."}
+          </p>
+          {authError ? (
+            <div className="max-w-md animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-5 shadow-sm">
+                <p className="text-xs font-bold text-red-600 uppercase tracking-widest mb-2">Error Details</p>
+                <p className="text-sm text-red-700 font-medium leading-relaxed">
+                  {authError.includes("Failed to fetch") 
+                    ? "Could not connect to the database. Please check your internet connection or verify your Supabase URL/Key in .env.local."
+                    : authError}
+                </p>
+                <button 
+                  onClick={() => window.location.reload()}
+                  className="mt-4 rounded-xl bg-white px-4 py-2 text-xs font-bold text-red-600 shadow-sm border border-red-200 hover:bg-red-50 transition-colors"
+                >
+                  Retry Connection
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex justify-center flex-col items-center gap-4 mt-2">
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-violet-600 border-t-transparent" />
+              <p className="text-[10px] text-slate-400 uppercase tracking-widest">Initializing SmartDocs</p>
+            </div>
+          )}
+        </div>
       </div>
     );
   }

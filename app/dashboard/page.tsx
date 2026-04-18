@@ -59,123 +59,138 @@ export default function DashboardPage() {
   const [allSentDocs, setAllSentDocs] = useState<DocumentStatusRow[]>([]);
   const [recentDocs, setRecentDocs] = useState<RecentDocument[]>([]);
 
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
+    let mounted = true;
     const loadCounts = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      let user = session?.user;
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        let user = session?.user;
 
-      if (!user) {
-        const { data: { user: freshUser }, error: authError } = await supabase.auth.getUser();
-        if (authError) {
-          if (authError.message?.includes("stole it")) return;
-          throw authError;
-        }
-        user = freshUser ?? undefined;
-      }
-
-      if (!user) return;
-
-      setUserLabel(user.user_metadata?.full_name || user.email || "User");
-      const userEmail = normalizeEmail(user.email);
-
-      const [{ data: docs, error: docsError }, { data: sentDocs, error: sentDocsError }, { data: notificationRows, error: notificationError }, { data: recentRows, error: recentError }] = await Promise.all([
-        supabase
-          .from("my_documents")
-          .select("id, category")
-          .eq("owner_id", user.id),
-        supabase
-          .from("documents")
-          .select("id, status, recipients, sent_at, sender")
-          .eq("owner_id", user.id),
-        supabase
-          .from("documents")
-          .select("id, owner_id, recipients, status, category, sender, sent_at, file_url, file_key, content, name, subject")
-          .or(`owner_id.eq.${user.id},recipients.cs.[{"email":"${userEmail}"}]`)
-          .order("sent_at", { ascending: false })
-          .limit(200),
-        supabase
-          .from("documents")
-          .select("id, name, status, sent_at, recipients, owner_id, sender")
-          .eq("owner_id", user.id)
-          .order("sent_at", { ascending: false })
-          .limit(5),
-      ]);
-
-      if (docsError && !isMissingSupabaseTable(docsError, "my_documents")) {
-        console.warn("Failed to load my_documents counts:", docsError);
-      }
-
-      if (sentDocsError && !isMissingSupabaseTable(sentDocsError, "documents")) {
-        console.warn("Failed to load documents counts:", sentDocsError);
-      }
-
-      if (notificationError && !isMissingSupabaseTable(notificationError, "documents")) {
-        console.warn("Failed to load notifications count:", notificationError);
-      }
-
-      if (recentError && !isMissingSupabaseTable(recentError, "documents")) {
-        console.warn("Failed to load recent documents:", recentError);
-      }
-
-      const personalDocs = ((docs ?? []) as MyDocumentCountRow[]).filter((d) => d.category === "personal").length;
-      const companyDocs = ((docs ?? []) as MyDocumentCountRow[]).filter((d) => d.category === "company").length;
-      const sent = (sentDocs ?? []) as DocumentStatusRow[];
-
-      setPersonalCount(personalDocs);
-      setCompanyCount(companyDocs);
-      
-      const isCompleted = (row: any) => ["signed", "reviewed", "approved", "completed"].includes(row.status);
-      
-      setAllSentDocs(((sent ?? []) as DocumentStatusRow[]).filter(row => 
-        !(row.sender as any)?.isExternal || isCompleted(row)
-      ));
-
-      const recent = (recentRows ?? [])
-        .filter((row: DocumentStatusRow) => !(row.sender as any)?.isExternal || isCompleted(row))
-        .map((row: DocumentStatusRow & { name?: string; owner_id: string }) => ({
-        id: row.id,
-        name: row.name || "Untitled Document",
-        status: row.status,
-        sent_at: row.sent_at || new Date().toISOString(),
-        recipients: Array.isArray(row.recipients) ? row.recipients : [],
-        direction: row.owner_id === user.id ? "sent" as const : "received" as const,
-      }));
-      setRecentDocs(recent);
-
-      const hiddenIds = getHiddenNotificationIds(user.id);
-      const seenIds = getSeenNotificationIds(user.id);
-      
-      let count = 0;
-      if (userEmail) {
-        ((notificationRows ?? []) as SharedDocumentRecord[]).forEach((row) => {
-          if (row.owner_id !== user.id) {
-            // Incoming Request
-            if (hiddenIds.has(row.id) || seenIds.has(row.id)) return;
-            
-            // Skip external documents unless they are completed/signed
-            if ((row.sender as any)?.isExternal && !["signed", "reviewed", "approved", "completed"].includes(row.status)) return;
-
-            const isRecipient = Boolean(getMatchingRecipient(row.recipients, userEmail));
-            if (isRecipient && !isCompletedForRecipient(row.status)) {
-              count++;
-            }
-          } else {
-            // Outgoing Update (track completions)
-            row.recipients.forEach((r) => {
-              if (["signed", "reviewed", "approved", "rejected"].includes(r.status || "")) {
-                const virtualId = `${row.id}_${normalizeEmail(r.email)}_${r.status}`;
-                if (!hiddenIds.has(virtualId) && !seenIds.has(virtualId)) {
-                  count++;
-                }
-              }
-            });
+        if (!user) {
+          const { data: { user: freshUser }, error: authError } = await supabase.auth.getUser();
+          if (authError) {
+            if (authError.message?.includes("stole it")) return;
+            throw authError;
           }
-        });
+          user = freshUser ?? undefined;
+        }
+
+        if (!user || !mounted) return;
+
+        setUserLabel(user.user_metadata?.full_name || user.email || "User");
+        const userEmail = normalizeEmail(user.email);
+
+        const [
+          { data: docs, error: docsError }, 
+          { data: sentDocs, error: sentDocsError }, 
+          { data: notificationRows, error: notificationError }, 
+          { data: recentRows, error: recentError }
+        ] = await Promise.all([
+          supabase
+            .from("my_documents")
+            .select("id, category")
+            .eq("owner_id", user.id),
+          supabase
+            .from("documents")
+            .select("id, status, recipients, sent_at, sender")
+            .eq("owner_id", user.id),
+          supabase
+            .from("documents")
+            .select("id, owner_id, recipients, status, category, sender, sent_at, file_url, file_key, content, name, subject")
+            .or(`owner_id.eq.${user.id},recipients.cs.[{"email":"${userEmail}"}]`)
+            .order("sent_at", { ascending: false })
+            .limit(200),
+          supabase
+            .from("documents")
+            .select("id, name, status, sent_at, recipients, owner_id, sender")
+            .eq("owner_id", user.id)
+            .order("sent_at", { ascending: false })
+            .limit(5),
+        ]);
+
+        if (docsError && !isMissingSupabaseTable(docsError, "my_documents")) {
+          console.warn("Failed to load my_documents counts:", docsError);
+        }
+
+        if (sentDocsError && !isMissingSupabaseTable(sentDocsError, "documents")) {
+          console.warn("Failed to load documents counts:", sentDocsError);
+        }
+
+        if (notificationError && !isMissingSupabaseTable(notificationError, "documents")) {
+          console.warn("Failed to load notifications count:", notificationError);
+        }
+
+        if (recentError && !isMissingSupabaseTable(recentError, "documents")) {
+          console.warn("Failed to load recent documents:", recentError);
+        }
+
+        const personalDocs = ((docs ?? []) as MyDocumentCountRow[]).filter((d) => d.category === "personal").length;
+        const companyDocs = ((docs ?? []) as MyDocumentCountRow[]).filter((d) => d.category === "company").length;
+        const sent = (sentDocs ?? []) as DocumentStatusRow[];
+
+        setPersonalCount(personalDocs);
+        setCompanyCount(companyDocs);
+        
+        const isCompleted = (row: any) => ["signed", "reviewed", "approved", "completed"].includes(row.status);
+        
+        setAllSentDocs(((sent ?? []) as DocumentStatusRow[]).filter(row => 
+          !(row.sender as any)?.isExternal || isCompleted(row)
+        ));
+
+        const recent = (recentRows ?? [])
+          .filter((row: DocumentStatusRow) => !(row.sender as any)?.isExternal || isCompleted(row))
+          .map((row: DocumentStatusRow & { name?: string; owner_id: string }) => ({
+          id: row.id,
+          name: row.name || "Untitled Document",
+          status: row.status,
+          sent_at: row.sent_at || new Date().toISOString(),
+          recipients: Array.isArray(row.recipients) ? row.recipients : [],
+          direction: row.owner_id === user.id ? "sent" as const : "received" as const,
+        }));
+        setRecentDocs(recent);
+
+        const hiddenIds = getHiddenNotificationIds(user.id);
+        const seenIds = getSeenNotificationIds(user.id);
+        
+        let count = 0;
+        if (userEmail) {
+          ((notificationRows ?? []) as SharedDocumentRecord[]).forEach((row) => {
+            if (row.owner_id !== user.id) {
+              // Incoming Request
+              if (hiddenIds.has(row.id) || seenIds.has(row.id)) return;
+              
+              // Skip external documents unless they are completed/signed
+              if ((row.sender as any)?.isExternal && !["signed", "reviewed", "approved", "completed"].includes(row.status)) return;
+
+              const isRecipient = Boolean(getMatchingRecipient(row.recipients, userEmail));
+              if (isRecipient && !isCompletedForRecipient(row.status)) {
+                count++;
+              }
+            } else {
+              // Outgoing Update (track completions)
+              row.recipients.forEach((r) => {
+                if (["signed", "reviewed", "approved", "rejected"].includes(r.status || "")) {
+                  const virtualId = `${row.id}_${normalizeEmail(r.email)}_${r.status}`;
+                  if (!hiddenIds.has(virtualId) && !seenIds.has(virtualId)) {
+                    count++;
+                  }
+                }
+              });
+            }
+          });
+        }
+        setNotificationCount(count);
+      } catch (err) {
+        console.error("Dashboard data fetch error:", err);
+      } finally {
+        if (mounted) setLoading(false);
       }
-      setNotificationCount(count);
     };
 
     loadCounts();
+    return () => { mounted = false; };
   }, []);
 
   const { documentsSent, pendingCount, approvedCount, rejectedCount } = useMemo(() => {

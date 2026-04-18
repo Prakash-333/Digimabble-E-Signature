@@ -162,9 +162,24 @@ export const analyzeDocumentFile = async (file: File): Promise<DocumentAnalysis>
     };
   }
 
+  if (file.type.startsWith("image/")) {
+    let textContent = "";
+    try {
+      textContent = await extractTextFromImage(file);
+    } catch (error) {
+      console.error("Image OCR failed:", error);
+    }
+    return {
+      dataUrl,
+      textContent,
+      placeholders: extractPlaceholdersFromText(textContent),
+    };
+  }
+
   return {
     dataUrl,
     textContent: "",
     placeholders: [],
   };
 };
+

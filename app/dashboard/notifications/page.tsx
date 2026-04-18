@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Bell, CheckCircle2, FileSignature, Eye, Loader2, MoreVertical, ChevronLeft, X, Trash2, Download, Edit3, Save, RotateCcw, MessageSquare, PenTool, ShieldCheck, User, Calendar, Building2, Type as TypeIcon, Square, CheckSquare, Mail, Tag } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/browser";
-import { highlightHtmlEdits } from "../../lib/diff";
 import {
   buildPositionedDocumentHtml,
   DOCUMENT_STAGE_FONT_FAMILY,
@@ -171,6 +170,11 @@ export default function NotificationsPage() {
   const [approveData, setApproveData] = useState<{ item: any; html?: string } | null>(null);
   const [signMessage, setSignMessage] = useState("");
   const [isSigning, setIsSigning] = useState(false);
+  
+  // Field editing state
+  const [fieldToEdit, setFieldToEdit] = useState<PlacedField | null>(null);
+  const [fieldEditValue, setFieldEditValue] = useState("");
+  const [fieldEditLabel, setFieldEditLabel] = useState("");
 
   const previewStageRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; startClientX: number; startClientY: number; startX: number; startY: number } | null>(null);
@@ -313,10 +317,10 @@ export default function NotificationsPage() {
     const defaultVal = field.type === "date"
       ? new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
       : "";
-    const val = window.prompt(`Enter ${label || "Value"}:`, field.value || defaultVal);
-    if (val === null) return;
-
-    setPlacedFields(prev => prev.map(p => p.id === field.id ? { ...p, value: val } : p));
+    
+    setFieldToEdit(field);
+    setFieldEditValue(field.value || defaultVal);
+    setFieldEditLabel(label || field.type.charAt(0).toUpperCase() + field.type.slice(1));
   };
 
   const resetSigningState = () => {
@@ -325,6 +329,8 @@ export default function NotificationsPage() {
     setShowConfirmSend(false);
     setShowConfirmApprove(false);
     setApproveData(null);
+    setFieldToEdit(null);
+    setFieldEditValue("");
     setSignMessage("");
     setIsSigning(false);
   };
@@ -443,7 +449,8 @@ export default function NotificationsPage() {
 
       ((rows ?? []) as SharedDocumentRecord[]).forEach((row) => {
         // Skip external documents unless they are completed/signed
-        const isCompleted = ["signed", "reviewed", "approved", "completed"].includes(row.status);
+        const isCompleted = ["signed", "reviewed", "approved", "completed", "rejected", "changes_requested"].includes(row.status);
+
         if ((row.sender as any)?.isExternal && !isCompleted) return;
 
         if (row.owner_id !== currentUser.id) {
@@ -463,7 +470,7 @@ export default function NotificationsPage() {
           });
         } else {
           row.recipients.forEach((r) => {
-            if (["signed", "reviewed", "approved", "rejected", "changes_requested", "completed"].includes(r.status || "")) {
+            if (["waiting", "pending", "signed", "reviewed", "approved", "rejected", "changes_requested", "completed"].includes(r.status || "")) {
               const virtualId = `${row.id}_${normalizeEmail(r.email)}_${r.status}`;
               if (hiddenIds.has(virtualId)) return;
               outgoing.push({
@@ -529,7 +536,8 @@ export default function NotificationsPage() {
     }
 
     if (editedHtml) {
-      finalPatch.content = highlightHtmlEdits(initialContent, editedHtml);
+      finalPatch.content = editedHtml;
+
     }
 
     const { error } = await supabase.from("documents").update(finalPatch).eq("id", item.id);
@@ -543,6 +551,8 @@ export default function NotificationsPage() {
     setItems((prev) =>
       prev.map((entry) => (entry.id === item.id && entry.type === "incoming_request" ? { ...entry, recipientStatus: nextStatus } : entry))
     );
+    setViewingItem(null);
+    resetSigningState();
   };
 
   const hideNotification = (virtualId: string) => {
@@ -592,6 +602,8 @@ export default function NotificationsPage() {
         entry.virtualId === rejectingItem.virtualId ? { ...entry, recipientStatus: "rejected" } : entry
       )
     );
+    setViewingItem(null);
+    resetSigningState();
   };
 
   const handleView = (item: NotificationItem) => {
@@ -709,7 +721,9 @@ export default function NotificationsPage() {
                               ? "bg-red-100 text-red-700"
                               : item.recipientStatus === "changes_requested"
                                 ? "bg-amber-100 text-amber-700"
-                                : "bg-green-50 text-green-700"
+                                : (item.recipientStatus === "waiting" || item.recipientStatus === "pending")
+                                  ? "bg-amber-50 text-amber-700"
+                                  : "bg-green-50 text-green-700"
                             : "bg-amber-50 text-amber-700"
                         }`}
                       >
@@ -1134,9 +1148,8 @@ export default function NotificationsPage() {
                       __html: (() => {
                         const baseHtml = localEditedContent || viewingItem.content || "";
                         if (hasPositionedDocumentStage(baseHtml)) return baseHtml;
-                        const highlighted = (!isEditMode && localEditedContent)
-                          ? highlightHtmlEdits(initialContent, localEditedContent)
-                          : baseHtml;
+                        const highlighted = baseHtml;
+
                         return renderDocumentStageBodyHtml(highlighted);
                       })()
                     }}
@@ -1383,7 +1396,8 @@ export default function NotificationsPage() {
                   
                   // Save edited content if it changed
                   if (currentHtml) {
-                    patchData.content = highlightHtmlEdits(initialContent, currentHtml);
+                    patchData.content = currentHtml;
+
                   }
 
                   if (docRow?.recipients && Array.isArray(docRow.recipients)) {
@@ -1525,6 +1539,60 @@ export default function NotificationsPage() {
                 ) : (
                   <>Confirm Approval</>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Field Data Entry Modal */}
+      {fieldToEdit && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-sm mx-4 bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-6 pt-6 pb-4">
+               <div className="flex items-center gap-3 mb-2">
+                <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
+                  <TypeIcon className="h-4 w-4" />
+                </div>
+                <h3 className="text-base font-bold text-slate-900">Enter {fieldEditLabel}</h3>
+              </div>
+              <p className="text-xs text-slate-500 ml-11 mb-4">
+                Please provide the information for this field.
+              </p>
+              
+              <div className="ml-11">
+                <input
+                  type={fieldToEdit.type === "email" ? "email" : "text"}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-800 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-50 transition-all font-mono"
+                  value={fieldEditValue}
+                  onChange={(e) => setFieldEditValue(e.target.value)}
+                  placeholder={`Enter ${fieldEditLabel.toLowerCase()}...`}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                       setPlacedFields(prev => prev.map(p => p.id === fieldToEdit.id ? { ...p, value: fieldEditValue } : p));
+                       setFieldToEdit(null);
+                    }
+                  }}
+                />
+              </div>
+            </div>
+            
+            <div className="px-6 pb-6 pt-2 flex gap-3 ml-11">
+              <button
+                onClick={() => setFieldToEdit(null)}
+                className="flex-1 py-2 rounded-xl text-slate-500 font-bold text-xs border border-slate-200 hover:bg-slate-50 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setPlacedFields(prev => prev.map(p => p.id === fieldToEdit.id ? { ...p, value: fieldEditValue } : p));
+                  setFieldToEdit(null);
+                }}
+                className="flex-[1.5] py-2 rounded-xl bg-blue-600 text-white font-bold text-xs hover:bg-blue-700 transition-all shadow-md shadow-blue-100"
+              >
+                Apply Value
               </button>
             </div>
           </div>

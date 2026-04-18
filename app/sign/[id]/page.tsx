@@ -200,6 +200,7 @@ export default function PublicSignPage() {
   const [savedSignature, setSavedSignature] = useState<string | null>(null);
   const [placedFields, setPlacedFields] = useState<PlacedField[]>([]);
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
+  const [editingFieldData, setEditingFieldData] = useState<{ id: string; label: string; value: string } | null>(null);
 
   // Signature Pad Refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -616,10 +617,21 @@ export default function PublicSignPage() {
   const promptFieldValue = (id: string, label: string) => {
     const field = placedFields.find(f => f.id === id);
     if (!field) return;
-    const val = window.prompt(`Enter ${label}:`, field.value || "");
-    if (val !== null) {
-      setPlacedFields(prev => prev.map(f => f.id === id ? { ...f, value: val } : f));
-    }
+    
+    // Instead of window.prompt, we set state to open our custom modal
+    setEditingFieldData({
+      id: id,
+      label: label,
+      value: field.value || ""
+    });
+  };
+
+  const handleSaveField = () => {
+    if (!editingFieldData) return;
+    const { id, value } = editingFieldData;
+    
+    setPlacedFields(prev => prev.map(f => f.id === id ? { ...f, value: value } : f));
+    setEditingFieldData(null);
   };
 
   const handleRequireChanges = async () => {
@@ -1306,6 +1318,51 @@ export default function PublicSignPage() {
                 className="flex-[2] py-3.5 rounded-2xl bg-violet-600 text-white font-bold text-sm hover:bg-violet-700 transition-all shadow-lg shadow-violet-100 disabled:opacity-60 flex items-center justify-center gap-2"
               >
                 {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm & Send"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Field Edit Modal */}
+      {editingFieldData && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-sm mx-4 bg-white rounded-[2rem] shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-8 pt-8 pb-4 border-b border-slate-100 text-center">
+              <div className="mx-auto w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 mb-4">
+                <Edit3 className="h-6 w-6" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900">Enter {editingFieldData.label}</h3>
+              <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                Please provide the value for this field.
+              </p>
+            </div>
+            <div className="px-8 py-6">
+              <input
+                type="text"
+                className="w-full py-3.5 px-4 rounded-2xl bg-slate-50 border-none outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm text-slate-800 placeholder:text-slate-400 font-medium"
+                placeholder={`Type ${editingFieldData.label.toLowerCase()}...`}
+                value={editingFieldData.value}
+                onChange={(e) => setEditingFieldData({ ...editingFieldData, value: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSaveField();
+                  if (e.key === "Escape") setEditingFieldData(null);
+                }}
+                autoFocus
+              />
+            </div>
+            <div className="px-8 pb-8 flex gap-3">
+              <button
+                onClick={() => setEditingFieldData(null)}
+                className="flex-1 py-3.5 rounded-2xl text-slate-600 font-bold text-sm border border-slate-100 hover:bg-slate-50 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveField}
+                className="flex-[2] py-3.5 rounded-2xl bg-blue-600 text-white font-bold text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100"
+              >
+                Save Changes
               </button>
             </div>
           </div>
