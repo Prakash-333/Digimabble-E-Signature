@@ -11,6 +11,7 @@ import { getMatchingRecipient, normalizeEmail } from "../../lib/documents";
 import { Edit3, Save, ShieldCheck, Loader2, RotateCcw } from "lucide-react";
 import { useUploadThing } from "../../lib/uploadthing-client";
 import { analyzeDocumentFile } from "../../lib/document-analysis";
+import { highlightHtmlEdits, stripHighlights } from "../../../app/lib/diff";
 
 type Recipient = { 
   name: string; 
@@ -1007,8 +1008,10 @@ export default function DocumentsPage() {
                                   <button
                                     onClick={() => {
                                       setOpenMenuId(null);
-                                      setInitialContent(displayContent || "");
-                                      setViewingDoc({ ...doc, content: displayContent || "" });
+                                      const currentHtml = displayContent || "";
+                                      const cleanHtml = stripHighlights(currentHtml);
+                                      setInitialContent(cleanHtml);
+                                      setViewingDoc({ ...doc, content: cleanHtml });
                                       setIsEditMode(true);
                                     }}
                                     className="w-full flex items-center gap-2 px-3 py-2 text-[11px] font-bold text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
@@ -1250,8 +1253,10 @@ export default function DocumentsPage() {
                                 <button
                                   onClick={() => {
                                     setOpenMenuId(null);
-                                    setInitialContent(displayContent || "");
-                                    setViewingDoc({ ...doc, content: displayContent || "" });
+                                    const currentHtml = displayContent || "";
+                                    const cleanHtml = stripHighlights(currentHtml);
+                                    setInitialContent(cleanHtml);
+                                    setViewingDoc({ ...doc, content: cleanHtml });
                                     setIsEditMode(true);
                                   }}
                                   className="w-full rounded-lg px-3 py-2 text-left text-[11px] font-bold text-violet-600 hover:bg-violet-50 flex items-center gap-2"
@@ -1360,7 +1365,13 @@ export default function DocumentsPage() {
                           <button
                             onClick={() => {
                               const contentDiv = document.querySelector('.editable-content');
-                              const currentContent = contentDiv ? contentDiv.innerHTML : (editedContent || initialContent || viewingDoc.content || "");
+                              let currentContent = contentDiv ? contentDiv.innerHTML : (editedContent || initialContent || viewingDoc.content || "");
+                              
+                              // If still in edit mode, ensure highlighting is applied before sending
+                              if (isEditMode && contentDiv) {
+                                currentContent = highlightHtmlEdits(initialContent, contentDiv.innerHTML);
+                              }
+                              
                               handleSendToExistingRecipients(viewingDoc, currentContent);
                             }}
                             disabled={isUploading || isAnalyzing || isPersisting}
@@ -1379,7 +1390,9 @@ export default function DocumentsPage() {
                             if (isEditMode) {
                                const contentDiv = document.querySelector('.editable-content');
                                if (contentDiv) {
-                                 setEditedContent(contentDiv.innerHTML);
+                                 const newHtml = contentDiv.innerHTML;
+                                 const highlighted = highlightHtmlEdits(initialContent, newHtml);
+                                 setEditedContent(highlighted);
                                }
                             } else {
                                if (!initialContent) {

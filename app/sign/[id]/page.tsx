@@ -708,7 +708,12 @@ export default function PublicSignPage() {
     const nextMode = !isEditMode;
     
     if (nextMode) {
-      // Entering Edit Mode: Just switch
+      // Entering Edit Mode: Strip existing highlights so user edits clean text
+      if (contentRef.current) {
+        const clean = stripHighlights(contentRef.current.innerHTML);
+        contentRef.current.innerHTML = clean;
+        setDocument(prev => prev ? { ...prev, content: clean } : null);
+      }
       setIsEditMode(true);
     } else {
       // Stopping Edit Mode: Force a sync to state so highlights persist on re-render
@@ -1032,7 +1037,7 @@ export default function PublicSignPage() {
                   contentEditable={isEditMode}
                   onInput={handleDocumentInput}
                   suppressContentEditableWarning
-                  className={`relative editable-content w-full bg-white rounded-2xl shadow-xl border border-slate-200 text-[15px] text-slate-800 leading-[1.9] outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10' : ''}`}
+                  className={`relative editable-content document-content w-full bg-white rounded-2xl shadow-xl border border-slate-200 text-[15px] text-slate-800 leading-[1.9] outline-none transition-all duration-300 ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10' : ''}`}
                   style={{
                     minHeight: `${DOCUMENT_STAGE_MIN_HEIGHT}px`,
                     padding: `${DOCUMENT_STAGE_PADDING}px`,

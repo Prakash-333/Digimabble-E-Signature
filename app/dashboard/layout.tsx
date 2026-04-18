@@ -92,7 +92,7 @@ export default function DashboardLayout({
           try {
             const { data: rows, error: fetchError } = await supabase
               .from("documents")
-              .select("id, owner_id, recipients, status, category, sender, sent_at, file_url, file_key, content, name, subject")
+              .select("id, owner_id, recipients, status, category, sender, sent_at")
               .order("sent_at", { ascending: false })
               .limit(200);
 
@@ -156,7 +156,7 @@ export default function DashboardLayout({
         
         const { data: rows, error: fetchError } = await supabase
           .from("documents")
-          .select("id, owner_id, recipients, status, category, sender, sent_at, file_url, file_key, content, name, subject")
+          .select("id, owner_id, recipients, status, category, sender, sent_at")
           .order("sent_at", { ascending: false })
           .limit(200);
 
@@ -196,8 +196,13 @@ export default function DashboardLayout({
       }
     });
 
+    // Periodic refresh for notifications (every 60 seconds)
+    // This handles "Internal" documents where only dashboard notifications are requested.
+    const intervalId = setInterval(syncSession, 60000);
+
     return () => {
       mounted = false;
+      clearInterval(intervalId);
       data.subscription.unsubscribe();
     };
   }, [router]);

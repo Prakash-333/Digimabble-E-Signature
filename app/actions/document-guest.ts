@@ -53,6 +53,10 @@ export async function markFirstLogin(id: string) {
   }
 }
 
+import { Resend } from "resend";
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+
 /**
  * Submits a guest signature or review action.
  */
@@ -66,44 +70,48 @@ export async function submitGuestSignature(
   try {
     const supabase = createSupabaseAdminClient();
     
-    // 1. Fetch current recipients
+    // 1. Fetch current recipients and metadata
     const { data: doc, error: fetchError } = await supabase
       .from("documents")
-      .select("recipients, category, content")
+      .select("recipients, category, content, name, sender")
       .eq("id", id)
       .single();
       
     if (fetchError || !doc) throw new Error("Document not found");
 
     // 2. Identify the guest recipient
-    let recipients = doc.recipients as DocumentRecipient[];
+    let recipients = (doc.recipients as DocumentRecipient[]) || [];
     const isReviewDoc = doc.category === "Reviewer";
     const status = statusOverride || (isReviewDoc ? "reviewed" : "signed");
     
+    let guestRecipient = recipients[0]; // Fallback
+
     if (recipients.length > 0) {
       let updated = false;
       recipients = recipients.map((r) => {
         if (!updated && !["signed", "reviewed", "approved", "completed", "rejected", "changes_requested"].includes(r.status || "")) {
           updated = true;
-          return {
+          guestRecipient = {
             ...r,
             status: status,
             signed_content: editedContent || signatureDataUrl || r.signed_content,
             sign_message: message || r.sign_message,
             reject_reason: (status === "rejected" || status === "changes_requested") ? message : r.reject_reason
           };
+          return guestRecipient;
         }
         return r;
       });
       
       if (!updated) {
-        recipients[0] = {
+        guestRecipient = {
           ...recipients[0],
           status: status,
           signed_content: editedContent || signatureDataUrl || recipients[0].signed_content,
           sign_message: message || recipients[0].sign_message,
           reject_reason: (status === "rejected" || status === "changes_requested") ? message : recipients[0].reject_reason
         };
+        recipients[0] = guestRecipient;
       }
     }
 
@@ -130,6 +138,35 @@ export async function submitGuestSignature(
       .eq("id", id);
 
     if (updateError) throw updateError;
+
+    // 4. Trigger Notifications if External
+    const sender = doc.sender as any;
+    if (sender?.isExternal && sender?.workEmail) {
+      try {
+        const actionLabel = status === "reviewed" ? "approved" : status === "rejected" ? "rejected" : status === "changes_requested" ? "requested changes for" : "signed";
+        
+        await resend.emails.send({
+          from: 'SMARTDOCS <onboarding@resend.dev>',
+          to: [sender.workEmail],
+          subject: `${guestRecipient?.name || "A recipient"} has ${actionLabel} your document`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+              <h1 style="color: #4f46e5;">Document Update</h1>
+              <p>Hello ${sender.fullName || "Sender"},</p>
+              <p><strong>${guestRecipient?.name || "A recipient"}</strong> has ${actionLabel} your document: <strong>${doc.name}</strong>.</p>
+              <div style="margin: 20px 0; padding: 15px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
+                <p style="margin: 0; font-size: 14px; color: #475569;">Status: <span style="font-weight: bold; color: #1e293b;">${status.charAt(0).toUpperCase() + status.slice(1)}</span></p>
+                ${message ? `<p style="margin: 10px 0 0 0; font-size: 14px; color: #475569;">Message: "${message}"</p>` : ""}
+              </div>
+              <p style="font-size: 14px; color: #64748b;">You can view the updated document in your SmartDocs dashboard.</p>
+            </div>
+          `
+        });
+      } catch (emailErr) {
+        console.warn("Failed to send notification email to owner:", emailErr);
+      }
+    }
+
     return { success: true };
   } catch (err: any) {
     console.error("submitGuestSignature error:", err);

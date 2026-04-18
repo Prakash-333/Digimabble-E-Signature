@@ -102,7 +102,12 @@ export function highlightHtmlEdits(originalHtml: string, newHtml: string): strin
    * This prevents punctuation from "sticking" to words and causing false misses.
    */
   const tokenize = (text: string) => text.split(/(\s+|[^\w\s])/).filter(t => t && t.trim());
-  const originalSet = new Set(tokenize(originalText));
+  const originalTokens = tokenize(originalText);
+  const originalCounts = new Map<string, number>();
+  originalTokens.forEach(t => {
+    const val = t.trim();
+    if (val) originalCounts.set(val, (originalCounts.get(val) || 0) + 1);
+  });
   
   const parser = new DOMParser();
   const doc = parser.parseFromString(newHtml, 'text/html');
@@ -124,10 +129,16 @@ export function highlightHtmlEdits(originalHtml: string, newHtml: string): strin
           return;
         }
 
-        // Check if this specific token (word or single punctuation) exists in the original
-        if (segment.trim() && !originalSet.has(segment.trim())) {
+        const val = segment.trim();
+        // Check if this specific token occurrence exists in the original budget
+        if (val && (originalCounts.get(val) || 0) > 0) {
+          // Token matches an available original occurrence: consume it and don't highlight
+          originalCounts.set(val, (originalCounts.get(val) || 0) - 1);
+          newFragment.appendChild(document.createTextNode(segment));
+        } else if (val) {
+          // Highlight because count exceeded original occurrences or word never existed
           const span = document.createElement('span');
-          span.className = 'highlight bg-yellow-200 px-0.5 rounded shadow-sm border-b border-yellow-400 animate-in fade-in zoom-in-95 duration-500';
+          span.className = 'highlight bg-amber-200 text-amber-900 px-1 rounded-sm shadow-sm border-b-2 border-amber-400 animate-in fade-in duration-300';
           span.textContent = segment;
           newFragment.appendChild(span);
         } else {

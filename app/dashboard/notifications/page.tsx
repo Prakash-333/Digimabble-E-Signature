@@ -26,6 +26,7 @@ import {
   hideNotificationForUser,
   markNotificationSeen,
 } from "../../lib/notification-storage";
+import { highlightHtmlEdits, stripHighlights } from "../../../app/lib/diff";
 
 type NotificationItem = SharedDocumentRecord & {
   virtualId: string;
@@ -967,7 +968,10 @@ export default function NotificationsPage() {
                               setIsEditMode(false);
                               const contentDiv = document.querySelector('.editable-content');
                               if (contentDiv) {
-                                setLocalEditedContent(contentDiv.innerHTML);
+                                const newHtml = contentDiv.innerHTML;
+                                // Apply the highlighting algorithm on save
+                                const highlighted = highlightHtmlEdits(initialContent, newHtml);
+                                setLocalEditedContent(highlighted);
                               }
                             }}
                             className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all"
@@ -975,21 +979,30 @@ export default function NotificationsPage() {
                             <Save className="h-3.5 w-3.5" /> Save Edits
                           </button>
                         </>
-                      ) : (
-                        <button
-                          onClick={() => setIsEditMode(true)}
-                          className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-xs font-bold text-violet-700 hover:bg-violet-100 transition-all shadow-sm"
-                        >
-                          <Edit3 className="h-3.5 w-3.5" /> Edit Document
-                        </button>
-                      )}
+                        ) : (
+                          <button
+                            onClick={() => {
+                              // Strip existing highlights when entering edit mode
+                              const currentHtml = localEditedContent || viewingItem.content || "";
+                              const cleanHtml = stripHighlights(currentHtml);
+                              setLocalEditedContent(cleanHtml);
+                              setIsEditMode(true);
+                            }}
+                            className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-xs font-bold text-violet-700 hover:bg-violet-100 transition-all shadow-sm"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" /> Edit Document
+                          </button>
+                        )}
                       
                       <button
                         onClick={async () => {
                           const contentDiv = document.querySelector('.editable-content');
-                          const finalHtml = isEditMode && contentDiv 
-                            ? (contentDiv as HTMLElement).innerHTML 
-                            : (localEditedContent || (contentDiv ? (contentDiv as HTMLElement).innerHTML : undefined));
+                          let finalHtml = localEditedContent || (contentDiv ? (contentDiv as HTMLElement).innerHTML : viewingItem.content);
+                          
+                          // If we are currently in edit mode, apply highlighting before approving
+                          if (isEditMode && contentDiv) {
+                            finalHtml = highlightHtmlEdits(initialContent, (contentDiv as HTMLElement).innerHTML);
+                          }
                           
                           setApproveData({ item: viewingItem, html: finalHtml || undefined });
                           setShowConfirmApprove(true);
@@ -1135,7 +1148,7 @@ export default function NotificationsPage() {
                 <div className="max-w-4xl mx-auto flex justify-center">
                 <div className="relative w-[800px]" ref={previewStageRef}>
                   <div
-                    className="relative editable-content w-full bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200 text-[15px] text-slate-800 leading-[1.9] tracking-tight outline-none"
+                    className="relative editable-content document-content w-full bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200 text-[15px] text-slate-800 leading-[1.9] tracking-tight outline-none"
                     style={{
                       minHeight: `${DOCUMENT_STAGE_MIN_HEIGHT}px`,
                       padding: hasPositionedDocumentStage(localEditedContent || viewingItem.content || "") ? "0px" : `${DOCUMENT_STAGE_PADDING}px`,
@@ -1396,8 +1409,12 @@ export default function NotificationsPage() {
                   
                   // Save edited content if it changed
                   if (currentHtml) {
-                    patchData.content = currentHtml;
-
+                    // Always try to apply highlights if content changed from initial
+                    if (currentHtml !== initialContent) {
+                      patchData.content = highlightHtmlEdits(initialContent, currentHtml);
+                    } else {
+                      patchData.content = currentHtml;
+                    }
                   }
 
                   if (docRow?.recipients && Array.isArray(docRow.recipients)) {
