@@ -38,14 +38,18 @@ export const extractPlaceholdersFromText = (content: string) => {
   return Array.from(new Set(normalized.filter(Boolean)));
 };
 
-export const extractTextFromPdf = async (file: File) => {
+export const extractHtmlFromPdf = async (file: File) => {
   const pdfjs = await getPdfJs();
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
-  const maxPages = Math.min(pdf.numPages, 8);
+  const numPages = pdf.numPages;
+  
+  let html = `<div class="pdf-document" style="display: flex; flex-direction: column; gap: 2rem; align-items: center; width: 100%; max-width: 850px; margin: 0 auto;">`;
+  
+  // Also extract raw text for placeholders
   const chunks: string[] = [];
 
-  for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+  for (let pageNumber = 1; pageNumber <= numPages; pageNumber++) {
     const page = await pdf.getPage(pageNumber);
     const textContent = await page.getTextContent();
     const pageText = textContent.items
@@ -53,12 +57,24 @@ export const extractTextFromPdf = async (file: File) => {
       .join(" ")
       .replace(/\s+/g, " ")
       .trim();
-    if (pageText) {
-      chunks.push(pageText);
+    if (pageText) chunks.push(pageText);
+
+    // High resolution render for HTML output
+    const viewport = page.getViewport({ scale: 2.0 });
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (context) {
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: context as any, viewport }).promise;
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.85); // JPEG to keep size reasonable
+      
+      html += `<div class="pdf-page" style="position: relative; width: 100%; background: white; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); border: 1px solid #e2e8f0;"><img src="${dataUrl}" style="width: 100%; height: auto; display: block;" alt="Page ${pageNumber}" /></div>`;
     }
   }
-
-  return chunks.join("\n");
+  
+  html += `</div>`;
+  return { html, rawText: chunks.join("\n") };
 };
 
 export const extractTextFromImage = async (imageSource: string | File) => {
@@ -94,23 +110,42 @@ export const convertPdfPageToImage = async (file: File, pageNumber: number = 1) 
 export const extractTextFromWord = async (file: File) => {
   const mammoth = await import("mammoth");
   const arrayBuffer = await file.arrayBuffer();
-  const result = await mammoth.extractRawText({ arrayBuffer });
-  return result.value || "";
+  
+  // Extract HTML for rendering
+  const htmlResult = await mammoth.convertToHtml({ arrayBuffer }, {
+    styleMap: [
+      "p[style-name='Heading 1'] => h1:fresh",
+      "p[style-name='Heading 2'] => h2:fresh",
+      "p[style-name='Heading 3'] => h3:fresh",
+      "p[style-name='Heading 4'] => h4:fresh",
+      "p[style-name='Heading 5'] => h5:fresh",
+      "p[style-name='Heading 6'] => h6:fresh",
+    ]
+  });
+  
+  // Extract raw text for placeholders
+  const rawResult = await mammoth.extractRawText({ arrayBuffer });
+  
+  // Wrap HTML with basic document styling
+  const wrappedHtml = `<div class="word-document" style="font-family: Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 850px; margin: 0 auto; padding: 2rem; background: white; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">${htmlResult.value || ""}</div>`;
+  
+  return { html: wrappedHtml, rawText: rawResult.value || "" };
 };
 
 export const analyzeDocumentFile = async (file: File): Promise<DocumentAnalysis> => {
   const dataUrl = await readFileAsDataUrl(file);
 
   if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-    let textContent = await extractTextFromPdf(file);
+    let extracted = await extractHtmlFromPdf(file);
+    let htmlContent = extracted.html;
+    let rawText = extracted.rawText;
     
     // Fallback to OCR if text extraction is empty or too short (handles scanned PDFs)
-    if (textContent.trim().length < 20) {
-      console.log("PDF text layer is sparse. Falling back to OCR...");
+    if (rawText.trim().length < 20) {
+      console.log("PDF text layer is sparse. Falling back to OCR for placeholders...");
       try {
-        // Convert the first page to an image for OCR
         const pageImage = await convertPdfPageToImage(file, 1);
-        textContent = await extractTextFromImage(pageImage);
+        rawText = await extractTextFromImage(pageImage);
       } catch (ocrError) {
         console.error("OCR fallback failed for PDF:", ocrError);
       }
@@ -118,8 +153,8 @@ export const analyzeDocumentFile = async (file: File): Promise<DocumentAnalysis>
     
     return {
       dataUrl,
-      textContent,
-      placeholders: extractPlaceholdersFromText(textContent),
+      textContent: htmlContent, // Return HTML for rendering
+      placeholders: extractPlaceholdersFromText(rawText),
     };
   }
 
@@ -129,16 +164,19 @@ export const analyzeDocumentFile = async (file: File): Promise<DocumentAnalysis>
     file.name.toLowerCase().endsWith(".doc") ||
     file.name.toLowerCase().endsWith(".docx")
   ) {
-    let textContent = "";
+    let htmlContent = "";
+    let rawText = "";
     try {
-      textContent = await extractTextFromWord(file);
+      const extracted = await extractTextFromWord(file);
+      htmlContent = extracted.html;
+      rawText = extracted.rawText;
     } catch (error) {
-      console.error("Word document text extraction failed:", error);
+      console.error("Word document extraction failed:", error);
     }
     return {
       dataUrl,
-      textContent,
-      placeholders: extractPlaceholdersFromText(textContent),
+      textContent: htmlContent,
+      placeholders: extractPlaceholdersFromText(rawText),
     };
   }
 
@@ -148,17 +186,19 @@ export const analyzeDocumentFile = async (file: File): Promise<DocumentAnalysis>
     file.name.toLowerCase().endsWith(".txt") ||
     file.name.toLowerCase().endsWith(".csv")
   ) {
-    const textContent = await new Promise<string>((resolve, reject) => {
+    const rawText = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result));
       reader.onerror = () => reject(new Error("Failed to read text file"));
       reader.readAsText(file);
     });
 
+    const htmlContent = `<div class="text-document" style="max-width: 850px; margin: 0 auto; background: white; padding: 2rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);"><pre style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; white-space: pre-wrap; word-wrap: break-word; color: #1e293b; font-size: 14px; line-height: 1.6;">${rawText.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre></div>`;
+
     return {
       dataUrl,
-      textContent,
-      placeholders: extractPlaceholdersFromText(textContent),
+      textContent: htmlContent,
+      placeholders: extractPlaceholdersFromText(rawText),
     };
   }
 

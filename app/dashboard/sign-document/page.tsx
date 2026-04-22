@@ -24,6 +24,8 @@ const getPdfJs = async () => {
   return pdfjsLib;
 };
 
+import { analyzeDocumentFile } from "../../lib/document-analysis";
+
 type UploadedDoc = {
   id: string;
   name: string;
@@ -174,32 +176,33 @@ export default function SignDocumentPage() {
 
         for (const file of res) {
           const isImage = file.type.startsWith("image/");
-          const isPdf = file.type === "application/pdf";
           let previewUrl = isImage ? file.url : undefined;
+          let fileHtmlContent: string | null = null;
+          let fileType = file.type;
 
-          if (isPdf) {
+          if (!isImage) {
             try {
-              const pdfjs = await getPdfJs();
               const response = await fetch(file.url);
-              const arrayBuffer = await response.arrayBuffer();
-              const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
-              const page = await pdf.getPage(1);
-              const viewport = page.getViewport({ scale: 1.5 });
-              const canvas = document.createElement("canvas");
-              const ctx = canvas.getContext("2d");
-              if (ctx) {
-                canvas.width = viewport.width;
-                canvas.height = viewport.height;
-                await page.render({ canvasContext: ctx, viewport, canvas: ctx.canvas }).promise;
-                previewUrl = canvas.toDataURL("image/jpeg", 0.8);
+              const blob = await response.blob();
+              const fakeFile = new File([blob], file.name, { type: file.type });
+              const analysis = await analyzeDocumentFile(fakeFile);
+              if (analysis.textContent) {
+                fileHtmlContent = analysis.textContent;
+                fileType = "text/html";
               }
-            } catch (e) { console.error("PDF preview error", e); }
+            } catch (e) {
+              console.error("Document analysis error", e);
+            }
+          }
+
+          if (fileHtmlContent) {
+             setHtmlContent(fileHtmlContent);
           }
 
           newDocs.push({
             id: file.key,
             name: file.name,
-            type: file.type,
+            type: fileType,
             sizeBytes: file.size,
             previewUrl,
             key: file.key,
@@ -775,32 +778,28 @@ export default function SignDocumentPage() {
       try {
         const response = await fetch(row.file_url);
         const blob = await response.blob();
-        const isPdf = blob.type === "application/pdf" || row.name.toLowerCase().endsWith(".pdf");
-        let previewUrl = row.file_url;
+        const isImage = blob.type.startsWith("image/");
+        let previewUrl = isImage ? row.file_url : undefined;
+        let fileType = blob.type || "application/octet-stream";
 
-        if (isPdf) {
-          const pdfjs = await getPdfJs();
-          const arrayBuffer = await blob.arrayBuffer();
-          const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
-          const page = await pdf.getPage(1);
-          const viewport = page.getViewport({ scale: 1.5 });
-          const canvas = document.createElement("canvas");
-          const ctx = canvas.getContext("2d");
-          if (ctx) {
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            await page.render({ canvasContext: ctx, viewport, canvas: ctx.canvas }).promise;
-            previewUrl = canvas.toDataURL("image/jpeg", 0.8);
+        if (!isImage) {
+          try {
+            const fakeFile = new File([blob], row.name, { type: blob.type });
+            const analysis = await analyzeDocumentFile(fakeFile);
+            if (analysis.textContent) {
+              setHtmlContent(analysis.textContent);
+              fileType = "text/html";
+            }
+          } catch (e) {
+            console.error("Document analysis error", e);
           }
-        } else if (!blob.type.startsWith("image/")) {
-          previewUrl = row.file_url;
         }
 
         setDocs([
           {
             id: row.id,
             name: row.name,
-            type: blob.type || "application/octet-stream",
+            type: fileType,
             sizeBytes: blob.size,
             previewUrl,
           },
