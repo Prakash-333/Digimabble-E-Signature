@@ -341,8 +341,19 @@ export default function DocumentsPage() {
                 }
               }
             });
-            const advancedStatuses = ["pending", "signed", "reviewed", "approved", "completed", "rejected"];
-            const currentStatusIndex = advancedStatuses.indexOf(acc[groupKey].status || "pending");
+            const statusOrder: Record<string, number> = {
+              "pending": 0,
+              "reviewing": 1,
+              "waiting": 2,
+              "changes_requested": 3,
+              "signed": 4,
+              "reviewed": 5,
+              "approved": 6,
+              "completed": 7,
+              "rejected": 8
+            };
+            const currentStatusIndex = statusOrder[acc[groupKey].status || "pending"] || 0;
+            const newStatusIndex = statusOrder[doc.status || "pending"] || 0;
             // Update overall document status and content/fileUrl if new status is higher OR equal priority
             // Equal priority is important for capturing subsequent edits once a document is already 'rejected'
             if (newStatusIndex >= currentStatusIndex) {
