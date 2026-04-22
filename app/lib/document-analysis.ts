@@ -66,7 +66,7 @@ export const extractHtmlFromPdf = async (file: File) => {
     if (context) {
       canvas.width = viewport.width;
       canvas.height = viewport.height;
-      await page.render({ canvasContext: context as any, viewport }).promise;
+      await page.render({ canvasContext: context as any, viewport } as any).promise;
       const dataUrl = canvas.toDataURL("image/jpeg", 0.85); // JPEG to keep size reasonable
       
       html += `<div class="pdf-page" style="position: relative; width: 100%; background: white; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); border: 1px solid #e2e8f0;"><img src="${dataUrl}" style="width: 100%; height: auto; display: block;" alt="Page ${pageNumber}" /></div>`;

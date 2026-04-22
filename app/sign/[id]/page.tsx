@@ -171,6 +171,19 @@ const ResizableWrapper = ({
   );
 };
 
+interface DocumentData {
+  id?: string;
+  name?: string;
+  content?: string;
+  category?: string;
+  status?: string;
+  access_id?: string;
+  access_password?: string;
+  access_first_login?: string;
+  file_url?: string;
+  recipients?: any;
+}
+
 export default function PublicSignPage() {
   const { id } = useParams() as { id: string };
   const router = useRouter();
@@ -985,12 +998,12 @@ export default function PublicSignPage() {
                      <div 
                         key={field.type}
                         onClick={() => {
-                          if (field.type === "stamp") {
+                          if ((field.type as string) === "stamp") {
                             setSignatureMode("upload");
                             setShowSignModal(true);
                           }
-                          else if (field.type === "date") addPlacedField(field.type, new Date().toLocaleDateString());
-                          else addPlacedField(field.type);
+                          else if ((field.type as string) === "date") addPlacedField(field.type as string, new Date().toLocaleDateString());
+                          else addPlacedField(field.type as string);
                         }}
                         className="flex items-center gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50/50 cursor-pointer hover:bg-white hover:border-violet-200 hover:shadow-sm hover:translate-x-1 transition-all group"
                      >

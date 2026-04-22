@@ -21,7 +21,8 @@ export default function LoginPage() {
   useEffect(() => {
     let mounted = true;
     supabase.auth.getSession()
-      .then(({ data, error }) => {
+      .then((res: any) => {
+        const { data, error } = res;
         if (error) {
           console.error("Login session check error:", error);
           return;
@@ -30,7 +31,7 @@ export default function LoginPage() {
           router.replace("/dashboard");
         }
       })
-      .catch(err => {
+      .catch((err: any) => {
         console.error("Unexpected error in login initial check:", err);
       });
     return () => { mounted = false; };
