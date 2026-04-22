@@ -92,52 +92,55 @@ const createMockClient = () => {
   } as unknown as any;
 };
 
-// Add explicit auth config for better stability in Next.js
+// Auth config — NOTE: do NOT use flowType:'pkce' here.
+// PKCE requires a BroadcastChannel lock that deadlocks under Next.js HMR,
+// causing "Loading session..." to hang for 2-5 minutes on every hot-reload.
 const authConfig = {
   persistSession: true,
   autoRefreshToken: true,
-  detectSessionInUrl: true,
+  detectSessionInUrl: false, // No OAuth redirect flow; avoids extra URL parse on load
   storageKey: `sb-${supabaseUrl?.split("//")[1]?.split(".")[0]}-auth-token`,
-  flowType: 'pkce' as const,
 };
+
+// Version stamp — increment this whenever auth config changes to bust the window cache.
+const CLIENT_VERSION = "v3-no-pkce";
+const WINDOW_KEY = `_supabaseInstance_${CLIENT_VERSION}`;
 
 // Singleton instance to prevent multiple client initializations
 let supabaseInstance: any;
 
 const getSupabaseClient = () => {
-  // If we already have an instance, return it
+  // If we already have a module-level instance, return it
   if (supabaseInstance) return supabaseInstance;
 
-  // For browser environment, check window to survive HMR in development
   if (typeof window !== "undefined") {
-    if ((window as any)._supabaseInstance) {
-      supabaseInstance = (window as any)._supabaseInstance;
+    // Clear any stale PKCE lock entries from localStorage that cause getSession() to hang
+    Object.keys(localStorage).forEach((key) => {
+      if (key.includes("-lock-") || key.includes("pkce")) {
+        localStorage.removeItem(key);
+      }
+    });
+
+    // Use a versioned key so old cached clients (with PKCE) are ignored
+    if ((window as any)[WINDOW_KEY]) {
+      supabaseInstance = (window as any)[WINDOW_KEY];
       return supabaseInstance;
     }
 
-    supabaseInstance = isConfigured 
-      ? createClient(supabaseUrl!, supabaseAnonKey!, { 
-          auth: {
-            ...authConfig,
-            // Add extra resilience for Next.js 15+ environments
-            lock: typeof window !== 'undefined' ? undefined : {
-              acquire: async () => {},
-              release: async () => {},
-            }
-          } 
-        })
+    supabaseInstance = isConfigured
+      ? createClient(supabaseUrl!, supabaseAnonKey!, { auth: authConfig })
       : createMockClient();
 
-    // Cache the instance on window in development
+    // Cache with versioned key in development
     if (process.env.NODE_ENV === 'development') {
-      (window as any)._supabaseInstance = supabaseInstance;
+      (window as any)[WINDOW_KEY] = supabaseInstance;
     }
-    
+
     return supabaseInstance;
   }
 
   // Fallback for SSR
-  return isConfigured 
+  return isConfigured
     ? createClient(supabaseUrl!, supabaseAnonKey!, { auth: authConfig })
     : createMockClient();
 };

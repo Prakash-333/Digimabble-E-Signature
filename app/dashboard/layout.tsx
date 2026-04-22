@@ -65,7 +65,23 @@ export default function DashboardLayout({
 
     const syncSession = async () => {
       try {
-        const { data, error } = await supabase.auth.getSession();
+        // Race getSession against an 8-second timeout.
+        // If it stalls (e.g. leftover HMR state), redirect to login cleanly.
+        const result = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise<null>((resolve) =>
+            setTimeout(() => resolve(null), 8000)
+          ),
+        ]);
+
+        // Timeout fired — send to login
+        if (result === null) {
+          console.warn("getSession timed out — redirecting to login.");
+          if (mounted) router.replace("/login");
+          return;
+        }
+
+        const { data, error } = result;
         if (error) {
           console.error("Session sync error:", {
             message: error.message,
@@ -87,6 +103,10 @@ export default function DashboardLayout({
           session.user.email ||
           "User";
         setUserLabel(name);
+        
+        // Unblock the UI before fetching documents so it doesn't hang!
+        if (mounted) setLoadingSession(false);
+
         const userEmail = normalizeEmail(session.user.email);
         if (userEmail) {
           try {
@@ -134,7 +154,6 @@ export default function DashboardLayout({
       } catch (err: any) {
         console.error("Unexpected error in syncSession:", err);
         setAuthError(err.message || "Failed to connect to authentication server.");
-      } finally {
         if (mounted) setLoadingSession(false);
       }
     };
@@ -153,6 +172,9 @@ export default function DashboardLayout({
           session.user.email ||
           "User";
         setUserLabel(name);
+        
+        // Unblock the UI prior to document fetch
+        if (mounted) setLoadingSession(false);
         
         const { data: rows, error: fetchError } = await supabase
           .from("documents")
@@ -191,7 +213,6 @@ export default function DashboardLayout({
         }
       } catch (err: any) {
         console.error("Error in onAuthStateChange handler:", err);
-      } finally {
         if (mounted) setLoadingSession(false);
       }
     });
