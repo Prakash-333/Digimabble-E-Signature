@@ -106,8 +106,8 @@ const buildOcrLineOverlays = async (
 ): Promise<PdfPlaceholderOverlay[]> => {
   const { recognize } = await import("tesseract.js");
   const result = await recognize(imageDataUrl, "eng");
-  const lines = result.data.lines ?? [];
-  const words = result.data.words ?? [];
+  const lines = (result.data as any).lines ?? [];
+  const words = (result.data as any).words ?? [];
   const overlays: PdfPlaceholderOverlay[] = [];
   const seenPlaceholders = new Set<string>();
 
@@ -129,12 +129,12 @@ const buildOcrLineOverlays = async (
   };
 
   const normalizedWords = (words as OcrWord[])
-    .map((word) => ({
+    .map((word: any) => ({
       raw: String(word.text || ""),
       normalized: normalizeToken(String(word.text || "")),
       bbox: word.bbox,
     }))
-    .filter((word) => word.normalized);
+    .filter((word: any) => word.normalized);
 
   placeholderMatchers.forEach(({ placeholder }) => {
     const placeholderTokens = normalizeToken(placeholder).split(/\s+/).filter(Boolean);
@@ -167,7 +167,7 @@ const buildOcrLineOverlays = async (
     }
   });
 
-  lines.forEach((line) => {
+  lines.forEach((line: any) => {
     const rawText = String(line.text || "");
     const normalizedText = rawText.toLowerCase();
     if (!normalizedText.trim()) return;
@@ -240,7 +240,7 @@ export const renderPdfPreviewPages = async (
 
     canvas.width = viewport.width;
     canvas.height = viewport.height;
-    await page.render({ canvasContext: context, viewport }).promise;
+    await page.render({ canvasContext: context, viewport } as any).promise;
 
     const textContent = await page.getTextContent();
     const overlays: PdfPlaceholderOverlay[] = [];
@@ -252,7 +252,7 @@ export const renderPdfPreviewPages = async (
       height: number;
     }> = [];
 
-    textContent.items.forEach((item) => {
+    textContent.items.forEach((item: any) => {
       if (!("str" in item)) return;
 
       const rawText = String(item.str || "");
@@ -301,8 +301,8 @@ export const renderPdfPreviewPages = async (
       });
 
       const lines: typeof sortedRuns[] = [];
-      sortedRuns.forEach((run) => {
-        const existingLine = lines.find((line) => {
+      sortedRuns.forEach((run: any) => {
+        const existingLine = lines.find((line: any) => {
           const reference = line[0];
           return Math.abs(reference.y - run.y) <= Math.max(reference.height, run.height) * 0.45;
         });
@@ -314,7 +314,7 @@ export const renderPdfPreviewPages = async (
         }
       });
 
-      lines.forEach((line) => {
+      lines.forEach((line: any) => {
         const lineRuns = [...line].sort((a, b) => a.x - b.x);
         const lineText = lineRuns.map((run) => run.text).join("");
         const normalizedLineText = lineText.toLowerCase();
@@ -440,7 +440,7 @@ export const extractHtmlFromPdf = async (file: File) => {
     if (context) {
       canvas.width = viewport.width;
       canvas.height = viewport.height;
-      await page.render({ canvasContext: context, viewport }).promise;
+      await page.render({ canvasContext: context, viewport } as any).promise;
       const dataUrl = canvas.toDataURL("image/jpeg", 0.85); // JPEG to keep size reasonable
       
       html += `<div class="pdf-page" style="position: relative; width: 100%; margin: 0 0 24px 0; background: white; border: 1px solid #e2e8f0; box-shadow: none; overflow: hidden;"><img src="${dataUrl}" style="width: 100%; height: auto; display: block; margin: 0;" alt="Page ${pageNumber}" /></div>`;
@@ -475,7 +475,7 @@ export const convertPdfPageToImage = async (file: File, pageNumber: number = 1) 
   const renderTask = page.render({
     canvasContext: context,
     viewport,
-  });
+  } as any);
   await renderTask.promise;
   
   return canvas.toDataURL("image/png");

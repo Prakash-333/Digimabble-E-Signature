@@ -182,6 +182,7 @@ interface DocumentData {
   access_first_login?: string;
   file_url?: string;
   recipients?: any;
+  sender?: any;
 }
 
 export default function PublicSignPage() {
@@ -621,7 +622,7 @@ export default function PublicSignPage() {
       
       // Log event
       await logDocumentEvent(id, isReviewMode ? "document_reviewed" : "document_signed", {
-        recipient_name: document?.recipients?.find((r: any) => normalizeEmail(r.email) === normalizeEmail(document?.sender?.workEmail))?.name || "Recipient",
+        recipient_name: document?.recipients?.find((r: any) => normalizeEmail(r.email) === normalizeEmail(document?.access_id || ""))?.name || "Recipient",
         message: isReviewMode ? "Document reviewed and approved" : "Document signed"
       });
 

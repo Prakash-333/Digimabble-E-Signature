@@ -12,7 +12,7 @@ export async function getGuestDocumentMetaData(id: string) {
     const supabase = createSupabaseAdminClient();
     const { data, error } = await supabase
       .from("documents")
-      .select("id, name, status, access_id, access_password, access_first_login, content, file_url, recipients, category")
+      .select("id, name, status, access_id, access_password, access_first_login, content, file_url, recipients, category, sender")
       .eq("id", id)
       .maybeSingle();
 
