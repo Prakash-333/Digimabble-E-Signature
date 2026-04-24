@@ -1,3 +1,5 @@
+import { supabase } from "./supabase/browser";
+
 export type DocumentRecipient = {
   name: string;
   email: string;
@@ -56,3 +58,18 @@ export const isReviewRequest = (record: Pick<SharedDocumentRecord, "category" | 
 
 export const isCompletedForRecipient = (status: string) =>
   ["reviewed", "approved", "signed", "completed", "rejected", "changes_requested"].includes(status);
+
+export const logDocumentEvent = async (documentId: string, eventType: string, payload: any = {}) => {
+  try {
+    const { error } = await supabase
+      .from("document_events")
+      .insert({
+        document_id: documentId,
+        event_type: eventType,
+        payload: payload,
+      });
+    if (error) console.error("Event logging failed:", error);
+  } catch (err) {
+    console.error("Event logging error:", err);
+  }
+};

@@ -13,7 +13,7 @@ import {
 } from "../../lib/document-stage";
 import { highlightHtmlEdits, saveSelection, restoreSelection, stripHighlights } from "../../lib/diff";
 import { supabase } from "../../lib/supabase/browser";
-import { normalizeEmail } from "../../lib/documents";
+import { normalizeEmail, logDocumentEvent } from "../../lib/documents";
 
 interface PlacedField {
   id: string;
@@ -619,6 +619,12 @@ export default function PublicSignPage() {
       
       if (!success) throw new Error(subError);
       
+      // Log event
+      await logDocumentEvent(id, isReviewMode ? "document_reviewed" : "document_signed", {
+        recipient_name: document?.recipients?.find((r: any) => normalizeEmail(r.email) === normalizeEmail(document?.sender?.workEmail))?.name || "Recipient",
+        message: isReviewMode ? "Document reviewed and approved" : "Document signed"
+      });
+
       setIsSigned(true);
     } catch (err: unknown) {
       alert("Failed to submit: " + (err instanceof Error ? err.message : String(err)));
@@ -657,6 +663,12 @@ export default function PublicSignPage() {
       }
       const { success, error: subError } = await submitGuestSignature(id, "", requireChangesMessage, finalContent, "changes_requested");
       if (!success) throw new Error(subError);
+
+      // Log event
+      await logDocumentEvent(id, "document_rejected", {
+        message: `Changes requested: ${requireChangesMessage}`
+      });
+
       setIsSigned(true);
     } catch (err: unknown) {
       alert("Failed to request changes: " + (err instanceof Error ? err.message : String(err)));
@@ -672,6 +684,12 @@ export default function PublicSignPage() {
       // Rejections don't need content updates, just the status and reason
       const { success, error: subError } = await submitGuestSignature(id, "", rejectReason, undefined, "rejected");
       if (!success) throw new Error(subError);
+
+      // Log event
+      await logDocumentEvent(id, "document_rejected", {
+        message: `Document rejected: ${rejectReason}`
+      });
+
       setIsSigned(true);
     } catch (err: unknown) {
       alert("Failed to reject: " + (err instanceof Error ? err.message : String(err)));

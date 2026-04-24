@@ -2,11 +2,11 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye, Search, PenLine, Copy, CloudUpload } from "lucide-react";
+import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye, Search, PenLine, Copy, CloudUpload, History, UserCheck, Send as SendIcon } from "lucide-react";
 import { deleteCloudFiles } from "../../actions/uploadthing";
 import { supabase } from "../../lib/supabase/browser";
 import { hasPositionedDocumentStage, isStructuredDocumentHtml, renderDocumentStageBodyHtml } from "../../lib/document-stage";
-import { getMatchingRecipient, normalizeEmail } from "../../lib/documents";
+import { getMatchingRecipient, normalizeEmail, logDocumentEvent } from "../../lib/documents";
 
 import { Edit3, Save, ShieldCheck, Loader2, RotateCcw } from "lucide-react";
 import { useUploadThing } from "../../lib/uploadthing-client";
@@ -124,6 +124,14 @@ const mapRowToSentDocument = (row: DocumentRow, currentUserId: string, currentUs
   }];
 };
 
+const getDocKind = (doc: SentDocument | { name: string }) => {
+  const lower = doc.name.toLowerCase();
+  if (/\.(png|jpe?g|gif|webp|svg)$/.test(lower)) return "image";
+  if (lower.endsWith(".pdf")) return "pdf";
+  if (/\.(doc|docx|txt|rtf)$/.test(lower)) return "doc";
+  return "file";
+};
+
 export default function DocumentsPage() {
   const router = useRouter();
   const [documents, setDocuments] = useState<SentDocument[]>([]);
@@ -233,6 +241,12 @@ export default function DocumentsPage() {
       setPendingFileUrl(null);
       setPendingFileKey(null);
       
+      // 3. Log event
+      await logDocumentEvent(doc.id, "document_updated", { 
+        recipients: doc.recipients.map(r => r.email),
+        message: "Document edited and resent to all recipients" 
+      });
+
       alert("Document updated and sent successfully to all recipients!");
     } catch (err) {
       console.error("Direct send failed:", err);
@@ -518,13 +532,7 @@ export default function DocumentsPage() {
     setOpenMenuId(null);
   };
 
-  const getDocKind = (doc: SentDocument) => {
-    const lower = doc.name.toLowerCase();
-    if (/\.(png|jpe?g|gif|webp|svg)$/.test(lower)) return "image";
-    if (lower.endsWith(".pdf")) return "pdf";
-    if (/\.(doc|docx|txt|rtf)$/.test(lower)) return "doc";
-    return "file";
-  };
+
 
   const getPreview = (doc: SentDocument) => {
     const kind = getDocKind(doc);
@@ -1663,11 +1671,27 @@ function DocumentDetailModal({
   const [viewingRecipient, setViewingRecipient] = useState<string | null>(null);
   const [refreshedDoc, setRefreshedDoc] = useState<SentDocument>(doc);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [events, setEvents] = useState<any[]>([]);
   
   const [isEditMode, setIsEditMode] = useState(false);
   const [initialContent, setInitialContent] = useState("");
   const [editedContent, setEditedContent] = useState<string | null>(null);
   const [isPersisting, setIsPersisting] = useState(false);
+
+  const isSender = doc.direction === "sent";
+
+  // Fetch events
+  useEffect(() => {
+    const fetchEvents = async () => {
+      const { data, error } = await supabase
+        .from("document_events")
+        .select("*")
+        .eq("document_id", doc.id)
+        .order("created_at", { ascending: true });
+      if (!error && data) setEvents(data);
+    };
+    fetchEvents();
+  }, [doc.id]);
 
   // Fetch current user email
   useEffect(() => {
@@ -1731,7 +1755,6 @@ function DocumentDetailModal({
   }, [doc.id]);
 
   const currentDoc = refreshedDoc;
-  const isSender = doc.direction === "sent";
   const isSingleRecipient = currentDoc.recipients.length <= 1;
 
   const getRoleLabel = (r: { role: string }) => {
@@ -1962,12 +1985,23 @@ function DocumentDetailModal({
             <p className="text-[11px] text-slate-500 font-medium">{currentDoc.subject}</p>
           </div>
         </div>
-        <button
-          onClick={onClose}
-          className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-50 border border-slate-100 text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-all shrink-0"
-        >
-          <X className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-3">
+          {isSender && (getOverallStatusLabel().includes("Approved") || refreshedDoc.status === "approved" || refreshedDoc.status === "reviewed") && (
+            <button
+              onClick={() => router.push(`/dashboard/templates?step=type_selection&documentId=${encodeURIComponent(refreshedDoc.id)}`)}
+              className="inline-flex items-center gap-1.5 rounded-full bg-green-600 border border-green-700 px-4 py-1.5 text-[11px] font-bold text-white hover:bg-green-700 transition-colors shadow-sm"
+            >
+              <ArrowUpRight className="h-3 w-3" />
+              Send
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-50 border border-slate-100 text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-all shrink-0"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
       {/* Content */}
@@ -2008,8 +2042,8 @@ function DocumentDetailModal({
                   type="button"
                   onClick={(e) => {
                     e.preventDefault();
-                    console.log("Redirecting to templates with doc ID:", currentDoc.id);
-                    router.push(`/dashboard/templates?step=recipients&documentId=${encodeURIComponent(currentDoc.id)}`);
+                    console.log("Redirecting to templates with doc ID:", refreshedDoc.id);
+                    router.push(`/dashboard/templates?step=type_selection&documentId=${encodeURIComponent(refreshedDoc.id)}`);
                   }}
                   className="inline-flex items-center gap-1.5 rounded-full bg-green-600 border border-green-700 px-4 py-1.5 text-[11px] font-bold text-white hover:bg-green-700 transition-colors shadow-sm"
                 >
@@ -2131,6 +2165,110 @@ function DocumentDetailModal({
               </div>
             );
           })()}
+
+          {/* Progress Tracking Timeline */}
+          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="px-6 py-5 border-b border-slate-100 flex items-center gap-2">
+              <History className="h-4 w-4 text-slate-400" />
+              <h3 className="text-sm font-bold text-slate-900">Progress Tracking</h3>
+            </div>
+            <div className="px-6 py-6">
+              <div className="relative space-y-6">
+                {/* Vertical line */}
+                <div className="absolute left-[11px] top-2 bottom-2 w-0.5 bg-slate-100" />
+
+                {/* Initial Send (System Event) */}
+                <div className="relative flex gap-4">
+                  <div className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-600 ring-4 ring-white">
+                    <SendIcon className="h-3 w-3" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-bold text-slate-900">Document Sent</p>
+                      <time className="text-[10px] text-slate-400">{formatDate(currentDoc.sentAt)}</time>
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      Sent by {currentDoc.sender.fullName || currentDoc.sender.workEmail} to {currentDoc.recipients.length} {currentDoc.recipients.length === 1 ? 'recipient' : 'recipients'}.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Dynamic Events from document_events table */}
+                {events.map((event, idx) => {
+                  const isUpdate = event.event_type === 'document_updated';
+                  const isSigned = event.event_type === 'document_signed';
+                  const isReviewed = event.event_type === 'document_reviewed';
+                  const isRejected = event.event_type === 'document_rejected';
+                  
+                  let icon = <Clock className="h-3 w-3" />;
+                  let bgColor = "bg-slate-100 text-slate-600";
+                  let title = event.event_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+                  if (isUpdate) { icon = <Edit2 className="h-3 w-3" />; bgColor = "bg-amber-100 text-amber-600"; title = "Document Edited & Resent"; }
+                  if (isSigned) { icon = <PenLine className="h-3 w-3" />; bgColor = "bg-green-100 text-green-600"; title = "Signed"; }
+                  if (isReviewed) { icon = <UserCheck className="h-3 w-3" />; bgColor = "bg-violet-100 text-violet-600"; title = "Reviewed & Approved"; }
+                  if (isRejected) { icon = <XCircle className="h-3 w-3" />; bgColor = "bg-red-100 text-red-600"; title = "Changes Requested"; }
+
+                  return (
+                    <div key={event.id} className="relative flex gap-4">
+                      <div className={`relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${bgColor} ring-4 ring-white`}>
+                        {icon}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-bold text-slate-900">{title}</p>
+                          <time className="text-[10px] text-slate-400">{formatDate(event.created_at)}</time>
+                        </div>
+                        <p className="mt-0.5 text-[11px] text-slate-500">
+                          {event.payload?.message || event.payload?.recipient_name || "Activity recorded"}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Current Status (Derived from recipients if no specific events yet) */}
+                {events.length === 0 && currentDoc.recipients.map((r, idx) => {
+                  if (!["signed", "reviewed", "approved", "completed", "rejected", "changes_requested"].includes(r.status || "")) return null;
+                  
+                  const isDone = ["signed", "reviewed", "approved", "completed"].includes(r.status || "");
+                  const isRejected = ["rejected", "changes_requested"].includes(r.status || "");
+                  
+                  return (
+                    <div key={`rec-status-${idx}`} className="relative flex gap-4">
+                      <div className={`relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${isDone ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'} ring-4 ring-white`}>
+                        {isDone ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-bold text-slate-900">
+                            {r.status === 'signed' ? 'Signed' : r.status === 'reviewed' || r.status === 'approved' ? 'Reviewed' : 'Action Taken'}
+                          </p>
+                          <time className="text-[10px] text-slate-400">Latest</time>
+                        </div>
+                        <p className="mt-0.5 text-[11px] text-slate-500">
+                          Activity by {r.name} ({r.email})
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Final Completion if all finished */}
+                {completedCount === currentDoc.recipients.length && currentDoc.recipients.length > 0 && (
+                  <div className="relative flex gap-4">
+                    <div className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-green-600 text-white ring-4 ring-white">
+                      <CheckCircle2 className="h-3 w-3" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-slate-900">Process Completed</p>
+                      <p className="mt-0.5 text-[11px] text-slate-500">All recipients have completed their actions.</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
 
         </div>
       </div>

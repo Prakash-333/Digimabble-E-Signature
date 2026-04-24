@@ -14,7 +14,7 @@ import {
   renderPdfPreviewPages,
   type PdfPreviewPage,
 } from "../../lib/document-analysis";
-import { normalizeEmail, normalizeRecipients } from "../../lib/documents";
+import { normalizeEmail, normalizeRecipients, logDocumentEvent } from "../../lib/documents";
 import { getScopedStorageItem, setScopedStorageItem } from "../../lib/user-storage";
 import { getStoredSignature, setStoredSignature } from "../../lib/signature-storage";
 import {
@@ -1727,6 +1727,14 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
       }
 
       setIsSent(true);
+
+      // Log initial send event
+      if (savedDoc?.id) {
+        await logDocumentEvent(savedDoc.id, "document_sent", {
+          recipients: finalRecipients.map(r => r.email),
+          message: `Initial document sent by ${newDoc.sender.fullName}`
+        });
+      }
     } catch (error) {
       console.error("Failed to save uploaded template document:", error);
       setSendError(error instanceof Error ? error.message : "Failed to save the document to Shared Documents.");
