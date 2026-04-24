@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bell, CheckCircle2, FileSignature, Eye, Loader2, MoreVertical, ChevronLeft, X, Trash2, Download, Edit3, Save, RotateCcw, MessageSquare, PenTool, ShieldCheck, User, Calendar, Building2, Type as TypeIcon, Square, CheckSquare, Mail, Tag } from "lucide-react";
+import { Bell, CheckCircle2, Eye, Loader2, MoreVertical, ChevronLeft, X, Trash2, Download, RotateCcw, MessageSquare, PenTool, ShieldCheck, User, Calendar, Building2, Type as TypeIcon, Square, CheckSquare, Mail, Tag } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/browser";
 import {
@@ -37,6 +37,11 @@ type NotificationItem = SharedDocumentRecord & {
   recipientName: string | null;
 };
 
+const generateSigningReference = () => {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("").toUpperCase();
+};
+
 interface PlacedField {
   id: string;
   type: string;
@@ -49,7 +54,7 @@ interface PlacedField {
 }
 
 const DEFAULT_FIELD_SIZE: Record<string, { width: number; height: number }> = {
-  stamp: { width: 180, height: 64 },
+  stamp: { width: 210, height: 86 },
   initial: { width: 100, height: 36 },
   date: { width: 140, height: 36 },
   name: { width: 180, height: 40 },
@@ -63,7 +68,7 @@ const DEFAULT_FIELD_SIZE: Record<string, { width: number; height: number }> = {
 };
 
 const MIN_FIELD_SIZE: Record<string, { width: number; height: number }> = {
-  stamp: { width: 110, height: 40 },
+  stamp: { width: 150, height: 62 },
   initial: { width: 72, height: 28 },
   date: { width: 100, height: 28 },
   name: { width: 110, height: 32 },
@@ -164,6 +169,7 @@ export default function NotificationsPage() {
 
   // Signing form state
   const [savedSignature, setSavedSignature] = useState<string | null>(null);
+  const [activeSigningReference, setActiveSigningReference] = useState<string | null>(null);
   const [placedFields, setPlacedFields] = useState<PlacedField[]>([]);
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
   const [showConfirmSend, setShowConfirmSend] = useState(false);
@@ -247,13 +253,18 @@ export default function NotificationsPage() {
           if (f.id !== id) return f;
 
           const minSize = MIN_FIELD_SIZE[f.type] || { width: 80, height: 28 };
-          const width = Math.max(minSize.width, Math.round(startWidth + dx));
+          const width =
+            f.type === "stamp"
+              ? Math.max(minSize.width, Math.round(startWidth + Math.max(dx, dy) * 1.25))
+              : Math.max(minSize.width, Math.round(startWidth + dx));
           const height = Math.max(
             minSize.height,
             Math.round(
               f.type === "checkbox"
                 ? startHeight + Math.max(dx, dy)
-                : startHeight + dy
+                : f.type === "stamp"
+                  ? startHeight + Math.max(dx, dy) * 0.52
+                  : startHeight + dy
             )
           );
           const resizedField = {
@@ -297,6 +308,9 @@ export default function NotificationsPage() {
   const addPlacedField = (type: string, value?: string, position?: { x: number; y: number }) => {
     const defaultSize = DEFAULT_FIELD_SIZE[type] || { width: 180, height: 40 };
     const fieldId = crypto.randomUUID();
+    if (type === "stamp") {
+      setActiveSigningReference((prev) => prev || generateSigningReference());
+    }
     const baseField: PlacedField = {
       id: fieldId,
       type,
@@ -326,6 +340,7 @@ export default function NotificationsPage() {
 
   const resetSigningState = () => {
     setPlacedFields([]);
+    setActiveSigningReference(null);
     setSelectedFieldId(null);
     setShowConfirmSend(false);
     setShowConfirmApprove(false);
@@ -344,11 +359,21 @@ export default function NotificationsPage() {
     }
     setIsSigning(true);
     try {
+      const signingReference = activeSigningReference || generateSigningReference();
       const fieldsHtml = placedFields.map(f => {
         const { width, height } = getFieldSize(f);
         const fontSize = getFieldFontSize(f);
         if (f.type === "stamp" && savedSignature) {
-          return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;width:${width}px;height:${height}px;z-index:50;pointer-events:none;"><img src="${savedSignature}" alt="Signature" style="width:100%;height:100%;object-fit:contain;" /></div>`;
+          const radius = Math.max(12, Math.round(height * 0.16));
+          const accentThickness = Math.max(3, Math.round(height * 0.045));
+          const accentLength = Math.max(18, Math.round(width * 0.11));
+          const paddingTop = Math.max(6, Math.round(height * 0.08));
+          const paddingX = Math.max(10, Math.round(width * 0.05));
+          const paddingLeft = Math.max(18, Math.round(width * 0.085));
+          const labelFontSize = Math.max(10, Math.round(height * 0.13));
+          const refFontSize = Math.max(10, Math.round(height * 0.12));
+          const sigMaxHeight = Math.max(34, Math.round(height * 0.38));
+          return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;width:${width}px;height:${height}px;z-index:50;pointer-events:none;overflow:visible;"><div style="position:relative;width:100%;height:100%;background:transparent;border-radius:${radius}px;padding:${paddingTop}px ${paddingX}px ${paddingTop}px ${paddingLeft}px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:space-between;"><div style="position:absolute;left:0;top:0;bottom:0;width:${accentThickness}px;background:#4f46e5;border-radius:${radius}px 0 0 ${radius}px;"></div><div style="position:absolute;left:0;top:0;width:${accentLength}px;height:${accentThickness}px;background:#4f46e5;border-radius:${radius}px ${accentThickness}px ${accentThickness}px ${accentThickness}px;"></div><div style="position:absolute;left:0;bottom:0;width:${accentLength}px;height:${accentThickness}px;background:#4f46e5;border-radius:${accentThickness}px ${accentThickness}px ${accentThickness}px ${radius}px;"></div><div style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:${labelFontSize}px;font-weight:700;line-height:1;color:#111827;">Signed by:</div><div style="display:flex;align-items:center;min-height:${sigMaxHeight}px;"><img src="${savedSignature}" alt="Signature" style="width:100%;max-height:${sigMaxHeight}px;object-fit:contain;object-position:left center;filter:brightness(0.45) contrast(1.55);" /></div><div style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:${refFontSize}px;line-height:1;color:#111827;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${signingReference}</div></div></div>`;
         }
         if (f.type === "checkbox") {
            return `<div style="position:absolute;left:${f.x}px;top:${f.y}px;width:${width}px;height:${height}px;z-index:50;pointer-events:none;display:flex;align-items:center;justify-content:center;background:transparent;font-weight:bold;font-size:${Math.max(14, Math.round(height * 0.8))}px;">✓</div>`;
@@ -715,7 +740,7 @@ export default function NotificationsPage() {
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <span className="inline-flex rounded-full bg-violet-50 px-3 py-1 text-[11px] font-bold text-violet-700">
-                        {item.type === "outgoing_update" ? "Status Update" : reviewRequest ? "Review Request" : "Signing Request"}
+                        {item.type === "outgoing_update" ? "Status Update" : reviewRequest ? "Review Request" : "Sign Request"}
                       </span>
                       <span
                         className={`inline-flex rounded-full px-3 py-1 text-[11px] font-bold ${
@@ -816,7 +841,7 @@ export default function NotificationsPage() {
                                 className="w-full flex items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-60"
                               >
                                 <MessageSquare className="h-4 w-4 text-amber-500" />
-                                Require Changes
+                                Request for Change
                               </button>
 
                               <button
@@ -944,58 +969,12 @@ export default function NotificationsPage() {
                     disabled={processingId === viewingItem.virtualId || isSigning}
                     className="flex items-center gap-2 rounded-xl border border-amber-200 bg-white px-4 py-2 text-xs font-bold text-amber-600 hover:bg-amber-50 transition-all shadow-sm disabled:opacity-60"
                   >
-                    <MessageSquare className="h-3.5 w-3.5" /> Require Changes
+                    <MessageSquare className="h-3.5 w-3.5" /> Request for Change
                   </button>
 
                   {isReviewRequest(viewingItem, viewingItem.recipientRole) ? (
                     /* Review request: Show Edit & Approve buttons */
                     <>
-                      {isEditMode ? (
-                        <>
-                          <button
-                            onClick={() => {
-                              setIsEditMode(false);
-                              const contentDiv = document.querySelector('.editable-content');
-                              if (contentDiv) {
-                                contentDiv.innerHTML = initialContent;
-                                setLocalEditedContent(null);
-                              }
-                            }}
-                            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-all shadow-sm"
-                          >
-                            <X className="h-3.5 w-3.5" /> Cancel Edit
-                          </button>
-                          <button
-                            onClick={() => {
-                              setIsEditMode(false);
-                              const contentDiv = document.querySelector('.editable-content');
-                              if (contentDiv) {
-                                const newHtml = contentDiv.innerHTML;
-                                // Apply the highlighting algorithm on save
-                                const highlighted = highlightHtmlEdits(initialContent, newHtml);
-                                setLocalEditedContent(highlighted);
-                              }
-                            }}
-                            className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-violet-200 hover:bg-violet-700 transition-all"
-                          >
-                            <Save className="h-3.5 w-3.5" /> Save Edits
-                          </button>
-                        </>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              // Strip existing highlights when entering edit mode
-                              const currentHtml = localEditedContent || viewingItem.content || "";
-                              const cleanHtml = stripHighlights(currentHtml);
-                              setLocalEditedContent(cleanHtml);
-                              setIsEditMode(true);
-                            }}
-                            className="flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-xs font-bold text-violet-700 hover:bg-violet-100 transition-all shadow-sm"
-                          >
-                            <Edit3 className="h-3.5 w-3.5" /> Edit Document
-                          </button>
-                        )}
-                      
                       <button
                         onClick={async () => {
                           const contentDiv = document.querySelector('.editable-content');
@@ -1177,6 +1156,12 @@ export default function NotificationsPage() {
                     const fontSize = getFieldFontSize(field);
 
                     if (field.type === "stamp") {
+                      const radius = Math.max(12, Math.round(h * 0.16));
+                      const accentThickness = Math.max(3, Math.round(h * 0.045));
+                      const accentLength = Math.max(18, Math.round(w * 0.11));
+                      const labelFontSize = Math.max(10, Math.round(h * 0.13));
+                      const refFontSize = Math.max(10, Math.round(h * 0.12));
+                      const sigMaxHeight = Math.max(34, Math.round(h * 0.38));
                       return (
                         <div
                           key={field.id}
@@ -1197,7 +1182,39 @@ export default function NotificationsPage() {
                           }}
                         >
                           {savedSignature ? (
-                            <img src={savedSignature} alt="Signature" className="w-full h-full object-contain pointer-events-none" />
+                            <div
+                              className="pointer-events-none relative h-full w-full overflow-hidden bg-transparent"
+                              style={{ borderRadius: `${radius}px` }}
+                            >
+                              <div className="absolute left-0 top-0 bottom-0 bg-indigo-600" style={{ width: `${accentThickness}px`, borderTopLeftRadius: `${radius}px`, borderBottomLeftRadius: `${radius}px` }} />
+                              <div
+                                className="absolute left-0 top-0 bg-indigo-600"
+                                style={{ width: `${accentLength}px`, height: `${accentThickness}px`, borderRadius: `${radius}px ${accentThickness}px ${accentThickness}px ${accentThickness}px` }}
+                              />
+                              <div
+                                className="absolute bottom-0 left-0 bg-indigo-600"
+                                style={{ width: `${accentLength}px`, height: `${accentThickness}px`, borderRadius: `${accentThickness}px ${accentThickness}px ${accentThickness}px ${radius}px` }}
+                              />
+                              <div
+                                className="flex h-full w-full flex-col justify-between"
+                                style={{ padding: `${Math.max(6, Math.round(h * 0.08))}px ${Math.max(10, Math.round(w * 0.05))}px ${Math.max(6, Math.round(h * 0.08))}px ${Math.max(18, Math.round(w * 0.085))}px` }}
+                              >
+                                <div className="font-bold leading-none text-slate-900" style={{ fontSize: `${labelFontSize}px` }}>Signed by:</div>
+                                <div className="flex items-center" style={{ minHeight: `${sigMaxHeight}px` }}>
+                                  <img
+                                    src={savedSignature}
+                                    alt="Signature"
+                                    className="w-full object-contain object-left"
+                                    style={{ maxHeight: `${sigMaxHeight}px`, filter: "brightness(0.45) contrast(1.55)" }}
+                                  />
+                                </div>
+                                {activeSigningReference ? (
+                                  <div className="truncate leading-none text-slate-900" style={{ fontSize: `${refFontSize}px` }}>
+                                    {activeSigningReference}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
                           ) : (
                             <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs text-center p-2">
                               No Signature Saved
@@ -1367,7 +1384,7 @@ export default function NotificationsPage() {
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="w-full max-w-md mx-4 bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
             <div className="px-6 pt-6 pb-4 border-b border-slate-100">
-              <h3 className="text-base font-bold text-slate-900">Require Changes</h3>
+              <h3 className="text-base font-bold text-slate-900">Request for Change</h3>
               <p className="text-xs text-slate-500 mt-1">
                 You are requesting changes for <span className="font-semibold text-slate-800">&ldquo;{requireChangesItem.name}&rdquo;</span>.
               </p>

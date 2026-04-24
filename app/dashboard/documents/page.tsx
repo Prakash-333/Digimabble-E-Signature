@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye, Search, PenLine, Copy, CloudUpload } from "lucide-react";
 import { deleteCloudFiles } from "../../actions/uploadthing";
 import { supabase } from "../../lib/supabase/browser";
-import { hasPositionedDocumentStage, renderDocumentStageBodyHtml } from "../../lib/document-stage";
+import { hasPositionedDocumentStage, isStructuredDocumentHtml, renderDocumentStageBodyHtml } from "../../lib/document-stage";
 import { getMatchingRecipient, normalizeEmail } from "../../lib/documents";
 
 import { Edit3, Save, ShieldCheck, Loader2, RotateCcw } from "lucide-react";
@@ -38,6 +38,10 @@ type SentDocument = {
   content?: string; // Added content to store filled HTML content
   direction?: "sent" | "received";
   recipientRole?: string;
+  updatedAt?: string;
+  signedAt?: string;
+  reviewedAt?: string;
+  approvedAt?: string;
 };
 
 type DocumentRow = {
@@ -55,6 +59,10 @@ type DocumentRow = {
   content: string | null;
   signed_file_url?: string | null;
   signed_content?: string | null;
+  updated_at: string;
+  signed_at?: string | null;
+  reviewed_at?: string | null;
+  approved_at?: string | null;
 };
 
 const mapRowToSentDocument = (row: DocumentRow, currentUserId: string, currentUserEmail: string): SentDocument[] => {
@@ -109,6 +117,10 @@ const mapRowToSentDocument = (row: DocumentRow, currentUserId: string, currentUs
     content: row.content ?? undefined,
     direction: isOwner ? "sent" : "received",
     recipientRole: matchingRecipient?.role || undefined,
+    updatedAt: row.updated_at,
+    signedAt: row.signed_at || undefined,
+    reviewedAt: row.reviewed_at || undefined,
+    approvedAt: row.approved_at || undefined,
   }];
 };
 
@@ -275,7 +287,7 @@ export default function DocumentsPage() {
 
         const { data: rows, error } = await supabase
           .from("documents")
-          .select("id, owner_id, name, subject, recipients, sender, sent_at, status, file_url, file_key, category, content")
+          .select("id, owner_id, name, subject, recipients, sender, sent_at, status, file_url, file_key, category, content, updated_at, signed_at, reviewed_at, approved_at")
           .or(`owner_id.eq.${user.id},recipients.cs.[{"email":"${normalizeEmail(user.email)}"}]`)
           .order("sent_at", { ascending: false });
 
@@ -516,13 +528,28 @@ export default function DocumentsPage() {
 
   const getPreview = (doc: SentDocument) => {
     const kind = getDocKind(doc);
+    const preferFilePreview = Boolean(doc.fileUrl && (kind === "pdf" || kind === "doc"));
+
+    if (preferFilePreview && doc.fileUrl) {
+      if (kind === "pdf") {
+        return <iframe src={`${doc.fileUrl}#toolbar=0&navpanes=0&scrollbar=0`} title={doc.name} className="h-full w-full border-0" />;
+      }
+      const viewerUrl = `https://docs.google.com/gview?url=${encodeURIComponent(doc.fileUrl)}&embedded=true`;
+      return <iframe src={viewerUrl} title={doc.name} className="h-full w-full border-0" />;
+    }
 
     // HTML content preview (scaled down)
     if (doc.content) {
       return (
         <div className="relative h-full w-full overflow-hidden bg-white">
           <div
-            style={{ transform: "scale(0.35)", transformOrigin: "top left", width: "286%", height: "286%", pointerEvents: "none" }}
+            style={{
+              transform: "scale(0.35)",
+              transformOrigin: "top left",
+              width: "286%",
+              height: "286%",
+              pointerEvents: "none",
+            }}
             dangerouslySetInnerHTML={{ __html: doc.content }}
           />
         </div>
@@ -531,15 +558,6 @@ export default function DocumentsPage() {
 
     if (kind === "image" && doc.fileUrl) {
       return <img src={doc.fileUrl} alt={doc.name} className="h-full w-full object-cover" />;
-    }
-
-    if (kind === "pdf" && doc.fileUrl) {
-      return <iframe src={`${doc.fileUrl}#toolbar=0&navpanes=0&scrollbar=0`} title={doc.name} className="h-full w-full border-0" />;
-    }
-
-    if (kind === "doc" && doc.fileUrl) {
-      const viewerUrl = `https://docs.google.com/gview?url=${encodeURIComponent(doc.fileUrl)}&embedded=true`;
-      return <iframe src={viewerUrl} title={doc.name} className="h-full w-full border-0" />;
     }
 
     // Fallback: clean document icon placeholder (no subject/sign text)
@@ -572,29 +590,34 @@ export default function DocumentsPage() {
       ).length;
 
       if (totalCount > 0) {
-        const rejectedNum = recipients.filter(r => (r as { status?: string }).status === "rejected").length;
-        const changesNum = recipients.filter(r => (r as { status?: string }).status === "changes_requested").length;
+        const rejectedRecipients = recipients.filter(r => (r as { status?: string }).status === "rejected");
+        const changesRecipients = recipients.filter(r => (r as { status?: string }).status === "changes_requested");
+        const rejectedNum = rejectedRecipients.length;
+        const changesNum = changesRecipients.length;
 
         if (rejectedNum > 0) {
+          const names = rejectedRecipients.map(r => r.name).join(", ");
           return (
             <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-[10px] font-semibold text-red-700">
               <XCircle className="mr-1 h-3 w-3" />
-              {rejectedNum === totalCount ? "Rejected" : `${rejectedNum} Rejected`}
+              {rejectedNum === 1 ? `Rejected by ${names}` : `${rejectedNum} Rejected (${names})`}
             </span>
           );
         }
         if (changesNum > 0) {
+          const names = changesRecipients.map(r => r.name).join(", ");
           return (
             <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-semibold text-amber-700">
               <Clock className="mr-1 h-3 w-3" />
-              {changesNum === totalCount ? "Changes Required" : `${changesNum} Changes Required`}
+              {changesNum === 1 ? `Changes requested by ${names}` : `${changesNum} Changes Required (${names})`}
             </span>
           );
         }
         if (completedCount === totalCount) {
+          const names = recipients.map(r => r.name).join(", ");
           const label = category === "Reviewer" 
-            ? "Approved" 
-            : (totalCount === 1 && recipients[0]?.status === "reviewed" ? "Approved" : "Signed");
+            ? (totalCount === 1 ? `Approved by ${names}` : "Approved by All")
+            : (totalCount === 1 ? (recipients[0]?.status === "reviewed" ? `Approved by ${names}` : `Signed by ${names}`) : "Signed by All");
           return (
             <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-semibold text-green-700">
               <CheckCircle2 className="mr-1 h-3 w-3" />
@@ -926,7 +949,7 @@ export default function DocumentsPage() {
                       {doc.name}
                     </p>
                     <p className="mt-0.5 truncate text-xs text-slate-500">
-                      {doc.subject}
+                      {doc.subject?.replace(/^Please\s+/i, "")}
                     </p>
                   </div>
                 </div>
@@ -1152,13 +1175,18 @@ export default function DocumentsPage() {
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-500 text-xs font-semibold text-white">
                   {(doc.sender.fullName || "P").charAt(0).toUpperCase()}
                 </div>
-                <p className="truncate text-xs text-slate-600">
-                  {doc.direction === "received"
-                    ? `Received from ${doc.sender.fullName || doc.sender.workEmail}`
-                    : doc.status === "completed"
-                      ? "You uploaded"
-                      : "You sent"} • {formatDate(doc.sentAt)}
-                </p>
+                <div className="flex flex-col min-w-0">
+                  <p className="truncate text-xs text-slate-600">
+                    {doc.direction === "received"
+                      ? `Received from ${doc.sender.fullName || doc.sender.workEmail}`
+                      : doc.status === "completed"
+                        ? "Uploaded"
+                        : "Sent"} • {formatDate(doc.sentAt)}
+                  </p>
+                  <p className="mt-0.5 truncate text-[10px] text-slate-500 font-medium">
+                    Received , {formatDate(doc.signedAt || doc.reviewedAt || doc.approvedAt || doc.updatedAt || doc.sentAt)}
+                  </p>
+                </div>
               </div>
 
               <div className="mt-4 flex items-center justify-between border-t border-slate-200 bg-white/50 px-2 py-3">
@@ -1195,7 +1223,7 @@ export default function DocumentsPage() {
                   <p className="truncate text-sm font-semibold text-slate-900">{doc.name}</p>
                   {getStatusBadge(doc)}
                 </div>
-                <p className="mt-1 truncate text-xs text-slate-500">{doc.subject}</p>
+                <p className="mt-1 truncate text-xs text-slate-500">{doc.subject?.replace(/^Please\s+/i, "")}</p>
                 <p className="mt-2 truncate text-xs text-slate-400">
                   {doc.recipients.map((r) => r.email).join(", ")} • {formatDate(doc.sentAt)}
                 </p>
@@ -1717,11 +1745,12 @@ function DocumentDetailModal({
 
   const getRecipientStatusLabel = (r: { name: string; email: string; role: string; status?: string }) => {
     const s = (r as { status?: string }).status;
-    if (s === "rejected") return "Rejected";
-    if (s === "changes_requested") return "Changes Required";
-    if (s === "signed") return "Signed";
-    if (s === "reviewed") return "Approved";
-    if (s === "approved") return "Approved";
+    const name = r.name || "Recipient";
+    if (s === "rejected") return `Rejected by ${name}`;
+    if (s === "changes_requested") return `Changes requested by ${name}`;
+    if (s === "signed") return `Signed by ${name}`;
+    if (s === "reviewed") return `Approved by ${name}`;
+    if (s === "approved") return `Approved by ${name}`;
     return "Pending";
   };
 
@@ -1749,37 +1778,40 @@ function DocumentDetailModal({
         ? currentDoc.recipients.find(r => normalizeEmail(r.email) === currentUserEmail)
         : currentDoc.recipients[0];
       const s = myRecipient?.status;
-      if (s === "rejected") return "Rejected";
-      if (s === "changes_requested") return "Changes Required";
-      if (s === "signed") return "Signed";
-      if (s === "reviewed") return "Approved";
-      if (s === "approved") return "Approved";
+      const name = myRecipient?.name || "You";
+      if (s === "rejected") return `Rejected by ${name}`;
+      if (s === "changes_requested") return `Changes requested by ${name}`;
+      if (s === "signed") return `Signed by ${name}`;
+      if (s === "reviewed") return `Approved by ${name}`;
+      if (s === "approved") return `Approved by ${name}`;
       return "Pending";
     }
 
     const totalCount = currentDoc.recipients.length;
-    const rejectedCount = currentDoc.recipients.filter(
-      (r) => (r as { status?: string }).status === "rejected"
-    ).length;
-    const changesCount = currentDoc.recipients.filter(
-      (r) => (r as { status?: string }).status === "changes_requested"
-    ).length;
+    const rejectedRecipients = currentDoc.recipients.filter(r => (r as { status?: string }).status === "rejected");
+    const changesRecipients = currentDoc.recipients.filter(r => (r as { status?: string }).status === "changes_requested");
     const completedCount = currentDoc.recipients.filter(
       (r) => ["signed", "reviewed", "approved", "completed"].includes((r as { status?: string }).status || "")
     ).length;
 
+    const rejectedCount = rejectedRecipients.length;
+    const changesCount = changesRecipients.length;
+
     // Multi-recipient logic: prioritize Rejected > Changes Required
     if (totalCount > 0) {
       if (rejectedCount > 0) {
-        return rejectedCount === totalCount ? "Rejected" : `${rejectedCount} Rejected`;
+        const names = rejectedRecipients.map(r => r.name).join(", ");
+        return rejectedCount === totalCount ? `Rejected by ${names}` : `${rejectedCount} Rejected (${names})`;
       }
       if (changesCount > 0) {
-        return changesCount === totalCount ? "Changes Required" : `${changesCount} Changes Required`;
+        const names = changesRecipients.map(r => r.name).join(", ");
+        return changesCount === totalCount ? `Changes requested by ${names}` : `${changesCount} Changes Required (${names})`;
       }
       if (completedCount === totalCount) {
+        const names = currentDoc.recipients.map(r => r.name).join(", ");
         return totalCount === 1 
-          ? (currentDoc.recipients[0]?.status === "reviewed" ? "Approved" : "Signed")
-          : "Finished";
+          ? (currentDoc.recipients[0]?.status === "reviewed" ? `Approved by ${names}` : `Signed by ${names}`)
+          : "Finished by All";
       }
       return "Pending";
     }
@@ -2160,12 +2192,15 @@ function DocumentDetailModal({
               {(() => {
                 // Check if the recipient has signed - show the signed file instead of template
                 const viewingR = currentDoc.recipients.find(r => r.email === viewingRecipient);
-                const isSigned = viewingR?.status === "signed" || viewingR?.status === "reviewed";
 
                 // 1. Prefer individual signed content, then global template content (HTML/Text)
                 const displayContent = viewingR?.signed_content || currentDoc.content;
+                const contentIsStructured = displayContent ? isStructuredDocumentHtml(displayContent) : false;
+                const displayFileUrl = viewingR?.signed_file_url || currentDoc.fileUrl;
+                const fileKind = getDocKind(currentDoc);
+                const preferFilePreview = Boolean(displayFileUrl && (fileKind === "pdf" || fileKind === "doc"));
 
-                if (displayContent) {
+                if (displayContent && !preferFilePreview) {
                   const isPositionedDocument = hasPositionedDocumentStage(displayContent);
                   return (
                     <div className="w-[800px] min-h-[1056px] mx-auto relative origin-top max-w-full">
@@ -2173,7 +2208,7 @@ function DocumentDetailModal({
                         <div
                           contentEditable={isEditMode}
                           suppressContentEditableWarning
-                          className={`modal-document-content document-content min-h-[1056px] text-[14px] text-slate-800 leading-[1.8] tracking-tight outline-none transition-all duration-300 ${isPositionedDocument ? '' : 'p-12 md:p-16'} ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10 rounded-xl' : ''}`}
+                          className={`modal-document-content document-content min-h-[1056px] text-[14px] text-slate-800 leading-[1.8] tracking-tight outline-none transition-all duration-300 ${(isPositionedDocument || contentIsStructured) ? '' : 'p-12 md:p-16'} ${isEditMode ? 'ring-4 ring-amber-100 bg-amber-50/10 rounded-xl' : ''}`}
                           style={{
                             fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                           }}
@@ -2186,7 +2221,7 @@ function DocumentDetailModal({
                               // If we have an initialContent and a baseHtml, we might want to diff.
                               // But if we're just viewing a document that was already reviewed,
                               // baseHtml already contains the highlights.
-                              let highlighted = baseHtml;
+                              const highlighted = baseHtml;
 
                               
                               return renderDocumentStageBodyHtml(highlighted);
@@ -2199,10 +2234,10 @@ function DocumentDetailModal({
                 }
 
                 // 2. Fallback to fileUrl (Iframe or Image)
-                const displayFileUrl = viewingR?.signed_file_url || currentDoc.fileUrl;
                 if (displayFileUrl) {
                   const isWordDoc = /\.(doc|docx)$/i.test(currentDoc.name || "");
                   const isImage = /\.(png|jpe?g|gif|webp|svg)$/i.test(currentDoc.name || "");
+                  const isPdf = /\.(pdf)$/i.test(currentDoc.name || "");
 
                   if (isImage) {
                     return (
@@ -2214,6 +2249,8 @@ function DocumentDetailModal({
 
                   const iframeSrc = isWordDoc
                     ? `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(displayFileUrl)}`
+                    : isPdf
+                      ? `${displayFileUrl}#toolbar=0&navpanes=0&scrollbar=0`
                     : displayFileUrl;
 
                   return (

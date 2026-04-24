@@ -113,3 +113,25 @@ a {
   padding: 0 2px;
   border-radius: 4px;
 }
+
+/* Preserve uploaded document page rendering without generic rich-text spacing. */
+.document-content .pdf-document,
+.document-content .word-document,
+.document-content .text-document {
+  word-break: normal;
+}
+
+.document-content .pdf-document img,
+.document-content .pdf-page img {
+  border-radius: 0;
+}
+
+.document-content .pdf-document div,
+.document-content .pdf-document p,
+.document-content .word-document div,
+.document-content .word-document p,
+.document-content .text-document div,
+.document-content .text-document p,
+.document-content .text-document pre {
+  margin-bottom: 0;
+}

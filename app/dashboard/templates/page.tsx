@@ -3,15 +3,26 @@
 import { Suspense, useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
-import { Search, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2, X, PenTool, Type, CloudUpload, Eye, CheckCircle2, Building2, Globe, Edit3, Save, FileText, RotateCcw } from "lucide-react";
+import { Search, ChevronLeft, Loader2, List, LayoutGrid, Image as ImageIcon, FileImage, Plus, Trash2, X, PenTool, Type, CloudUpload, Eye, CheckCircle2, Building2, Globe, Edit3, Save, RotateCcw } from "lucide-react";
 import { highlightHtmlEdits } from "../../lib/diff";
 import { OFFER_LETTER_TEMPLATE, type Template } from "./data";
 import { useUploadThing } from "../../lib/uploadthing-client";
 import { supabase } from "../../lib/supabase/browser";
-import { analyzeDocumentFile, extractPlaceholdersFromText } from "../../lib/document-analysis";
+import {
+  analyzeDocumentFile,
+  extractPlaceholdersFromText,
+  renderPdfPreviewPages,
+  type PdfPreviewPage,
+} from "../../lib/document-analysis";
 import { normalizeEmail, normalizeRecipients } from "../../lib/documents";
 import { getScopedStorageItem, setScopedStorageItem } from "../../lib/user-storage";
 import { getStoredSignature, setStoredSignature } from "../../lib/signature-storage";
+import {
+  DOCUMENT_STAGE_MIN_HEIGHT,
+  DOCUMENT_STAGE_PADDING,
+  DOCUMENT_STAGE_WIDTH,
+  isStructuredDocumentHtml,
+} from "../../lib/document-stage";
 
 type TemplateId = string | number;
 
@@ -916,6 +927,7 @@ export default function TemplatesPage() {
 }
 const RECIPIENT_CATEGORIES = ["Companies", "Employees", "Investors", "Clients", "Reviewer"] as const;
 const CATEGORY_STORAGE_KEY = "smartdocs.recipient-categories.v1";
+const INTERNAL_COMPANY_NAME = "Digimabble";
 
 const createEmptyRecipientGroups = (categories: readonly string[] = RECIPIENT_CATEGORIES): Record<string, Recipient[]> =>
   categories.reduce<Record<string, Recipient[]>>((acc, category) => {
@@ -1033,6 +1045,8 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   const [isSent, setIsSent] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [isPersisting, setIsPersisting] = useState(false);
+  const [pdfPreviewPages, setPdfPreviewPages] = useState<PdfPreviewPage[]>([]);
+  const [isLoadingPdfPreview, setIsLoadingPdfPreview] = useState(false);
   
   const [isEditMode, setIsEditMode] = useState(false);
   const [editedTemplateContent, setEditedTemplateContent] = useState<string | null>(null);
@@ -1045,6 +1059,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
+  const documentCanvasRef = useRef<HTMLDivElement>(null);
   const isDrawingRef = useRef(false);
 
   // Drawing Handlers
@@ -1189,7 +1204,65 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
 
     return output;
   }, [detectedPlaceholders, placeholderValues, template.detectedText]);
+  const uploadedPreviewIsStructured = Boolean(template.detectedText && isStructuredDocumentHtml(template.detectedText));
+  const uploadedDocumentIsPdf = Boolean(
+    hasUploadedDocument && (
+      template.mimeType === "application/pdf" ||
+      template.sourceFileName?.toLowerCase().endsWith(".pdf")
+    )
+  );
   const uploadedPreviewHtml = useMemo(() => {
+    if (uploadedDocumentIsPdf && pdfPreviewPages.length > 0) {
+      return `
+        <div class="pdf-document" style="display:flex;flex-direction:column;gap:24px;align-items:center;width:100%;margin:0;padding:0;">
+          ${pdfPreviewPages.map((page) => `
+            <div class="pdf-page" style="position:relative;width:${DOCUMENT_STAGE_WIDTH}px;max-width:100%;margin:0;background:#fff;border:1px solid #e2e8f0;box-shadow:0 20px 40px rgba(15,23,42,0.08);overflow:hidden;">
+              <img src="${page.imageDataUrl}" style="width:100%;height:auto;display:block;margin:0;" alt="Page ${page.pageNumber}" />
+              ${page.overlays.map((overlay) => {
+                const value = placeholderValues[overlay.placeholder]?.trim();
+                if (!value) return "";
+
+                const useProjectNameFallback =
+                  overlay.placeholder.toUpperCase() === "PROJECT NAME" &&
+                  (overlay.leftPercent < 20 || overlay.topPercent > 70);
+                const leftPercent = useProjectNameFallback ? 41.5 : overlay.leftPercent;
+                const topPercent = useProjectNameFallback ? 54.6 : overlay.topPercent;
+                const widthPercent = useProjectNameFallback ? 15.5 : overlay.widthPercent;
+                const heightPercent = useProjectNameFallback ? 4.4 : overlay.heightPercent;
+                const scaledFontSize = Math.max(10, overlay.fontSizePx * (DOCUMENT_STAGE_WIDTH / page.width) * 0.92);
+                return `
+                  <div
+                    data-placeholder="${escapeHtml(overlay.placeholder)}"
+                    style="
+                      position:absolute;
+                      left:${leftPercent}%;
+                      top:${topPercent}%;
+                      width:${widthPercent}%;
+                      min-height:${heightPercent}%;
+                      padding:0 2px;
+                      background:rgba(255,255,255,0.96);
+                      color:#0f172a;
+                      font-size:${scaledFontSize}px;
+                      font-weight:600;
+                      line-height:1.2;
+                      border-radius:2px;
+                      box-shadow:none;
+                      display:flex;
+                      align-items:center;
+                      justify-content:center;
+                      white-space:nowrap;
+                      overflow:hidden;
+                      text-overflow:ellipsis;
+                    "
+                  >${escapeHtml(value)}</div>
+                `;
+              }).join("")}
+            </div>
+          `).join("")}
+        </div>
+      `;
+    }
+
     if (template.detectedText?.trim()) {
       const rawContent = liveUploadedPreviewText || template.detectedText;
       // If content already contains HTML tags, use it directly without escaping
@@ -1215,7 +1288,37 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
     }
 
     return `<div>${escapeHtml(template.name)}</div>`;
-  }, [detectedPlaceholders, liveUploadedPreviewText, placeholderValues, template.detectedText, template.name]);
+  }, [detectedPlaceholders, liveUploadedPreviewText, pdfPreviewPages, placeholderValues, template.detectedText, template.name, uploadedDocumentIsPdf]);
+
+  useEffect(() => {
+    if (!uploadedDocumentIsPdf || !template.fileDataUrl) {
+      setPdfPreviewPages([]);
+      setIsLoadingPdfPreview(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingPdfPreview(true);
+
+    void renderPdfPreviewPages(template.fileDataUrl, detectedPlaceholders)
+      .then((pages) => {
+        if (cancelled) return;
+        setPdfPreviewPages(pages);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error("Failed to build live PDF preview:", error);
+        setPdfPreviewPages([]);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setIsLoadingPdfPreview(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [detectedPlaceholders, template.fileDataUrl, uploadedDocumentIsPdf]);
 
   useEffect(() => {
     if (!detectedPlaceholders.length) return;
@@ -1253,6 +1356,22 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
   const [manualSignatureScale, setManualSignatureScale] = useState(1);
   const [isPlacingSignature, setIsPlacingSignature] = useState(false);
   const [isDraggingSignature, setIsDraggingSignature] = useState(false);
+
+  const getDocumentRelativePosition = (clientX: number, clientY: number) => {
+    const stage = documentCanvasRef.current;
+    if (!stage) return null;
+
+    const rect = stage.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+
+    const x = ((clientX - rect.left) / rect.width) * 100;
+    const y = ((clientY - rect.top) / rect.height) * 100;
+
+    return {
+      x: Math.max(0, Math.min(100, x)),
+      y: Math.max(0, Math.min(100, y)),
+    };
+  };
 
   // Dynamic state selectors
   const selectedRecipients = documentType === "internal" ? internalSelectedRecipients : externalSelectedRecipients;
@@ -1323,7 +1442,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
 
     try {
       const parsed = JSON.parse(storedCategoryNames);
-      if (Array.isArray(parsed) && parsed.every((item: any) => typeof item === "string" && item.trim())) {
+      if (Array.isArray(parsed) && parsed.every((item: unknown) => typeof item === "string" && item.trim())) {
         const uniqueNames = Array.from(new Set(parsed.map((item: string) => item.trim())));
         setCategoryNames(uniqueNames);
       }
@@ -1417,7 +1536,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
         name, 
         email, 
         role: activeCategory === "Reviewer" ? "reviewer" : "signer",
-        company: activeCategory
+        company: documentType === "internal" ? INTERNAL_COMPANY_NAME : activeCategory
       }],
     }));
 
@@ -1560,6 +1679,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
       subject: isReviewMode ? `Please review: ${template.name}` : `Please sign: ${template.name}`,
       recipients: finalRecipients.map((r) => ({ 
         ...r, 
+        company: documentType === "internal" ? INTERNAL_COMPANY_NAME : (r.company || "External"),
         role: isReviewMode ? "reviewer" : "signer",
         status: "pending" 
       })),
@@ -1946,96 +2066,124 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
               <div 
                 ref={previewContainerRef}
                 onMouseMove={(e) => {
-                  if (isDraggingSignature && previewContainerRef.current) {
-                    const rect = previewContainerRef.current.getBoundingClientRect();
-                    const x = ((e.clientX - rect.left) / rect.width) * 100;
-                    const y = ((e.clientY - rect.top) / rect.height) * 100;
-                    // Clamp to 0-100
-                    setManualSignaturePos({ 
-                      x: Math.max(0, Math.min(100, x)), 
-                      y: Math.max(0, Math.min(100, y)) 
-                    });
+                  if (isDraggingSignature) {
+                    const nextPos = getDocumentRelativePosition(e.clientX, e.clientY);
+                    if (nextPos) {
+                      setManualSignaturePos(nextPos);
+                    }
                   }
                 }}
                 onMouseUp={() => setIsDraggingSignature(false)}
                 onMouseLeave={() => setIsDraggingSignature(false)}
                 onClick={(e) => {
-                  if (isPlacingSignature && previewContainerRef.current) {
-                    const rect = previewContainerRef.current.getBoundingClientRect();
-                    const x = ((e.clientX - rect.left) / rect.width) * 100;
-                    const y = ((e.clientY - rect.top) / rect.height) * 100;
-                    setManualSignaturePos({ x, y });
-                    setIsPlacingSignature(false);
+                  if (isPlacingSignature) {
+                    const nextPos = getDocumentRelativePosition(e.clientX, e.clientY);
+                    if (nextPos) {
+                      setManualSignaturePos(nextPos);
+                      setIsPlacingSignature(false);
+                    }
                   }
                 }}
                 className={`w-full max-w-[1200px] mx-auto h-fit transition-all relative ${isPlacingSignature ? "cursor-crosshair ring-4 ring-violet-400 ring-offset-4 ring-offset-slate-100" : ""}`}
               >
                 <div className="relative">
-                  {/* Manual Placement Render */}
-                  {manualSignaturePos && savedSignature && (
-                    <div 
-                      className={`absolute z-50 group ${isDraggingSignature ? "cursor-grabbing" : "cursor-grab"}`}
-                      style={{ 
-                        left: `${manualSignaturePos.x}%`, 
-                        top: `${manualSignaturePos.y}%`,
-                        transform: `translate(-50%, -50%) scale(${manualSignatureScale})`,
-                        pointerEvents: isPlacingSignature ? 'none' : 'auto'
-                      }}
-                      onMouseDown={(e) => {
-                        e.stopPropagation();
-                        setIsDraggingSignature(true);
-                      }}
-                    >
-                      <div className={`relative ${isDraggingSignature ? "opacity-75" : ""}`}>
-                        <img 
-                          src={savedSignature} 
-                          alt="Placed Signature" 
-                          className="h-16 w-auto object-contain select-none pointer-events-none" 
-                        />
-                        <div className={`absolute -inset-2 border-2 border-dashed border-violet-400 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity ${isDraggingSignature ? "opacity-100" : ""}`} />
-                        <div className="absolute -top-1 -right-1 w-4 h-4 bg-violet-600 rounded-full border-2 border-white shadow-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                           <div className="w-1.5 h-1.5 bg-white rounded-full" />
-                        </div>
-                      </div>
-                    </div>
-                  )}
                   {hasUploadedDocument && template.fileDataUrl ? (
-                    <div className="bg-slate-100/50 p-0 min-h-screen overflow-y-auto custom-scrollbar flex justify-center">
-                      <div className="w-full bg-white shadow-2xl rounded-sm p-8 text-left relative" style={{ minHeight: '1056px', aspectRatio: '1/1.414' }}>
-                        {/* Simulation of a real document page */}
-                        {(template.mimeType?.startsWith("image/") && !template.detectedText) ? (
-                          <img
-                            src={template.fileDataUrl}
-                            alt={template.name}
-                            className="max-h-full w-auto max-w-full object-contain mx-auto"
+                    <div className="bg-slate-100/50 p-6 md:p-8 overflow-y-auto custom-scrollbar flex justify-center">
+                      <div ref={documentCanvasRef} className="relative w-fit max-w-full">
+                        {uploadedDocumentIsPdf ? (
+                          isLoadingPdfPreview ? (
+                            <div
+                              className="flex items-center justify-center bg-white shadow-2xl rounded-sm border border-slate-200 text-slate-500"
+                              style={{ width: `${DOCUMENT_STAGE_WIDTH}px`, maxWidth: "100%", minHeight: `${DOCUMENT_STAGE_MIN_HEIGHT}px` }}
+                            >
+                              <div className="flex items-center gap-3 text-sm font-medium">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Rendering PDF preview...
+                              </div>
+                            </div>
+                          ) : pdfPreviewPages.length > 0 ? (
+                            <div
+                              className="template-preview-content document-content"
+                              style={{ width: `${DOCUMENT_STAGE_WIDTH}px`, maxWidth: "100%" }}
+                              dangerouslySetInnerHTML={{
+                                __html: uploadedPreviewHtml,
+                              }}
+                            />
+                          ) : (
+                            <div
+                              className="bg-white shadow-2xl rounded-sm border border-slate-200 text-left overflow-hidden"
+                              style={{ width: `${DOCUMENT_STAGE_WIDTH}px`, maxWidth: "100%", minHeight: `${DOCUMENT_STAGE_MIN_HEIGHT}px` }}
+                            >
+                              <iframe
+                                src={`${template.fileDataUrl}#toolbar=0&navpanes=0&statusbar=0&view=FitH&page=1`}
+                                title={template.name}
+                                className="block h-[1056px] w-full bg-white"
+                              />
+                            </div>
+                          )
+                        ) : (template.mimeType?.startsWith("image/") && !template.detectedText) ? (
+                          <div
+                            className="bg-white shadow-2xl rounded-sm border border-slate-200 text-left overflow-hidden"
+                            style={{ width: `${DOCUMENT_STAGE_WIDTH}px`, maxWidth: "100%" }}
+                          >
+                            <img
+                              src={template.fileDataUrl}
+                              alt={template.name}
+                              className="block w-full h-auto"
+                            />
+                          </div>
+                        ) : uploadedPreviewIsStructured && (template.detectedText || "").includes('class="pdf-document"') ? (
+                          <div
+                            className="template-preview-content document-content"
+                            style={{ width: `${DOCUMENT_STAGE_WIDTH}px`, maxWidth: "100%" }}
+                            dangerouslySetInnerHTML={{
+                              __html: liveUploadedPreviewText || template.detectedText || "",
+                            }}
                           />
                         ) : (
-                          <div className="whitespace-pre-wrap break-words text-[15px] leading-relaxed text-slate-900 font-serif">
-                             {liveUploadedPreviewText || template.detectedText || "No text content could be extracted from this document."}
+                          <div
+                            className="bg-white shadow-2xl rounded-sm border border-slate-200 text-left overflow-hidden"
+                            style={{ width: `${DOCUMENT_STAGE_WIDTH}px`, maxWidth: "100%", minHeight: `${DOCUMENT_STAGE_MIN_HEIGHT}px` }}
+                          >
+                            <div
+                              className="template-preview-content document-content relative z-10 p-12 md:p-16 text-[15px] leading-[1.9] text-slate-900"
+                              style={{ padding: `${DOCUMENT_STAGE_PADDING}px` }}
+                              dangerouslySetInnerHTML={{
+                                __html:
+                                  uploadedPreviewHtml ||
+                                  liveUploadedPreviewText ||
+                                  template.detectedText ||
+                                  "<div>No text content could be extracted from this document.</div>",
+                              }}
+                            />
                           </div>
                         )}
 
-                        {/* If it's a manual placement mode, ensure signature overlay is positioned relative to this paper */}
                         {manualSignaturePos && savedSignature && (
-                          <div 
-                            className="absolute z-50 pointer-events-none group"
-                            style={{ 
-                              left: `${manualSignaturePos.x}%`, 
+                          <div
+                            className={`absolute z-50 group ${isDraggingSignature ? "cursor-grabbing" : "cursor-grab"}`}
+                            style={{
+                              left: `${manualSignaturePos.x}%`,
                               top: `${manualSignaturePos.y}%`,
                               transform: `translate(-50%, -50%) scale(${manualSignatureScale})`,
-                              pointerEvents: isPlacingSignature ? 'none' : 'auto'
+                              pointerEvents: isPlacingSignature ? "none" : "auto",
                             }}
                             onMouseDown={(e) => {
                               e.stopPropagation();
                               setIsDraggingSignature(true);
                             }}
                           >
-                             <img 
-                              src={savedSignature} 
-                              alt="Placed Signature" 
-                              className="h-16 w-auto object-contain select-none pointer-events-none" 
-                            />
-                            <div className={`absolute -inset-2 border-2 border-dashed border-violet-400 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity ${isDraggingSignature ? "opacity-100" : ""}`} />
+                            <div className={`relative ${isDraggingSignature ? "opacity-75" : ""}`}>
+                              <img
+                                src={savedSignature}
+                                alt="Placed Signature"
+                                className="h-16 w-auto object-contain select-none pointer-events-none"
+                              />
+                              <div className={`absolute -inset-2 border-2 border-dashed border-violet-400 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity ${isDraggingSignature ? "opacity-100" : ""}`} />
+                              <div className="absolute -top-1 -right-1 w-4 h-4 bg-violet-600 rounded-full border-2 border-white shadow-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                <div className="w-1.5 h-1.5 bg-white rounded-full" />
+                              </div>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -2602,7 +2750,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                                   <div className="w-px h-6 bg-slate-100 mx-1" />
                                   <div className="flex flex-col gap-0.5">
                                     <span className="text-slate-400 font-bold uppercase tracking-tighter">Company</span>
-                                    <span className="text-slate-700 font-extrabold">{r.company || "General"}</span>
+                                    <span className="text-slate-700 font-extrabold">{documentType === "internal" ? INTERNAL_COMPANY_NAME : (r.company || "General")}</span>
                                   </div>
                                 </div>
                               </div>
@@ -2823,8 +2971,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                     <div className="w-14 h-14 rounded-2xl bg-white border border-slate-100 flex items-center justify-center text-slate-400 mb-4 shadow-sm group-hover:scale-110 group-hover:bg-violet-600 group-hover:text-white transition-all ring-8 ring-slate-100/30">
                       <Eye className="w-6 h-6" />
                     </div>
-                    <span className="text-lg font-extrabold text-slate-900 mb-1">Review</span>
-                    <span className="text-xs text-slate-500 font-bold leading-relaxed text-center opacity-80 uppercase tracking-tighter">Verified by Team</span>
+                    <span className="text-lg font-extrabold text-slate-900 mb-1">Send for Review</span>
                   </button>
 
                   <button
@@ -2837,17 +2984,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
                     <div className="w-14 h-14 rounded-2xl bg-white border border-slate-100 flex items-center justify-center text-slate-400 mb-4 shadow-sm group-hover:scale-110 group-hover:bg-violet-600 group-hover:text-white transition-all ring-8 ring-slate-100/30">
                       <CheckCircle2 className="w-6 h-6" />
                     </div>
-                    <span className="text-lg font-extrabold text-slate-900 mb-1">Sign</span>
-                    <span className="text-xs text-slate-500 font-bold leading-relaxed text-center opacity-80 uppercase tracking-tighter">Direct to Signers</span>
-                  </button>
-                </div>
-
-                <div className="pt-4">
-                  <button
-                    onClick={() => setShowSendChoice(false)}
-                    className="text-sm font-bold text-slate-400 hover:text-violet-600 transition-colors uppercase tracking-widest px-8 py-3 rounded-full hover:bg-violet-50"
-                  >
-                    Cancel and go back
+                    <span className="text-lg font-extrabold text-slate-900 mb-1">Send for Sign</span>
                   </button>
                 </div>
               </div>
