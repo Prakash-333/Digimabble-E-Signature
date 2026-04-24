@@ -2306,7 +2306,6 @@ function DocumentDetailModal({
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                {/* Action buttons removed except Download */}
                 {(currentDoc.fileUrl || currentDoc.content) && (
                   <button
                     onClick={() => handleDownload(viewingRecipient || "")}

@@ -162,7 +162,8 @@ const persistSharedDocument = async (record: {
 
   const { data: insertedRow, error } = await supabase
     .from("documents")
-    .insert({
+    .upsert({
+      id: record.id,
       owner_id: currentUser.id,
       name: record.name,
       subject: record.subject,
@@ -177,6 +178,7 @@ const persistSharedDocument = async (record: {
       file_key: record.fileKey ?? null,
       category: record.category ?? null,
       content: record.content ?? null,
+      updated_at: new Date().toISOString()
     })
     .select("id")
     .single();
@@ -203,6 +205,7 @@ function TemplatesContent() {
   const [selectedForUse, setSelectedForUse] = useState<TemplateId | null>(null);
   const [appTemplates, setAppTemplates] = useState<AppTemplate[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null | undefined>(undefined);
+  const [continuingDocumentId, setContinuingDocumentId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const loadedDocumentIdRef = useRef<string | null>(null);
   const pendingTemplateAnalysisRef = useRef<Array<{
@@ -410,6 +413,7 @@ function TemplatesContent() {
       }
 
       loadedDocumentIdRef.current = documentId;
+      setContinuingDocumentId(documentId);
 
       const tempId = `review-${docData.id}`;
       
@@ -1674,7 +1678,7 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
     const docCategory = isReviewMode ? "Reviewer" : (activeCategory === "Reviewer" ? null : activeCategory);
 
     const newDoc = {
-      id: `tmp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: continuingDocumentId || `tmp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       name: template.name,
       subject: isReviewMode ? `Please review: ${template.name}` : `Please sign: ${template.name}`,
       recipients: finalRecipients.map((r) => ({ 
@@ -1728,11 +1732,13 @@ function TemplateFlowModal({ template, step, setStep, onClose, router, currentUs
 
       setIsSent(true);
 
-      // Log initial send event
+      // Log send event
       if (savedDoc?.id) {
         await logDocumentEvent(savedDoc.id, "document_sent", {
           recipients: finalRecipients.map(r => r.email),
-          message: `Initial document sent by ${newDoc.sender.fullName}`
+          message: continuingDocumentId 
+            ? `Document continued and sent to ${finalRecipients.length} recipients by ${newDoc.sender.fullName}`
+            : `Initial document sent by ${newDoc.sender.fullName}`
         });
       }
     } catch (error) {
