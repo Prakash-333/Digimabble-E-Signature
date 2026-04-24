@@ -2202,7 +2202,7 @@ function DocumentDetailModal({
                   
                   let icon = <Clock className="h-3 w-3" />;
                   let bgColor = "bg-slate-100 text-slate-600";
-                  let title = event.event_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                  let title = event.event_type.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
 
                   if (isUpdate) { icon = <Edit2 className="h-3 w-3" />; bgColor = "bg-amber-100 text-amber-600"; title = "Document Edited & Resent"; }
                   if (isSigned) { icon = <PenLine className="h-3 w-3" />; bgColor = "bg-green-100 text-green-600"; title = "Signed"; }
