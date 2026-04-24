@@ -795,6 +795,7 @@ function TemplatesContent() {
           setStep={setUseStep}
           router={router}
           currentUserId={currentUserId}
+          continuingDocumentId={continuingDocumentId}
           onClose={() => {
             setUseStep(null);
             setSelectedForUse(null);
@@ -981,13 +982,14 @@ const generateTemplateFields = (templateContent: string) => {
     }));
 };
 
-function TemplateFlowModal({ template, step, setStep, onClose, router, currentUserId }: {
+function TemplateFlowModal({ template, step, setStep, onClose, router, currentUserId, continuingDocumentId }: {
   template: AppTemplate,
   step: "review" | "type_selection" | "recipients" | "internal_recipients" | "external_recipients" | "send",
   setStep: (s: "review" | "type_selection" | "recipients" | "internal_recipients" | "external_recipients" | "send" | null) => void,
   onClose: () => void,
   router: ReturnType<typeof useRouter>,
-  currentUserId: string | null | undefined
+  currentUserId: string | null | undefined,
+  continuingDocumentId: string | null
 }) {
   const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
   const todayISO = new Date().toISOString().split("T")[0];
