@@ -67,19 +67,7 @@ export default function DashboardLayout({
       try {
         // Race getSession against an 8-second timeout.
         // If it stalls (e.g. leftover HMR state), redirect to login cleanly.
-        const result = await Promise.race([
-          supabase.auth.getSession(),
-          new Promise<null>((resolve) =>
-            setTimeout(() => resolve(null), 8000)
-          ),
-        ]);
-
-        // Timeout fired — send to login
-        if (result === null) {
-          console.warn("getSession timed out — redirecting to login.");
-          if (mounted) router.replace("/login");
-          return;
-        }
+        const result = await supabase.auth.getSession();
 
         const { data, error } = result;
         if (error) {

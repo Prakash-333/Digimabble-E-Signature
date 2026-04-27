@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import StyleFix from "./style-fix";
-
 export const metadata: Metadata = {
   title: "SmartDocs",
   description:
@@ -17,7 +15,6 @@ export default function RootLayout({
     <html lang="en">
       <body className="bg-slate-50 text-slate-900 antialiased">
         {children}
-        <StyleFix />
       </body>
     </html>
   );

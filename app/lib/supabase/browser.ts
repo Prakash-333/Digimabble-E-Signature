@@ -1,6 +1,6 @@
 "use client";
 
-import { createClient } from "@supabase/supabase-js";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -92,57 +92,27 @@ const createMockClient = () => {
   } as unknown as any;
 };
 
-// Auth config — NOTE: do NOT use flowType:'pkce' here.
-// PKCE requires a BroadcastChannel lock that deadlocks under Next.js HMR,
-// causing "Loading session..." to hang for 2-5 minutes on every hot-reload.
-const authConfig = {
-  persistSession: true,
-  autoRefreshToken: true,
-  detectSessionInUrl: false, // No OAuth redirect flow; avoids extra URL parse on load
-  storageKey: `sb-${supabaseUrl?.split("//")[1]?.split(".")[0]}-auth-token`,
-};
-
-// Version stamp — increment this whenever auth config changes to bust the window cache.
-const CLIENT_VERSION = "v3-no-pkce";
-const WINDOW_KEY = `_supabaseInstance_${CLIENT_VERSION}`;
-
-// Singleton instance to prevent multiple client initializations
-let supabaseInstance: any;
-
 const getSupabaseClient = () => {
-  // If we already have a module-level instance, return it
-  if (supabaseInstance) return supabaseInstance;
-
-  if (typeof window !== "undefined") {
-    // Clear any stale PKCE lock entries from localStorage that cause getSession() to hang
-    Object.keys(localStorage).forEach((key) => {
-      if (key.includes("-lock-") || key.includes("pkce")) {
-        localStorage.removeItem(key);
+  if (isConfigured) {
+    return createClientComponentClient({
+      supabaseUrl,
+      supabaseKey: supabaseAnonKey,
+      options: {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+        },
+        global: {
+          fetch: (url, options) => {
+            return fetch(url, { ...options, signal: AbortSignal.timeout(15000) });
+          }
+        }
       }
     });
-
-    // Use a versioned key so old cached clients (with PKCE) are ignored
-    if ((window as any)[WINDOW_KEY]) {
-      supabaseInstance = (window as any)[WINDOW_KEY];
-      return supabaseInstance;
-    }
-
-    supabaseInstance = isConfigured
-      ? createClient(supabaseUrl!, supabaseAnonKey!, { auth: authConfig })
-      : createMockClient();
-
-    // Cache with versioned key in development
-    if (process.env.NODE_ENV === 'development') {
-      (window as any)[WINDOW_KEY] = supabaseInstance;
-    }
-
-    return supabaseInstance;
   }
-
-  // Fallback for SSR
-  return isConfigured
-    ? createClient(supabaseUrl!, supabaseAnonKey!, { auth: authConfig })
-    : createMockClient();
+  
+  return createMockClient();
 };
 
 export const supabase = getSupabaseClient();
