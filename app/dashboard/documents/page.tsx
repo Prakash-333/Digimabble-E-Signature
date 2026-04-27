@@ -1,7 +1,5 @@
 "use client";
 
-export const dynamic = 'force-dynamic';
-
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { FileText, CheckCircle2, ArrowUpRight, Trash2, X, XCircle, MoreVertical, Download, Edit2, ChevronLeft, List, LayoutGrid, Image as ImageIcon, FileImage, Info, Clock, Eye, Search, PenLine, Copy, CloudUpload, History, UserCheck, Send as SendIcon } from "lucide-react";
