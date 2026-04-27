@@ -103,6 +103,9 @@ const getSupabaseClient = () => {
           autoRefreshToken: true,
           detectSessionInUrl: true,
         },
+        cookieOptions: {
+          sameSite: 'lax',
+        },
         global: {
           fetch: (url, options) => {
             return fetch(url, { ...options, signal: AbortSignal.timeout(15000) });
