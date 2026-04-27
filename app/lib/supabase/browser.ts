@@ -122,10 +122,18 @@ const createMockClient = () => {
 };
 
 // ---------------------------------------------------------------------------
-// Real client — SINGLETON so the session token is never lost between renders.
-// createClientComponentClient() must NOT be called on every render; doing so
-// creates a fresh client with no session, which looks like a logout on every
-// soft-navigation in Next.js App Router.
+// Real Supabase client — SINGLETON pattern.
+//
+// KEY RULES:
+//  1. createClientComponentClient() reads the session from the COOKIE that
+//     middleware.ts writes on every request. Do NOT pass a custom storageKey —
+//     that would redirect the client to read from localStorage under a
+//     different key, which the middleware never writes to, causing the session
+//     to appear missing on every normal (non-hard) refresh.
+//  2. Keep a module-level singleton so the same client instance (and its
+//     in-memory token cache) is reused across soft navigations in Next.js
+//     App Router. Calling createClientComponentClient() on every render
+//     creates a fresh, session-less client.
 // ---------------------------------------------------------------------------
 let _supabaseInstance: ReturnType<typeof createClientComponentClient> | null =
   null;
@@ -133,7 +141,7 @@ let _supabaseInstance: ReturnType<typeof createClientComponentClient> | null =
 const getSupabaseClient = () => {
   if (!isConfigured) return createMockClient();
 
-  // Server-side: always create a fresh instance (no window/singleton needed)
+  // Server-side: always create a fresh instance (no window / singleton)
   if (typeof window === "undefined") {
     return createClientComponentClient({
       supabaseUrl: supabaseUrl!,
@@ -141,21 +149,13 @@ const getSupabaseClient = () => {
     });
   }
 
-  // Client-side: reuse the same instance for the lifetime of the page
+  // Client-side: reuse the same instance for the lifetime of the tab.
+  // Do NOT pass a custom storageKey here — let it use the default cookie
+  // storage that @supabase/auth-helpers-nextjs and the middleware both use.
   if (!_supabaseInstance) {
     _supabaseInstance = createClientComponentClient({
       supabaseUrl: supabaseUrl!,
       supabaseKey: supabaseAnonKey!,
-      options: {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: true,
-          // 'lax' lets the session cookie survive normal page refreshes but
-          // blocks cross-site request forgery.
-          storageKey: `sb-${supabaseUrl!.split("//")[1]?.split(".")[0]}-auth-token`,
-        },
-      },
     });
   }
 
