@@ -66,48 +66,44 @@ export default function DashboardLayout({
 
     const syncSession = async () => {
       try {
-        // Race getSession against a 15-second timeout.
-        // If it stalls, redirect to login cleanly.
-        const result = await Promise.race([
-          supabase.auth.getUser(),
-          new Promise<null>((resolve) =>
-            setTimeout(() => resolve(null), 15000)
-          ),
-        ]);
+        // Step 1: Read session from cookie (fast — set by middleware.ts on every request).
+        // This never times out because it's a local cookie read, not a network call.
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
-        // Timeout fired — send to login
-        if (result === null) {
-          console.warn("getUser timed out — redirecting to login.");
-          if (mounted) router.replace("/login");
+        if (sessionError) {
+          console.error("Session read error:", sessionError.message);
+          if (mounted) setAuthError(sessionError.message);
+          if (mounted) setLoadingSession(false);
           return;
         }
 
-        const { data, error } = result;
-        if (error) {
-          console.error("User sync error:", {
-            message: error.message,
-            status: (error as any).status
-          });
-          setAuthError(error.message);
-        }
         if (!mounted) return;
 
-        const user = data?.user;
-        if (!user) {
+        const session = sessionData?.session;
+
+        // Step 2: No cookie session found → verify with server as final check.
+        if (!session) {
+          const { data: userData } = await supabase.auth.getUser();
+          if (!userData?.user) {
+            router.replace("/login");
+            return;
+          }
+          // Server confirmed a valid user — session cookie will refresh on next request.
+        }
+
+        const user = session?.user ?? (await supabase.auth.getUser()).data.user;
+        if (!user || !mounted) {
           router.replace("/login");
           return;
         }
-        setCurrentUserId(user.id);
 
-        const name =
-          user.user_metadata?.full_name ||
-          user.email ||
-          "User";
-        setUserLabel(name);
-        
-        // Unblock the UI before fetching documents so it doesn't hang!
+        setCurrentUserId(user.id);
+        setUserLabel(user.user_metadata?.full_name || user.email || "User");
+
+        // Unblock the UI immediately
         if (mounted) setLoadingSession(false);
 
+        // Step 3: Fetch notifications in the background
         const userEmail = normalizeEmail(user.email);
         if (userEmail) {
           try {
@@ -121,30 +117,23 @@ export default function DashboardLayout({
 
             const hiddenIds = getHiddenNotificationIds(user.id);
             const seenIds = getSeenNotificationIds(user.id);
-            
+
             const ids: string[] = [];
             ((rows ?? []) as SharedDocumentRecord[]).forEach((row) => {
               if (row.owner_id !== user.id) {
-                // Incoming Request
                 if (hiddenIds.has(row.id) || seenIds.has(row.id)) return;
                 const isRecipient = Boolean(getMatchingRecipient(row.recipients, userEmail));
-                if (isRecipient && !isCompletedForRecipient(row.status)) {
-                  ids.push(row.id);
-                }
+                if (isRecipient && !isCompletedForRecipient(row.status)) ids.push(row.id);
               } else {
-                // Outgoing Update (track completions)
                 row.recipients.forEach((r) => {
                   if (["signed", "reviewed", "approved", "rejected"].includes(r.status || "")) {
                     const virtualId = `${row.id}_${normalizeEmail(r.email)}_${r.status}`;
-                    if (!hiddenIds.has(virtualId) && !seenIds.has(virtualId)) {
-                      ids.push(virtualId);
-                    }
+                    if (!hiddenIds.has(virtualId) && !seenIds.has(virtualId)) ids.push(virtualId);
                   }
                 });
               }
             });
-            setPendingIds(ids);
-            setNotificationCount(ids.length);
+            if (mounted) { setPendingIds(ids); setNotificationCount(ids.length); }
           } catch (err: any) {
             console.warn("Failed to fetch notification rows:", err);
           }
@@ -154,7 +143,7 @@ export default function DashboardLayout({
         }
       } catch (err: any) {
         console.error("Unexpected error in syncSession:", err);
-        setAuthError(err.message || "Failed to connect to authentication server.");
+        if (mounted) setAuthError(err.message || "Failed to connect to authentication server.");
         if (mounted) setLoadingSession(false);
       }
     };

@@ -20,4 +20,4 @@ export default function RootLayout({
   );
 }
 
-// Vercel Sync 1.0.7
+// Vercel Sync 1.0.8
