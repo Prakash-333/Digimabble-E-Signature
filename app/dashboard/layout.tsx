@@ -69,7 +69,7 @@ export default function DashboardLayout({
         // Race getSession against a 15-second timeout.
         // If it stalls, redirect to login cleanly.
         const result = await Promise.race([
-          supabase.auth.getSession(),
+          supabase.auth.getUser(),
           new Promise<null>((resolve) =>
             setTimeout(() => resolve(null), 15000)
           ),
@@ -77,38 +77,38 @@ export default function DashboardLayout({
 
         // Timeout fired — send to login
         if (result === null) {
-          console.warn("getSession timed out — redirecting to login.");
+          console.warn("getUser timed out — redirecting to login.");
           if (mounted) router.replace("/login");
           return;
         }
 
         const { data, error } = result;
         if (error) {
-          console.error("Session sync error:", {
+          console.error("User sync error:", {
             message: error.message,
-            status: error.status
+            status: (error as any).status
           });
           setAuthError(error.message);
         }
         if (!mounted) return;
 
-        const session = data?.session;
-        if (!session) {
+        const user = data?.user;
+        if (!user) {
           router.replace("/login");
           return;
         }
-        setCurrentUserId(session.user.id);
+        setCurrentUserId(user.id);
 
         const name =
-          session.user.user_metadata?.full_name ||
-          session.user.email ||
+          user.user_metadata?.full_name ||
+          user.email ||
           "User";
         setUserLabel(name);
         
         // Unblock the UI before fetching documents so it doesn't hang!
         if (mounted) setLoadingSession(false);
 
-        const userEmail = normalizeEmail(session.user.email);
+        const userEmail = normalizeEmail(user.email);
         if (userEmail) {
           try {
             const { data: rows, error: fetchError } = await supabase
@@ -119,12 +119,12 @@ export default function DashboardLayout({
 
             if (fetchError) throw fetchError;
 
-            const hiddenIds = getHiddenNotificationIds(session.user.id);
-            const seenIds = getSeenNotificationIds(session.user.id);
+            const hiddenIds = getHiddenNotificationIds(user.id);
+            const seenIds = getSeenNotificationIds(user.id);
             
             const ids: string[] = [];
             ((rows ?? []) as SharedDocumentRecord[]).forEach((row) => {
-              if (row.owner_id !== session.user.id) {
+              if (row.owner_id !== user.id) {
                 // Incoming Request
                 if (hiddenIds.has(row.id) || seenIds.has(row.id)) return;
                 const isRecipient = Boolean(getMatchingRecipient(row.recipients, userEmail));

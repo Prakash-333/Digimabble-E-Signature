@@ -66,19 +66,17 @@ export default function DashboardPage() {
     let mounted = true;
     const loadCounts = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        let user = session?.user;
-
-        if (!user) {
-          const { data: { user: freshUser }, error: authError } = await supabase.auth.getUser();
-          if (authError) {
-            if (authError.message?.includes("stole it")) return;
-            throw authError;
-          }
-          user = freshUser ?? undefined;
+        // 1. Get the most reliable user state
+        const { data: { user: freshUser }, error: authError } = await supabase.auth.getUser();
+        
+        if (authError || !freshUser) {
+          console.warn("No active session found - redirecting.");
+          if (mounted) window.location.href = "/login";
+          return;
         }
 
-        if (!user || !mounted) return;
+        const user = freshUser;
+        if (!mounted) return;
 
         setUserLabel(user.user_metadata?.full_name || user.email || "User");
         const userEmail = normalizeEmail(user.email);
