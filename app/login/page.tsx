@@ -16,26 +16,42 @@ export default function LoginPage() {
   const [email, setEmail] = useState("test@gmail.com");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let mounted = true;
-    supabase.auth.getSession()
-      .then((res: any) => {
-        const { data, error } = res;
-        if (error) {
-          console.error("Login session check error:", error);
+    const checkAuth = async () => {
+      const { data: sessionData } = await supabase.auth.getSession();
+
+      if (!sessionData?.session) {
+        const { data: userData } = await supabase.auth.getUser();
+
+        if (!userData?.user) {
+          // No authenticated user - stay on login page
+          console.log("[LOGIN] No authenticated user found");
+          setAuthLoading(false);
           return;
         }
-        if (mounted && data?.session) {
-          router.replace("/dashboard");
-        }
-      })
-      .catch((err: any) => {
-        console.error("Unexpected error in login initial check:", err);
-      });
-    return () => { mounted = false; };
+      }
+
+      // Session exists - user can continue here
+      console.log("[LOGIN] Session exists - user can continue on login page");
+      setAuthLoading(false);
+    };
+
+    checkAuth();
   }, [router]);
+
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <div className="text-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-violet-600 border-t-transparent mx-auto mb-4" />
+          <p className="text-sm text-slate-500">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleLogin = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -60,14 +76,16 @@ export default function LoginPage() {
     console.log("🔐 [LOGIN] Access Token:", loginData?.session?.access_token ? "present" : "MISSING");
     // ── END DEBUG ────────────────────────────────────────────────────────
 
-    setLoading(false);
+setLoading(false);
 
-    if (signInError) {
-      setError(signInError.message);
-      return;
-    }
+  if (signInError) {
+    setError(signInError.message);
+    return;
+  }
 
-    router.replace("/dashboard");
+  console.log("✅ Login successful! Session is active.");
+  // Note: Page stays on login to show user the result. 
+  // Dashboard will handle auth state separately via onAuthStateChange.
   };
 
   const handleGoogleLogin = async () => {

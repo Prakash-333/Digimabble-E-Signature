@@ -15,16 +15,31 @@ export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }: { data: { session: Session | null } }) => {
       if (data.session) {
-        router.replace("/dashboard");
+        // User already has a session - let page handle display naturally
+        console.log("[REGISTER] Session already exists - user can continue here");
+        // Not forcing redirect
       }
+      setAuthLoading(false);
     });
   }, [router]);
+
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <div className="text-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-violet-600 border-t-transparent mx-auto mb-4" />
+          <p className="text-sm text-slate-500">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleRegister = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -70,7 +85,8 @@ export default function RegisterPage() {
     });
 
     if (!signInError) {
-      router.replace("/dashboard");
+      console.log("[REGISTER] Registration successful - user can navigate to dashboard");
+      // Not forcing redirect, let user proceed manually
       return;
     }
 

@@ -77,23 +77,20 @@ export default function DashboardLayout({
           return;
         }
 
-        if (!mounted) return;
-
-        const session = sessionData?.session;
-
-        // Step 2: No cookie session found → verify with server as final check.
-        if (!session) {
+        if (!sessionData?.session) {
           const { data: userData } = await supabase.auth.getUser();
+
           if (!userData?.user) {
-            router.replace("/login");
+            // No authenticated user - let auth state subscription handle state
+            console.log("[DASHBOARD] No authenticated user found in syncSession");
             return;
           }
-          // Server confirmed a valid user — session cookie will refresh on next request.
         }
 
-        const user = session?.user ?? (await supabase.auth.getUser()).data.user;
+        const user = sessionData?.session?.user ?? (await supabase.auth.getUser()).data.user;
         if (!user || !mounted) {
-          router.replace("/login");
+          // No user - let auth state subscription handle the state
+          console.log("[DASHBOARD] No user in syncSession - auth state subscription will handle state update");
           return;
         }
 
@@ -153,7 +150,8 @@ export default function DashboardLayout({
     const { data } = supabase.auth.onAuthStateChange(async (_event: string, session: any) => {
       try {
         if (!session) {
-          router.replace("/login");
+          // Auth state changed - no session, let UI handle naturally
+          console.log("[DASHBOARD] Auth state changed - no session");
           return;
         }
         setCurrentUserId(session.user.id);
@@ -220,7 +218,8 @@ export default function DashboardLayout({
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    router.replace("/login");
+    // Auth state will be caught by onAuthStateChange subscription
+    console.log("[DASHBOARD] User logged out - auth state subscription will handle state update");
   };
 
   const handleNotificationClick = () => {

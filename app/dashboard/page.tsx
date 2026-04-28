@@ -62,20 +62,34 @@ export default function DashboardPage() {
 
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+useEffect(() => {
     let mounted = true;
     const loadCounts = async () => {
       try {
-        // 1. Get the most reliable user state
-        const { data: { user: freshUser }, error: authError } = await supabase.auth.getUser();
+        console.log("🔄 [DASHBOARD] Loading data from Supabase...");
         
-        if (authError || !freshUser) {
-          console.warn("No active session found - redirecting.");
+        // 1. Get session first (recommended auth check pattern)
+        const { data: sessionData } = await supabase.auth.getSession();
+        
+        if (!sessionData?.session) {
+          const { data: userData } = await supabase.auth.getUser();
+          
+          if (!userData?.user) {
+            console.warn("No active session found - redirecting to login.");
+            if (mounted) window.location.href = "/login";
+            return;
+          }
+        }
+        
+        const user = sessionData?.session?.user ?? (await supabase.auth.getUser()).data.user;
+        
+        if (!user || !mounted) {
+          console.warn("No user found - redirecting to login.");
           if (mounted) window.location.href = "/login";
           return;
         }
-
-        const user = freshUser;
+        
+        console.log("🔐 [DASHBOARD] Auth check:", "OK", "USER FOUND");
         if (!mounted) return;
 
         setUserLabel(user.user_metadata?.full_name || user.email || "User");
@@ -181,8 +195,16 @@ export default function DashboardPage() {
           });
         }
         setNotificationCount(count);
+
+        console.log("📊 [DASHBOARD] Data loaded successfully:", {
+          personalDocs,
+          companyDocs,
+          sentDocs: sent.length,
+          recentDocs: recent.length,
+          notifications: count
+        });
       } catch (err) {
-        console.error("Dashboard data fetch error:", err);
+        console.error("❌ [DASHBOARD] Data fetch error:", err);
       } finally {
         if (mounted) setLoading(false);
       }
