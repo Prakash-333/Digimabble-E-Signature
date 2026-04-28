@@ -1,6 +1,6 @@
 "use client";
 
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createBrowserClient } from "@supabase/ssr";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -125,38 +125,31 @@ const createMockClient = () => {
 // Real Supabase client — SINGLETON pattern.
 //
 // KEY RULES:
-//  1. createClientComponentClient() reads the session from the COOKIE that
+//  1. createBrowserClient() reads the session from the COOKIE that
 //     middleware.ts writes on every request. Do NOT pass a custom storageKey —
 //     that would redirect the client to read from localStorage under a
 //     different key, which the middleware never writes to, causing the session
 //     to appear missing on every normal (non-hard) refresh.
 //  2. Keep a module-level singleton so the same client instance (and its
 //     in-memory token cache) is reused across soft navigations in Next.js
-//     App Router. Calling createClientComponentClient() on every render
-//     creates a fresh, session-less client.
+//     App Router. Calling createBrowserClient() on every render creates a
+//     fresh, session-less client.
 // ---------------------------------------------------------------------------
-let _supabaseInstance: ReturnType<typeof createClientComponentClient> | null =
-  null;
+let _supabaseInstance: ReturnType<typeof createBrowserClient> | null = null;
 
 const getSupabaseClient = () => {
   if (!isConfigured) return createMockClient();
 
   // Server-side: always create a fresh instance (no window / singleton)
   if (typeof window === "undefined") {
-    return createClientComponentClient({
-      supabaseUrl: supabaseUrl!,
-      supabaseKey: supabaseAnonKey!,
-    });
+    return createBrowserClient(supabaseUrl!, supabaseAnonKey!);
   }
 
   // Client-side: reuse the same instance for the lifetime of the tab.
   // Do NOT pass a custom storageKey here — let it use the default cookie
-  // storage that @supabase/auth-helpers-nextjs and the middleware both use.
+  // storage that @supabase/ssr and the middleware both use.
   if (!_supabaseInstance) {
-    _supabaseInstance = createClientComponentClient({
-      supabaseUrl: supabaseUrl!,
-      supabaseKey: supabaseAnonKey!,
-    });
+    _supabaseInstance = createBrowserClient(supabaseUrl!, supabaseAnonKey!);
   }
 
   return _supabaseInstance;
