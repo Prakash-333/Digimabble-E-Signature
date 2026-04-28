@@ -47,10 +47,18 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({
+    const { data: loginData, error: signInError } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
+
+    // ── DEBUG: Remove once session is confirmed working ──────────────────
+    console.log("🔐 [LOGIN] RESULT:", loginData);
+    console.log("🔐 [LOGIN] SESSION:", loginData?.session ?? "NO SESSION");
+    console.log("🔐 [LOGIN] USER:", loginData?.user ?? "NO USER");
+    console.log("🔐 [LOGIN] ERROR:", signInError ?? "none");
+    console.log("🔐 [LOGIN] Access Token:", loginData?.session?.access_token ? "present" : "MISSING");
+    // ── END DEBUG ────────────────────────────────────────────────────────
 
     setLoading(false);
 
