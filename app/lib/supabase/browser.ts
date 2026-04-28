@@ -15,3 +15,8 @@ export const supabase = createBrowserClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
+
+// 👇 ADD THIS PART
+if (typeof window !== "undefined") {
+  (window as any).supabase = supabase;
+}
