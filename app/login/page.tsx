@@ -72,15 +72,24 @@ const handleLogin = async (e: FormEvent<HTMLFormElement>) => {
     console.log("LOGIN ERROR:", error);
 
     if (error) {
-      alert(error.message);
+      alert(`Login failed: ${error.message}`);
       setLoading(false);
       return;
     }
 
-    console.log("Login success");
+    if (!data?.session) {
+      alert("Login successful but no session. Please try again.");
+      console.error("No session after login");
+      setLoading(false);
+      return;
+    }
+
+    console.log("Login success - session:", data.session?.user?.email);
     setLoading(false);
-    // Note: Page stays on login to show user the result. 
-    // Dashboard will handle auth state separately via onAuthStateChange.
+    
+    // Redirect to dashboard after successful login
+    // Force page reload to ensure Supabase client picks up the new session
+    window.location.href = "/dashboard";
   };
 
   const handleGoogleLogin = async () => {

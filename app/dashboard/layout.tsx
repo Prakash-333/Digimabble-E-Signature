@@ -66,6 +66,7 @@ export default function DashboardLayout({
 
     const syncSession = async () => {
       try {
+        console.log("[DASHBOARD] Syncing session...");
         // Step 1: Read session from cookie (fast — set by middleware.ts on every request).
         // This never times out because it's a local cookie read, not a network call.
         const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -76,6 +77,8 @@ export default function DashboardLayout({
           if (mounted) setLoadingSession(false);
           return;
         }
+
+        console.log("[DASHBOARD] Session data:", sessionData?.session ? "FOUND" : "NOT FOUND");
 
         if (!sessionData?.session) {
           const { data: userData } = await supabase.auth.getUser();
@@ -88,6 +91,7 @@ export default function DashboardLayout({
         }
 
         const user = sessionData?.session?.user ?? (await supabase.auth.getUser()).data.user;
+        console.log("[DASHBOARD] User found:", user ? "YES" : "NO");
         if (!user || !mounted) {
           // No user - let auth state subscription handle the state
           console.log("[DASHBOARD] No user in syncSession - auth state subscription will handle state update");
