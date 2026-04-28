@@ -60,22 +60,6 @@ export default function DashboardLayout({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // ── DEBUG: Remove this block once session is stable ──────────────────────
-  useEffect(() => {
-    const debugSession = async () => {
-      const { data, error } = await supabase.auth.getSession();
-      console.log("🔍 [DEBUG] SESSION:", data?.session ?? "NO SESSION");
-      console.log("🔍 [DEBUG] USER:", data?.session?.user ?? "NO USER");
-      console.log("🔍 [DEBUG] ERROR:", error ?? "none");
-      console.log("🔍 [DEBUG] Access Token:", data?.session?.access_token ? "present" : "MISSING");
-      console.log("🔍 [DEBUG] Expires At:", data?.session?.expires_at
-        ? new Date(data.session.expires_at * 1000).toLocaleString()
-        : "N/A");
-    };
-    debugSession();
-  }, []);
-  // ── END DEBUG ─────────────────────────────────────────────────────────────
-
 
   useEffect(() => {
     let mounted = true;
@@ -178,10 +162,10 @@ export default function DashboardLayout({
           session.user.email ||
           "User";
         setUserLabel(name);
-        
+
         // Unblock the UI prior to document fetch
         if (mounted) setLoadingSession(false);
-        
+
         const { data: rows, error: fetchError } = await supabase
           .from("documents")
           .select("id, owner_id, recipients, status, category, sender, sent_at")
@@ -260,11 +244,11 @@ export default function DashboardLayout({
               <div className="rounded-2xl border border-red-200 bg-red-50 p-5 shadow-sm">
                 <p className="text-xs font-bold text-red-600 uppercase tracking-widest mb-2">Error Details</p>
                 <p className="text-sm text-red-700 font-medium leading-relaxed">
-                  {authError.includes("Failed to fetch") 
+                  {authError.includes("Failed to fetch")
                     ? "Could not connect to the database. Please check your internet connection or verify your Supabase URL/Key in .env.local."
                     : authError}
                 </p>
-                <button 
+                <button
                   onClick={() => window.location.reload()}
                   className="mt-4 rounded-xl bg-white px-4 py-2 text-xs font-bold text-red-600 shadow-sm border border-red-200 hover:bg-red-50 transition-colors"
                 >
@@ -387,14 +371,13 @@ export default function DashboardLayout({
                 <p className="font-semibold text-slate-700">{userLabel}</p>
                 <p className="text-[11px] text-slate-500">Admin</p>
               </div>
-              <button 
+              <button
                 onClick={handleNotificationClick}
-                title="Notifications" 
-                className={`relative ml-auto inline-flex h-9 w-9 items-center justify-center rounded-xl transition-colors ${
-                  pathname.includes("/notifications")
+                title="Notifications"
+                className={`relative ml-auto inline-flex h-9 w-9 items-center justify-center rounded-xl transition-colors ${pathname.includes("/notifications")
                     ? "bg-violet-100 text-violet-600 shadow-sm"
                     : "bg-slate-50 text-slate-400 hover:bg-violet-50 hover:text-violet-600"
-                }`}
+                  }`}
               >
                 <Bell className="h-4 w-4" />
                 {notificationCount > 0 && (
@@ -413,14 +396,13 @@ export default function DashboardLayout({
           </div>
         ) : (
           <div className="border-t border-slate-200 py-4 flex flex-col items-center gap-4">
-            <button 
+            <button
               onClick={handleNotificationClick}
-              title="Notifications" 
-              className={`relative inline-flex h-12 w-12 items-center justify-center rounded-xl transition-colors ${
-                pathname.includes("/notifications")
+              title="Notifications"
+              className={`relative inline-flex h-12 w-12 items-center justify-center rounded-xl transition-colors ${pathname.includes("/notifications")
                   ? "bg-violet-100 text-violet-600 shadow-sm"
                   : "bg-slate-50 text-slate-400 hover:bg-violet-50 hover:text-violet-600"
-              }`}
+                }`}
             >
               <Bell className="h-5 w-5" />
               {notificationCount > 0 && (
@@ -458,11 +440,10 @@ export default function DashboardLayout({
             <button
               onClick={handleNotificationClick}
               title="Notifications"
-              className={`relative inline-flex h-10 w-10 items-center justify-center rounded-full border transition-colors ${
-                pathname.includes("/notifications")
+              className={`relative inline-flex h-10 w-10 items-center justify-center rounded-full border transition-colors ${pathname.includes("/notifications")
                   ? "border-violet-200 bg-violet-100 text-violet-600"
                   : "border-slate-200 bg-white text-slate-500 hover:border-violet-200 hover:bg-violet-50 hover:text-violet-600"
-              }`}
+                }`}
             >
               <Bell className="h-4 w-4" />
               {notificationCount > 0 && (
@@ -471,8 +452,8 @@ export default function DashboardLayout({
                 </span>
               )}
             </button>
-            
-            <button 
+
+            <button
               onClick={() => setIsProfileOpen(!isProfileOpen)}
               className="flex items-center rounded-full border border-slate-200 bg-white p-1 hover:border-violet-300 transition-all active:scale-95 shadow-sm"
               aria-label="User menu"
@@ -493,9 +474,9 @@ export default function DashboardLayout({
                   <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">Account</p>
                   <p className="text-sm font-semibold text-slate-700 truncate">{userLabel}</p>
                 </div>
-                
-                <Link 
-                  href="/dashboard/settings" 
+
+                <Link
+                  href="/dashboard/settings"
                   onClick={() => setIsProfileOpen(false)}
                   className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-600 hover:bg-violet-50 hover:text-violet-700 transition-all group"
                 >
@@ -504,9 +485,9 @@ export default function DashboardLayout({
                   </div>
                   Profile
                 </Link>
-                
-                <Link 
-                  href="/dashboard/my-documents" 
+
+                <Link
+                  href="/dashboard/my-documents"
                   onClick={() => setIsProfileOpen(false)}
                   className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-600 hover:bg-violet-50 hover:text-violet-700 transition-all group"
                 >
@@ -515,10 +496,10 @@ export default function DashboardLayout({
                   </div>
                   My Documents
                 </Link>
-                
+
                 <div className="my-1.5 border-t border-slate-100" />
-                
-                <button 
+
+                <button
                   onClick={() => {
                     handleLogout();
                     setIsProfileOpen(false);
