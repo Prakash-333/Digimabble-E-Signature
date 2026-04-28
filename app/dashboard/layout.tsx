@@ -60,6 +60,22 @@ export default function DashboardLayout({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // ── DEBUG: Remove this block once session is stable ──────────────────────
+  useEffect(() => {
+    const debugSession = async () => {
+      const { data, error } = await supabase.auth.getSession();
+      console.log("🔍 [DEBUG] SESSION:", data?.session ?? "NO SESSION");
+      console.log("🔍 [DEBUG] USER:", data?.session?.user ?? "NO USER");
+      console.log("🔍 [DEBUG] ERROR:", error ?? "none");
+      console.log("🔍 [DEBUG] Access Token:", data?.session?.access_token ? "present" : "MISSING");
+      console.log("🔍 [DEBUG] Expires At:", data?.session?.expires_at
+        ? new Date(data.session.expires_at * 1000).toLocaleString()
+        : "N/A");
+    };
+    debugSession();
+  }, []);
+  // ── END DEBUG ─────────────────────────────────────────────────────────────
+
 
   useEffect(() => {
     let mounted = true;
