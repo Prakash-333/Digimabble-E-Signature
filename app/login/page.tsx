@@ -53,39 +53,34 @@ export default function LoginPage() {
     );
   }
 
-  const handleLogin = async (e: FormEvent<HTMLFormElement>) => {
+const handleLogin = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!isGmailAddress(email)) {
-      setError("Please use a Gmail address ending in @gmail.com.");
+      setError("Please use a Gmail account ending in @gmail.com");
       return;
     }
 
     setLoading(true);
     setError(null);
 
-    const { data: loginData, error: signInError } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
-    // ── DEBUG: Remove once session is confirmed working ──────────────────
-    console.log("🔐 [LOGIN] RESULT:", loginData);
-    console.log("🔐 [LOGIN] SESSION:", loginData?.session ?? "NO SESSION");
-    console.log("🔐 [LOGIN] USER:", loginData?.user ?? "NO USER");
-    console.log("🔐 [LOGIN] ERROR:", signInError ?? "none");
-    console.log("🔐 [LOGIN] Access Token:", loginData?.session?.access_token ? "present" : "MISSING");
-    // ── END DEBUG ────────────────────────────────────────────────────────
+    console.log("LOGIN RESULT:", data);
+    console.log("LOGIN ERROR:", error);
 
-setLoading(false);
+    if (error) {
+      alert(error.message);
+      setLoading(false);
+      return;
+    }
 
-  if (signInError) {
-    setError(signInError.message);
-    return;
-  }
-
-  console.log("✅ Login successful! Session is active.");
-  // Note: Page stays on login to show user the result. 
-  // Dashboard will handle auth state separately via onAuthStateChange.
+    console.log("Login success");
+    setLoading(false);
+    // Note: Page stays on login to show user the result. 
+    // Dashboard will handle auth state separately via onAuthStateChange.
   };
 
   const handleGoogleLogin = async () => {
