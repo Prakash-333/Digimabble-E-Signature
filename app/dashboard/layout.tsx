@@ -84,8 +84,9 @@ export default function DashboardLayout({
           const { data: userData } = await supabase.auth.getUser();
 
           if (!userData?.user) {
-            // No authenticated user - let auth state subscription handle state
-            console.log("[DASHBOARD] No authenticated user found in syncSession");
+            console.log("[DASHBOARD] No authenticated user found in syncSession - redirecting to login");
+            if (mounted) setLoadingSession(false);
+            window.location.href = "/login";
             return;
           }
         }
@@ -93,8 +94,9 @@ export default function DashboardLayout({
         const user = sessionData?.session?.user ?? (await supabase.auth.getUser()).data.user;
         console.log("[DASHBOARD] User found:", user ? "YES" : "NO");
         if (!user || !mounted) {
-          // No user - let auth state subscription handle the state
-          console.log("[DASHBOARD] No user in syncSession - auth state subscription will handle state update");
+          console.log("[DASHBOARD] No user in syncSession - redirecting to login");
+          if (mounted) setLoadingSession(false);
+          window.location.href = "/login";
           return;
         }
 
@@ -154,8 +156,9 @@ export default function DashboardLayout({
     const { data } = supabase.auth.onAuthStateChange(async (_event: string, session: any) => {
       try {
         if (!session) {
-          // Auth state changed - no session, let UI handle naturally
-          console.log("[DASHBOARD] Auth state changed - no session");
+          console.log("[DASHBOARD] Auth state changed - no session - redirecting to login");
+          if (mounted) setLoadingSession(false);
+          window.location.href = "/login";
           return;
         }
         setCurrentUserId(session.user.id);

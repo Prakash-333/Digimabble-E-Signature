@@ -36,7 +36,21 @@ export async function middleware(request: NextRequest) {
   // IMPORTANT: Always use getUser() (not getSession()) in middleware.
   // getUser() validates the token with the Supabase server on every request,
   // ensuring the session is always fresh and prevents stale-cookie logouts.
-  await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  // If the user is trying to access a protected route and is not authenticated
+  if (!user && request.nextUrl.pathname.startsWith('/dashboard')) {
+    const loginUrl = request.nextUrl.clone();
+    loginUrl.pathname = '/login';
+    return NextResponse.redirect(loginUrl);
+  }
+
+  // Optional: If the user is authenticated and trying to access login/register, redirect to dashboard
+  if (user && (request.nextUrl.pathname === '/login' || request.nextUrl.pathname === '/register')) {
+    const dashboardUrl = request.nextUrl.clone();
+    dashboardUrl.pathname = '/dashboard';
+    return NextResponse.redirect(dashboardUrl);
+  }
 
   return response;
 }
