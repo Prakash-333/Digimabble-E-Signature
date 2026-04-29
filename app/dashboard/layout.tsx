@@ -64,164 +64,103 @@ export default function DashboardLayout({
   useEffect(() => {
     let mounted = true;
 
-    const syncSession = async () => {
-      try {
-        console.log("[DASHBOARD] Syncing session...");
-        // Step 1: Read session from cookie (fast — set by middleware.ts on every request).
-        // This never times out because it's a local cookie read, not a network call.
-        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-
-        if (sessionError) {
-          console.error("Session read error:", sessionError.message);
-          if (mounted) setAuthError(sessionError.message);
-          if (mounted) setLoadingSession(false);
-          return;
-        }
-
-        console.log("[DASHBOARD] Session data:", sessionData?.session ? "FOUND" : "NOT FOUND");
-
-        if (!sessionData?.session) {
-          const { data: userData } = await supabase.auth.getUser();
-
-          if (!userData?.user) {
-            console.log("[DASHBOARD] No authenticated user found in syncSession - redirecting to login");
-            if (mounted) setLoadingSession(false);
-            window.location.href = "/login";
-            return;
-          }
-        }
-
-        const user = sessionData?.session?.user ?? (await supabase.auth.getUser()).data.user;
-        console.log("[DASHBOARD] User found:", user ? "YES" : "NO");
-        if (!user || !mounted) {
-          console.log("[DASHBOARD] No user in syncSession - redirecting to login");
-          if (mounted) setLoadingSession(false);
-          window.location.href = "/login";
-          return;
-        }
-
-        setCurrentUserId(user.id);
-        setUserLabel(user.user_metadata?.full_name || user.email || "User");
-
-        // Unblock the UI immediately
-        if (mounted) setLoadingSession(false);
-
-        // Step 3: Fetch notifications in the background
-        const userEmail = normalizeEmail(user.email);
-        if (userEmail) {
-          try {
-            const { data: rows, error: fetchError } = await supabase
-              .from("documents")
-              .select("id, owner_id, recipients, status, category, sender, sent_at")
-              .order("sent_at", { ascending: false })
-              .limit(200);
-
-            if (fetchError) throw fetchError;
-
-            const hiddenIds = getHiddenNotificationIds(user.id);
-            const seenIds = getSeenNotificationIds(user.id);
-
-            const ids: string[] = [];
-            ((rows ?? []) as SharedDocumentRecord[]).forEach((row) => {
-              if (row.owner_id !== user.id) {
-                if (hiddenIds.has(row.id) || seenIds.has(row.id)) return;
-                const isRecipient = Boolean(getMatchingRecipient(row.recipients, userEmail));
-                if (isRecipient && !isCompletedForRecipient(row.status)) ids.push(row.id);
-              } else {
-                row.recipients.forEach((r) => {
-                  if (["signed", "reviewed", "approved", "rejected"].includes(r.status || "")) {
-                    const virtualId = `${row.id}_${normalizeEmail(r.email)}_${r.status}`;
-                    if (!hiddenIds.has(virtualId) && !seenIds.has(virtualId)) ids.push(virtualId);
-                  }
-                });
-              }
-            });
-            if (mounted) { setPendingIds(ids); setNotificationCount(ids.length); }
-          } catch (err: any) {
-            console.warn("Failed to fetch notification rows:", err);
-          }
-        } else {
+    // Helper to fetch documents
+    const fetchNotifications = async (userId: string, userEmailRaw: string | undefined) => {
+      const userEmail = normalizeEmail(userEmailRaw);
+      if (!userEmail) {
+        if (mounted) {
           setPendingIds([]);
           setNotificationCount(0);
         }
-      } catch (err: any) {
-        console.error("Unexpected error in syncSession:", err);
-        if (mounted) setAuthError(err.message || "Failed to connect to authentication server.");
-        if (mounted) setLoadingSession(false);
+        return;
       }
-    };
 
-    syncSession();
-
-    const { data } = supabase.auth.onAuthStateChange(async (_event: string, session: any) => {
       try {
-        if (!session) {
-          console.log("[DASHBOARD] Auth state changed - no session - redirecting to login");
-          if (mounted) setLoadingSession(false);
-          window.location.href = "/login";
-          return;
-        }
-        setCurrentUserId(session.user.id);
-        const name =
-          session.user.user_metadata?.full_name ||
-          session.user.email ||
-          "User";
-        setUserLabel(name);
-
-        // Unblock the UI prior to document fetch
-        if (mounted) setLoadingSession(false);
-
         const { data: rows, error: fetchError } = await supabase
           .from("documents")
           .select("id, owner_id, recipients, status, category, sender, sent_at")
           .order("sent_at", { ascending: false })
           .limit(200);
 
-        if (fetchError) {
-          console.warn("Failed to fetch documents on auth change:", fetchError);
-        } else {
-          const userEmail = normalizeEmail(session.user.email);
-          const hiddenIds = getHiddenNotificationIds(session.user.id);
-          const seenIds = getSeenNotificationIds(session.user.id);
+        if (fetchError) throw fetchError;
 
-          const ids: string[] = [];
-          ((rows ?? []) as SharedDocumentRecord[]).forEach((row) => {
-            if (row.owner_id !== session.user.id) {
-              if (hiddenIds.has(row.id) || seenIds.has(row.id)) return;
-              const isRecipient = Boolean(getMatchingRecipient(row.recipients, userEmail));
-              if (isRecipient && !isCompletedForRecipient(row.status)) {
-                ids.push(row.id);
+        const hiddenIds = getHiddenNotificationIds(userId);
+        const seenIds = getSeenNotificationIds(userId);
+
+        const ids: string[] = [];
+        ((rows ?? []) as SharedDocumentRecord[]).forEach((row) => {
+          if (row.owner_id !== userId) {
+            if (hiddenIds.has(row.id) || seenIds.has(row.id)) return;
+            const isRecipient = Boolean(getMatchingRecipient(row.recipients, userEmail));
+            if (isRecipient && !isCompletedForRecipient(row.status)) ids.push(row.id);
+          } else {
+            row.recipients.forEach((r) => {
+              if (["signed", "reviewed", "approved", "rejected"].includes(r.status || "")) {
+                const virtualId = `${row.id}_${normalizeEmail(r.email)}_${r.status}`;
+                if (!hiddenIds.has(virtualId) && !seenIds.has(virtualId)) ids.push(virtualId);
               }
-            } else {
-              row.recipients.forEach((r) => {
-                if (["signed", "reviewed", "approved", "rejected"].includes(r.status || "")) {
-                  const virtualId = `${row.id}_${normalizeEmail(r.email)}_${r.status}`;
-                  if (!hiddenIds.has(virtualId) && !seenIds.has(virtualId)) {
-                    ids.push(virtualId);
-                  }
-                }
-              });
-            }
-          });
-          setPendingIds(ids);
-          setNotificationCount(ids.length);
+            });
+          }
+        });
+        if (mounted) { 
+          setPendingIds(ids); 
+          setNotificationCount(ids.length); 
         }
+      } catch (err: any) {
+        console.warn("Failed to fetch notification rows:", err);
+      }
+    };
+
+    // Listen to auth state (fires automatically on mount with INITIAL_SESSION)
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event: string, session: any) => {
+      try {
+        console.log(`[DASHBOARD] Auth event: ${event}`);
+        
+        let validUser = session?.user;
+
+        // Fallback: if session is missing, do a hard verification against server
+        if (!validUser) {
+          const { data: userData } = await supabase.auth.getUser();
+          validUser = userData?.user;
+          
+          if (!validUser) {
+            console.log("[DASHBOARD] No valid user found - redirecting to login");
+            if (mounted) setLoadingSession(false);
+            window.location.href = "/login";
+            return;
+          }
+        }
+
+        if (mounted) {
+          setCurrentUserId(validUser.id);
+          setUserLabel(validUser.user_metadata?.full_name || validUser.email || "User");
+          setLoadingSession(false);
+        }
+
+        // Fetch data
+        await fetchNotifications(validUser.id, validUser.email);
+
       } catch (err: any) {
         console.error("Error in onAuthStateChange handler:", err);
         if (mounted) setLoadingSession(false);
       }
     });
 
-    // Periodic refresh for notifications (every 60 seconds)
-    // This handles "Internal" documents where only dashboard notifications are requested.
-    const intervalId = setInterval(syncSession, 60000);
+    // Periodic refresh for notifications only (every 60s)
+    const intervalId = setInterval(async () => {
+      if (!currentUserId) return;
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.user) {
+        fetchNotifications(currentUserId, data.session.user.email);
+      }
+    }, 60000);
 
     return () => {
       mounted = false;
       clearInterval(intervalId);
-      data.subscription.unsubscribe();
+      authListener.subscription.unsubscribe();
     };
-  }, [router]);
+  }, [router, currentUserId]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
