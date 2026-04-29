@@ -13,7 +13,15 @@ import { createBrowserClient } from "@supabase/ssr";
  */
 export const supabase = createBrowserClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  {
+    global: {
+      fetch: (...args) => {
+        const [url, options] = args;
+        return fetch(url, { ...options, cache: 'no-cache' });
+      },
+    },
+  }
 );
 
 // 👇 ADD THIS PART
