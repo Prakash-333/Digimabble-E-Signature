@@ -68,11 +68,14 @@ useEffect(() => {
       try {
         console.log("🔄 [DASHBOARD] Loading data from Supabase...");
         
-        // 1. Get session first (recommended auth check pattern)
+        console.log("⏳ [DASHBOARD] Calling getSession()...");
         const { data: sessionData } = await supabase.auth.getSession();
+        console.log("✅ [DASHBOARD] getSession() finished");
         
         if (!sessionData?.session) {
+          console.log("⏳ [DASHBOARD] Session empty, calling getUser()...");
           const { data: userData } = await supabase.auth.getUser();
+          console.log("✅ [DASHBOARD] getUser() finished");
           
           if (!userData?.user) {
             console.warn("No active session found - redirecting to login.");
@@ -95,6 +98,7 @@ useEffect(() => {
         setUserLabel(user.user_metadata?.full_name || user.email || "User");
         const userEmail = normalizeEmail(user.email);
 
+        console.log("⏳ [DASHBOARD] Starting Promise.all for DB queries...");
         const [
           { data: docs, error: docsError }, 
           { data: sentDocs, error: sentDocsError }, 
