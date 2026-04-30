@@ -18,7 +18,7 @@ export const supabase = createBrowserClient(
     global: {
       fetch: (...args) => {
         const [url, options] = args;
-        return fetch(url, { ...options, cache: 'no-cache' });
+        return fetch(url, { ...options, cache: 'no-store' });
       },
     },
   }
