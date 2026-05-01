@@ -2,6 +2,9 @@
 
 import { createSupabaseAdminClient } from "../lib/supabase/admin";
 import { normalizeEmail, type DocumentRecipient } from "../lib/documents";
+import { Resend } from "resend";
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 /**
  * Fetches basic metadata for a document given its ID.
@@ -53,9 +56,7 @@ export async function markFirstLogin(id: string) {
   }
 }
 
-import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 /**
  * Submits a guest signature or review action.
