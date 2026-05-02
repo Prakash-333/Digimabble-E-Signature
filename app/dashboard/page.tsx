@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic';
 import Link from "next/link";
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../lib/supabase/browser";
+import { useDashboardAuth } from "./layout";
 import { isMissingSupabaseTable } from "../lib/supabase/errors";
 import { getMatchingRecipient, isCompletedForRecipient, normalizeEmail, type SharedDocumentRecord } from "../lib/documents";
 import { getHiddenNotificationIds, getSeenNotificationIds } from "../lib/notification-storage";
@@ -19,7 +20,7 @@ type DocumentStatusRow = {
   status: "draft" | "waiting" | "reviewing" | "reviewed" | "approved" | "signed" | "completed" | "rejected";
   sent_at?: string | null;
   recipients?: { status?: string; email?: string; name?: string; role?: string }[];
-  sender?: any;
+  sender?: { isExternal?: boolean } | null;
 };
 
 type DateRange = "7" | "30" | "90" | "all";
@@ -52,6 +53,7 @@ function filterByDateRange(docs: DocumentStatusRow[], range: DateRange): Documen
 }
 
 export default function DashboardPage() {
+  const { currentUserId, currentUserEmail, userLabel: authUserLabel, loadingSession } = useDashboardAuth();
   const [personalCount, setPersonalCount] = useState(0);
   const [companyCount, setCompanyCount] = useState(0);
   const [userLabel, setUserLabel] = useState("User");
@@ -60,43 +62,22 @@ export default function DashboardPage() {
   const [allSentDocs, setAllSentDocs] = useState<DocumentStatusRow[]>([]);
   const [recentDocs, setRecentDocs] = useState<RecentDocument[]>([]);
 
-  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    if (loadingSession) return;
 
-useEffect(() => {
+    if (!currentUserId) {
+      window.location.href = "/login";
+      return;
+    }
+
     let mounted = true;
     const loadCounts = async () => {
       try {
         console.log("🔄 [DASHBOARD] Loading data from Supabase...");
-        
-        console.log("⏳ [DASHBOARD] Calling getSession()...");
-        const { data: sessionData } = await supabase.auth.getSession();
-        console.log("✅ [DASHBOARD] getSession() finished");
-        
-        if (!sessionData?.session) {
-          console.log("⏳ [DASHBOARD] Session empty, calling getUser()...");
-          const { data: userData } = await supabase.auth.getUser();
-          console.log("✅ [DASHBOARD] getUser() finished");
-          
-          if (!userData?.user) {
-            console.warn("No active session found - redirecting to login.");
-            if (mounted) window.location.href = "/login";
-            return;
-          }
-        }
-        
-        const user = sessionData?.session?.user ?? (await supabase.auth.getUser()).data.user;
-        
-        if (!user || !mounted) {
-          console.warn("No user found - redirecting to login.");
-          if (mounted) window.location.href = "/login";
-          return;
-        }
-        
-        console.log("🔐 [DASHBOARD] Auth check:", "OK", "USER FOUND");
         if (!mounted) return;
 
-        setUserLabel(user.user_metadata?.full_name || user.email || "User");
-        const userEmail = normalizeEmail(user.email);
+        setUserLabel(authUserLabel || currentUserEmail || "User");
+        const userEmail = normalizeEmail(currentUserEmail);
 
         console.log("⏳ [DASHBOARD] Starting Promise.all for DB queries...");
         const [
@@ -108,21 +89,21 @@ useEffect(() => {
           supabase
             .from("my_documents")
             .select("id, category")
-            .eq("owner_id", user.id),
+            .eq("owner_id", currentUserId),
           supabase
             .from("documents")
             .select("id, status, recipients, sent_at, sender")
-            .eq("owner_id", user.id),
+            .eq("owner_id", currentUserId),
           supabase
             .from("documents")
             .select("id, owner_id, recipients, status, category, sender, sent_at, file_url, file_key, content, name, subject")
-            .or(`owner_id.eq.${user.id},recipients.cs.[{"email":"${userEmail}"}]`)
+            .or(userEmail ? `owner_id.eq.${currentUserId},recipients.cs.[{"email":"${userEmail}"}]` : `owner_id.eq.${currentUserId}`)
             .order("sent_at", { ascending: false })
             .limit(200),
           supabase
             .from("documents")
             .select("id, name, status, sent_at, recipients, owner_id, sender")
-            .eq("owner_id", user.id)
+            .eq("owner_id", currentUserId)
             .order("sent_at", { ascending: false })
             .limit(5),
         ]);
@@ -150,36 +131,36 @@ useEffect(() => {
         setPersonalCount(personalDocs);
         setCompanyCount(companyDocs);
         
-        const isCompleted = (row: any) => ["signed", "reviewed", "approved", "completed"].includes(row.status);
+        const isCompleted = (row: { status: DocumentStatusRow["status"] }) => ["signed", "reviewed", "approved", "completed"].includes(row.status);
         
         setAllSentDocs(((sent ?? []) as DocumentStatusRow[]).filter(row => 
-          !(row.sender as any)?.isExternal || isCompleted(row)
+          !row.sender?.isExternal || isCompleted(row)
         ));
 
         const recent = (recentRows ?? [])
-          .filter((row: DocumentStatusRow) => !(row.sender as any)?.isExternal || isCompleted(row))
+          .filter((row: DocumentStatusRow) => !row.sender?.isExternal || isCompleted(row))
           .map((row: DocumentStatusRow & { name?: string; owner_id: string }) => ({
           id: row.id,
           name: row.name || "Untitled Document",
           status: row.status,
           sent_at: row.sent_at || new Date().toISOString(),
           recipients: Array.isArray(row.recipients) ? row.recipients : [],
-          direction: row.owner_id === user.id ? "sent" as const : "received" as const,
+          direction: row.owner_id === currentUserId ? "sent" as const : "received" as const,
         }));
         setRecentDocs(recent);
 
-        const hiddenIds = getHiddenNotificationIds(user.id);
-        const seenIds = getSeenNotificationIds(user.id);
+        const hiddenIds = getHiddenNotificationIds(currentUserId);
+        const seenIds = getSeenNotificationIds(currentUserId);
         
         let count = 0;
         if (userEmail) {
           ((notificationRows ?? []) as SharedDocumentRecord[]).forEach((row) => {
-            if (row.owner_id !== user.id) {
+            if (row.owner_id !== currentUserId) {
               // Incoming Request
               if (hiddenIds.has(row.id) || seenIds.has(row.id)) return;
               
               // Skip external documents unless they are completed/signed
-              if ((row.sender as any)?.isExternal && !["signed", "reviewed", "approved", "completed"].includes(row.status)) return;
+              if (row.sender?.isExternal && !["signed", "reviewed", "approved", "completed"].includes(row.status)) return;
 
               const isRecipient = Boolean(getMatchingRecipient(row.recipients, userEmail));
               if (isRecipient && !isCompletedForRecipient(row.status)) {
@@ -209,14 +190,12 @@ useEffect(() => {
         });
       } catch (err) {
         console.error("❌ [DASHBOARD] Data fetch error:", err);
-      } finally {
-        if (mounted) setLoading(false);
       }
     };
 
     loadCounts();
     return () => { mounted = false; };
-  }, []);
+  }, [authUserLabel, currentUserEmail, currentUserId, loadingSession]);
 
   const { documentsSent, pendingCount, approvedCount, rejectedCount } = useMemo(() => {
     const filtered = filterByDateRange(allSentDocs, dateRange);

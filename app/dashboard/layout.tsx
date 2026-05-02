@@ -5,7 +5,7 @@ import Head from "next/head";
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, useRef } from "react";
+import { createContext, useContext, useEffect, useState, useRef } from "react";
 import {
   LayoutDashboard,
   FileText,
@@ -13,7 +13,6 @@ import {
   FolderOpen,
   Folder,
   BarChart3,
-  User,
   LogOut,
   Settings,
   Menu,
@@ -22,6 +21,35 @@ import {
 import { supabase } from "../lib/supabase/browser";
 import { getMatchingRecipient, isCompletedForRecipient, normalizeEmail, type SharedDocumentRecord } from "../lib/documents";
 import { getHiddenNotificationIds, getSeenNotificationIds, markNotificationsSeen } from "../lib/notification-storage";
+
+type DashboardAuthState = {
+  currentUserId: string | null;
+  currentUserEmail: string | null;
+  userLabel: string;
+  loadingSession: boolean;
+};
+
+type DashboardUser = {
+  id: string;
+  email?: string | null;
+  user_metadata?: { full_name?: string | null } | null;
+};
+
+type DashboardSession = {
+  user?: DashboardUser | null;
+} | null;
+
+const DashboardAuthContext = createContext<DashboardAuthState | null>(null);
+
+export function useDashboardAuth() {
+  const value = useContext(DashboardAuthContext);
+
+  if (!value) {
+    throw new Error("useDashboardAuth must be used within DashboardLayout");
+  }
+
+  return value;
+}
 
 // Same navItems...
 const navItems = [
@@ -44,6 +72,7 @@ export default function DashboardLayout({
   const [loadingSession, setLoadingSession] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const [userLabel, setUserLabel] = useState("User");
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [notificationCount, setNotificationCount] = useState(0);
   const [pendingIds, setPendingIds] = useState<string[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -106,13 +135,13 @@ export default function DashboardLayout({
           setPendingIds(ids); 
           setNotificationCount(ids.length); 
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.warn("Failed to fetch notification rows:", err);
       }
     };
 
     // Listen to auth state (fires automatically on mount with INITIAL_SESSION)
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event: string, session: any) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event: string, session: DashboardSession) => {
       try {
         console.log(`[DASHBOARD] Auth event: ${event}`);
         
@@ -124,6 +153,7 @@ export default function DashboardLayout({
           validUser = userData?.user;
           
           if (!validUser) {
+            setAuthError("Unable to verify your Supabase session. Please sign in again.");
             console.log("[DASHBOARD] No valid user found - redirecting to login");
             if (mounted) setLoadingSession(false);
             window.location.href = "/login";
@@ -134,14 +164,16 @@ export default function DashboardLayout({
         if (mounted) {
           setCurrentUserId(validUser.id);
           setUserLabel(validUser.user_metadata?.full_name || validUser.email || "User");
+          setCurrentUserEmail(normalizeEmail(validUser.email));
           setLoadingSession(false);
         }
 
         // Fetch data
         await fetchNotifications(validUser.id, validUser.email);
 
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Error in onAuthStateChange handler:", err);
+        setAuthError(err instanceof Error ? err.message : "Failed to load your session.");
         if (mounted) setLoadingSession(false);
       }
     });
@@ -213,14 +245,22 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="flex h-screen bg-slate-50 w-full overflow-hidden">
-      <Head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400..700&display=swap" rel="stylesheet" />
-      </Head>
-      {/* Sidebar */}
-      <aside className={`h-screen flex-shrink-0 overflow-y-auto overflow-x-hidden bg-white border-r border-slate-200 text-slate-700 transition-all duration-300 flex flex-col ${isSidebarCollapsed ? "w-20" : "w-72"}`}>
+    <DashboardAuthContext.Provider
+      value={{
+        currentUserId,
+        currentUserEmail,
+        userLabel,
+        loadingSession,
+      }}
+    >
+      <div className="flex h-screen bg-slate-50 w-full overflow-hidden">
+        <Head>
+          <link rel="preconnect" href="https://fonts.googleapis.com" />
+          <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+          <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400..700&display=swap" rel="stylesheet" />
+        </Head>
+        {/* Sidebar */}
+        <aside className={`h-screen flex-shrink-0 overflow-y-auto overflow-x-hidden bg-white border-r border-slate-200 text-slate-700 transition-all duration-300 flex flex-col ${isSidebarCollapsed ? "w-20" : "w-72"}`}>
         <div className={`flex items-center ${isSidebarCollapsed ? "justify-center px-0 py-4" : "gap-3 px-5 py-5"}`}>
           {!isSidebarCollapsed ? (
             <>
@@ -365,10 +405,10 @@ export default function DashboardLayout({
         )}
       </aside>
 
-      {/* Main area */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {/* Top bar */}
-        <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-4 md:px-6">
+        {/* Main area */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {/* Top bar */}
+          <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-4 md:px-6">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
@@ -461,8 +501,9 @@ export default function DashboardLayout({
           </div>
         </header>
 
-        <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-slate-50 p-4 pt-0">{children}</main>
+          <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-slate-50 p-4 pt-0">{children}</main>
+        </div>
       </div>
-    </div>
+    </DashboardAuthContext.Provider>
   );
 }
