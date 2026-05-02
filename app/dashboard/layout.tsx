@@ -66,16 +66,21 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const getSessionValue = (key: string) => {
+    if (typeof window === "undefined") return null;
+    return window.sessionStorage.getItem(key);
+  };
+
   const router = useRouter();
   const pathname = usePathname();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
-  const [loadingSession, setLoadingSession] = useState(true);
+  const [loadingSession, setLoadingSession] = useState(() => !getSessionValue("dashboard_user_id"));
   const [authError, setAuthError] = useState<string | null>(null);
-  const [userLabel, setUserLabel] = useState("User");
-  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [userLabel, setUserLabel] = useState(() => getSessionValue("dashboard_user_label") || "User");
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(() => getSessionValue("dashboard_user_email"));
   const [notificationCount, setNotificationCount] = useState(0);
   const [pendingIds, setPendingIds] = useState<string[]>([]);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(() => getSessionValue("dashboard_user_id"));
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -183,6 +188,11 @@ export default function DashboardLayout({
           
           if (!validUser) {
             setAuthError("Unable to verify your Supabase session. Please sign in again.");
+            if (typeof window !== "undefined") {
+              window.sessionStorage.removeItem("dashboard_user_id");
+              window.sessionStorage.removeItem("dashboard_user_email");
+              window.sessionStorage.removeItem("dashboard_user_label");
+            }
             console.log("[DASHBOARD] No valid user found - redirecting to login");
             if (mounted) setLoadingSession(false);
             window.location.href = "/login";
@@ -205,12 +215,23 @@ export default function DashboardLayout({
           setLoadingSession(false);
         }
 
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem("dashboard_user_id", resolvedUser.id);
+          window.sessionStorage.setItem("dashboard_user_email", normalizeEmail(resolvedUser.email));
+          window.sessionStorage.setItem("dashboard_user_label", resolvedUser.user_metadata?.full_name || resolvedUser.email || "User");
+        }
+
         // Fetch data
         await fetchNotifications(resolvedUser.id, resolvedUser.email);
 
       } catch (err: unknown) {
         console.error("Error in onAuthStateChange handler:", err);
         setAuthError(err instanceof Error ? err.message : "Failed to load your session.");
+        if (typeof window !== "undefined") {
+          window.sessionStorage.removeItem("dashboard_user_id");
+          window.sessionStorage.removeItem("dashboard_user_email");
+          window.sessionStorage.removeItem("dashboard_user_label");
+        }
         if (mounted) setLoadingSession(false);
       }
     });
@@ -234,6 +255,11 @@ export default function DashboardLayout({
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem("dashboard_user_id");
+      window.sessionStorage.removeItem("dashboard_user_email");
+      window.sessionStorage.removeItem("dashboard_user_label");
+    }
     // Auth state will be caught by onAuthStateChange subscription
     console.log("[DASHBOARD] User logged out - auth state subscription will handle state update");
   };
@@ -247,7 +273,7 @@ export default function DashboardLayout({
     router.push("/dashboard/notifications");
   };
 
-  if (loadingSession) {
+  if (loadingSession && !currentUserId) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
         <div className="text-center">
