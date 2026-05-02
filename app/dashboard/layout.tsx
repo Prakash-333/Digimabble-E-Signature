@@ -81,8 +81,13 @@ export default function DashboardLayout({
   const [notificationCount, setNotificationCount] = useState(0);
   const [pendingIds, setPendingIds] = useState<string[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(() => getSessionValue("dashboard_user_id"));
+  const currentUserIdRef = useRef<string | null>(currentUserId);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    currentUserIdRef.current = currentUserId;
+  }, [currentUserId]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -238,10 +243,10 @@ export default function DashboardLayout({
 
     // Periodic refresh for notifications only (every 60s)
     const intervalId = setInterval(async () => {
-      if (!currentUserId) return;
+      if (!currentUserIdRef.current) return;
       const { data } = await supabase.auth.getSession();
       if (data?.session?.user) {
-        fetchNotifications(currentUserId, data.session.user.email);
+        fetchNotifications(currentUserIdRef.current, data.session.user.email);
       }
     }, 60000);
 
@@ -251,7 +256,7 @@ export default function DashboardLayout({
       window.clearTimeout(authTimeoutId);
       authListener.subscription.unsubscribe();
     };
-  }, [router, currentUserId]);
+  }, [router]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
