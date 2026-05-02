@@ -93,6 +93,18 @@ export default function DashboardLayout({
   useEffect(() => {
     let mounted = true;
 
+    const waitForSessionUser = async (fallbackUser: DashboardUser | null | undefined) => {
+      const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const { data } = await supabase.auth.getSession();
+        if (data?.session?.user) return data.session.user;
+        await delay(200);
+      }
+
+      return fallbackUser ?? null;
+    };
+
     // Helper to fetch documents
     const fetchNotifications = async (userId: string, userEmailRaw: string | undefined) => {
       const userEmail = normalizeEmail(userEmailRaw);
@@ -161,15 +173,23 @@ export default function DashboardLayout({
           }
         }
 
+        const resolvedUser = await waitForSessionUser(validUser);
+
+        if (!resolvedUser) {
+          setAuthError("Unable to load your Supabase session. Please refresh and try again.");
+          if (mounted) setLoadingSession(false);
+          return;
+        }
+
         if (mounted) {
-          setCurrentUserId(validUser.id);
-          setUserLabel(validUser.user_metadata?.full_name || validUser.email || "User");
-          setCurrentUserEmail(normalizeEmail(validUser.email));
+          setCurrentUserId(resolvedUser.id);
+          setUserLabel(resolvedUser.user_metadata?.full_name || resolvedUser.email || "User");
+          setCurrentUserEmail(normalizeEmail(resolvedUser.email));
           setLoadingSession(false);
         }
 
         // Fetch data
-        await fetchNotifications(validUser.id, validUser.email);
+        await fetchNotifications(resolvedUser.id, resolvedUser.email);
 
       } catch (err: unknown) {
         console.error("Error in onAuthStateChange handler:", err);
