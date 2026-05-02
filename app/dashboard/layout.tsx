@@ -93,17 +93,34 @@ export default function DashboardLayout({
   useEffect(() => {
     let mounted = true;
 
-    const waitForSessionUser = async (fallbackUser: DashboardUser | null | undefined) => {
-      const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+    const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+    const safeGetSessionUser = async () => {
+      const getSessionPromise = supabase.auth.getSession();
+      const timeoutPromise = delay(800).then(() => null);
+      const result = await Promise.race([getSessionPromise, timeoutPromise]);
+
+      if (!result || !('data' in result)) return null;
+      return result.data?.session?.user ?? null;
+    };
+
+    const waitForSessionUser = async (fallbackUser: DashboardUser | null | undefined) => {
       for (let attempt = 0; attempt < 5; attempt += 1) {
-        const { data } = await supabase.auth.getSession();
-        if (data?.session?.user) return data.session.user;
+        const user = await safeGetSessionUser();
+        if (user) return user;
         await delay(200);
       }
 
       return fallbackUser ?? null;
     };
+
+    const authTimeoutId = window.setTimeout(() => {
+      if (!mounted) return;
+      if (!currentUserId) {
+        setAuthError("Session took too long to initialize. Please refresh and try again.");
+        setLoadingSession(false);
+      }
+    }, 4000);
 
     // Helper to fetch documents
     const fetchNotifications = async (userId: string, userEmailRaw: string | undefined) => {
@@ -210,6 +227,7 @@ export default function DashboardLayout({
     return () => {
       mounted = false;
       clearInterval(intervalId);
+      window.clearTimeout(authTimeoutId);
       authListener.subscription.unsubscribe();
     };
   }, [router, currentUserId]);
